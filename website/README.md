@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="public/featureGraphic.png" width="100%" alt="mpvExtended Banner" />
+  <img src="public/featureGraphic.png" width="100%" alt="mpvNext Banner" />
 
 **The Most Powerful, Material3-Powered Video Experience for Android**
 
@@ -32,7 +32,7 @@ Want to try the cutting-edge features? Download the preview builds (Testing only
 
 ## 🌐 mpvEx Web
 
-This is the official Next.js website for **mpvExtended** - a powerful Android video player built on mpv. The website showcases features, provides downloads, and serves as the project's online presence.
+This is the official Next.js website for **mpvNext** - a powerful Android video player built on mpv. The website showcases features, provides downloads, and serves as the project's online presence.
 
 ### 🚀 Quick Start
 
@@ -92,6 +92,6 @@ We stand on the shoulders of giants:
 
 ## ❤️ Support & Community
 
-If you love mpvExtended, consider supporting the development and starring the repo!
+If you love mpvNext, consider supporting the development and starring the repo!
 
 **Website Created with ❤️ by [Riteshp2001](https://github.com/Riteshp2001)**

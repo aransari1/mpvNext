@@ -9,7 +9,7 @@
  * Contains metadata, external links, and author information used throughout the application.
  */
 export const siteConfig = {
-  name: "mpvExtended",
+  name: "mpvNext",
   version: "v1.2.7",
   description:
     "Advanced mpv-based video player for Android with powerful features, seamless playback, and open-source freedom.",
