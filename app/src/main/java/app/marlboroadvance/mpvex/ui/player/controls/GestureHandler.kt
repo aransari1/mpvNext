@@ -702,8 +702,9 @@ fun GestureHandler(
                 prevMidX = midX
                 prevMidY = midY
               } else {
-                // Activate on significant pinch movement
-                if (!gestureStarted && abs(dist - prevDist) > 5f) {
+                // Activate on significant pinch or two-finger drag movement
+                val midpointMoved = sqrt((midX - prevMidX).let { it * it } + (midY - prevMidY).let { it * it }) > 10f
+                if (!gestureStarted && (abs(dist - prevDist) > 5f || (videoPanEnabled && midpointMoved))) {
                   gestureStarted = true
                   if (pinchToZoomGesture) {
                     viewModel.playerUpdate.update { PlayerUpdates.VideoZoom }
