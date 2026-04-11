@@ -38,7 +38,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.map
@@ -51,9 +50,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 import org.koin.core.component.KoinComponent
 import org.koin.core.component.inject
-import app.marlboroadvance.mpvex.ui.preferences.CustomButton
 import java.io.File
-import androidx.core.net.toUri
 import androidx.documentfile.provider.DocumentFile
 import app.marlboroadvance.mpvex.preferences.AdvancedPreferences
 import kotlin.properties.ReadOnlyProperty
@@ -174,7 +171,7 @@ class PlayerViewModel(
         if (time != null) {
           _precisePosition.value = time.toFloat()
         }
-        delay(16) // ~60fps updates
+        delay(42) // ~24fps updates
       }
     }
 
@@ -265,12 +262,12 @@ class PlayerViewModel(
   private val _videoZoom = MutableStateFlow(0f)
   val videoZoom: StateFlow<Float> = _videoZoom.asStateFlow()
 
-  // Video aspect ratio (not persisted, resets to Fit for each video)
-  private val _videoAspect = MutableStateFlow(VideoAspect.Fit)
+  // Video aspect ratio (now persisted via preferences)
+  private val _videoAspect = MutableStateFlow(playerPreferences.defaultVideoAspect.get())
   val videoAspect: StateFlow<VideoAspect> = _videoAspect.asStateFlow()
 
   // Current aspect ratio value (for custom ratios and tracking)
-  private val _currentAspectRatio = MutableStateFlow(-1.0)
+  private val _currentAspectRatio = MutableStateFlow(playerPreferences.defaultCustomAspectRatio.get())
   val currentAspectRatio: StateFlow<Double> = _currentAspectRatio.asStateFlow()
 
   // Timer
@@ -349,224 +346,19 @@ class PlayerViewModel(
         Triple(duration, loopA, loopB)
       }.collect { (duration, loopA, loopB) ->
         val videoDuration = duration ?: 0
-        // Use precise seeking for videos shorter than 2 minutes, or if AB loop is active, or if preference is enabled
-        val isLoopActive = loopA != null || loopB != null
-        val shouldUsePreciseSeeking = playerPreferences.usePreciseSeeking.get() || videoDuration < 120 || isLoopActive
         
-        // Update hr-seek settings dynamically
-        MPVLib.setPropertyString("hr-seek", if (shouldUsePreciseSeeking) "yes" else "no")
-        MPVLib.setPropertyString("hr-seek-framedrop", if (shouldUsePreciseSeeking) "no" else "yes")
-      }
-    }
-    
-    
-    // Refresh custom buttons when Lua scripts are enabled/disabled or configuration changes
-    viewModelScope.launch {
-      combine(
-        advancedPreferences.enableLuaScripts.changes().drop(1),
-        playerPreferences.customButtons.changes().drop(1)
-      ) { _, _ -> }.collect {
-        setupCustomButtons()
-      }
-    }
-
-    setupCustomButtons()
-  }
-
-  // ==================== Custom Buttons ====================
-
-  data class CustomButtonState(
-    val id: String,
-    val label: String,
-    val isLeft: Boolean,
-  )
-
-  private val _customButtons = MutableStateFlow<List<CustomButtonState>>(emptyList())
-  val customButtons: StateFlow<List<CustomButtonState>> = _customButtons.asStateFlow()
-  private var customButtonsSetupJob: Job? = null
-  private val customButtonsLoadMutex = Mutex()
-  @Volatile
-  private var isMpvReadyForCustomButtons = false
-  @Volatile
-  private var customButtonsScriptPath: String? = null
-  private val customButtonsLoadedFlagProperty = "user-data/mpvex/custombuttons_loaded"
-
-  fun onMpvCoreInitialized() {
-    isMpvReadyForCustomButtons = true
-    reloadCustomButtonsScript("mpv_core_initialized")
-  }
-
-  private fun setupCustomButtons() {
-    customButtonsSetupJob?.cancel()
-    customButtonsSetupJob = viewModelScope.launch(Dispatchers.IO) {
-      try {
-        val buttons = mutableListOf<CustomButtonState>()
-        if (!advancedPreferences.enableLuaScripts.get()) {
-          _customButtons.value = buttons
-          customButtonsScriptPath = null
-          runCatching { MPVLib.setPropertyString(customButtonsLoadedFlagProperty, "0") }
-          return@launch
-        }
-
-        val scriptContent = buildString {
-          val jsonString = playerPreferences.customButtons.get()
-          if (jsonString.isNotBlank()) {
-            try {
-               // Try new slot-based format first
-               val slotsData = json.decodeFromString<app.marlboroadvance.mpvex.ui.preferences.CustomButtonSlots>(jsonString)
-               slotsData.slots.forEachIndexed { index, btn ->
-                 if (btn != null && btn.enabled) {   // skip disabled buttons
-                   val safeId = btn.id.replace("-", "_")
-                   val isLeft = index < 4 // Slots 0-3 are left, 4-7 are right
-                   processButton(btn.id, safeId, btn.title, btn.content, btn.longPressContent, btn.onStartup, isLeft, buttons)
-                 }
-               }
-            } catch (e: Exception) {
-               // Fallback to old format for backward compatibility
-               try {
-                 val customButtonsList = json.decodeFromString<List<app.marlboroadvance.mpvex.ui.preferences.CustomButton>>(jsonString)
-                 customButtonsList.forEachIndexed { index, btn ->
-                   val safeId = btn.id.replace("-", "_")
-                   val isLeft = index < 4 // First 4 are left buttons, rest are right
-                   processButton(btn.id, safeId, btn.title, btn.content, btn.longPressContent, btn.onStartup, isLeft, buttons)
-                 }
-               } catch (e2: Exception) {
-                 e2.printStackTrace()
-               }
-            }
-          }
-
-          if (buttons.isNotEmpty()) {
-            append("mp.set_property_native('$customButtonsLoadedFlagProperty', '1')\n")
-          }
-        }
-
-        _customButtons.value = buttons
-
-        if (scriptContent.isNotEmpty()) {
-          val scriptsDir = File(host.context.filesDir, "scripts")
-          if (!scriptsDir.exists()) scriptsDir.mkdirs()
+        // Only override hr-seek when duration is actually known and stable
+        if (videoDuration > 0) {
+          // Use precise seeking for videos shorter than 2 minutes, or if AB loop is active, or if preference is enabled
+          val isLoopActive = loopA != null || loopB != null
+          val shouldUsePreciseSeeking = playerPreferences.usePreciseSeeking.get() || videoDuration < 120 || isLoopActive
           
-          val file = File(scriptsDir, "custombuttons.lua")
-          file.writeText(scriptContent)
-          customButtonsScriptPath = file.absolutePath
-
-          if (isMpvReadyForCustomButtons) {
-            val loaded = loadCustomButtonsScript(file)
-            if (!loaded) {
-              android.util.Log.w("PlayerViewModel", "Failed to load custombuttons.lua")
-            }
-          } else {
-            android.util.Log.d("PlayerViewModel", "Deferring custombuttons.lua load until MPV is ready")
-          }
-        } else {
-          customButtonsScriptPath = null
-          runCatching { MPVLib.setPropertyString(customButtonsLoadedFlagProperty, "0") }
-        }
-      } catch (e: Exception) {
-        android.util.Log.e("PlayerViewModel", "Error setting up custom buttons", e)
-      }
-    }
-  }
-
-  private fun reloadCustomButtonsScript(reason: String) {
-    if (!isMpvReadyForCustomButtons) return
-
-    viewModelScope.launch(Dispatchers.IO) {
-      customButtonsLoadMutex.withLock {
-        if (!advancedPreferences.enableLuaScripts.get()) return@withLock
-
-        val scriptPath = customButtonsScriptPath
-        if (scriptPath.isNullOrBlank()) return@withLock
-        if (isCustomButtonsScriptLoaded()) return@withLock
-
-        val file = File(scriptPath)
-        if (!file.exists()) {
-          android.util.Log.w("PlayerViewModel", "custombuttons.lua missing during $reason, rebuilding")
-          setupCustomButtons()
-          return@withLock
-        }
-
-        val loaded = loadCustomButtonsScript(file)
-        if (!loaded) {
-          android.util.Log.w("PlayerViewModel", "custombuttons.lua load failed during $reason")
+          // Update hr-seek settings dynamically
+          MPVLib.setPropertyString("hr-seek", if (shouldUsePreciseSeeking) "yes" else "no")
+          MPVLib.setPropertyString("hr-seek-framedrop", if (shouldUsePreciseSeeking) "no" else "yes")
         }
       }
     }
-  }
-
-  private fun isCustomButtonsScriptLoaded(): Boolean =
-    runCatching { MPVLib.getPropertyString(customButtonsLoadedFlagProperty) == "1" }
-      .getOrDefault(false)
-
-  private fun loadCustomButtonsScript(file: File): Boolean {
-    runCatching { MPVLib.setPropertyString(customButtonsLoadedFlagProperty, "0") }
-
-    return runCatching {
-      MPVLib.command("load-script", file.absolutePath)
-      true
-    }.getOrElse {
-      android.util.Log.w("PlayerViewModel", "load-script failed: ${it.message}")
-      false
-    }
-  }
-
-  fun callCustomButton(id: String) {
-    val safeId = id.replace("-", "_")
-    MPVLib.command("script-message", "call_button_$safeId")
-  }
-  
-  fun callCustomButtonLongPress(id: String) {
-    val safeId = id.replace("-", "_")
-    MPVLib.command("script-message", "call_button_long_$safeId")
-  }
-
-  private fun StringBuilder.processButton(
-    originalId: String,
-    safeId: String,
-    label: String,
-    command: String,
-    longPressCommand: String,
-    onStartup: String,
-    isLeft: Boolean,
-    uiList: MutableList<CustomButtonState>
-  ) {
-    if (label.isNotBlank()) {
-      uiList.add(CustomButtonState(originalId, label, isLeft))
-      
-      // On Startup Code
-      if (onStartup.isNotBlank()) {
-          append(onStartup)
-          append("\n")
-      }
-
-      // Click Handler
-      if (command.isNotBlank()) {
-        append(
-          """
-          function button_${safeId}()
-              ${command}
-          end
-          mp.register_script_message('call_button_${safeId}', button_${safeId})
-          """.trimIndent()
-        )
-        append("\n")
-      }
-      
-      // Long Press Handler
-      if (longPressCommand.isNotBlank()) {
-        append(
-          """
-          function button_long_${safeId}()
-              ${longPressCommand}
-          end
-          mp.register_script_message('call_button_long_${safeId}', button_long_${safeId})
-          """.trimIndent()
-        )
-        append("\n")
-      }
-    }
-
   }
 
   // Cached values
@@ -746,6 +538,67 @@ class PlayerViewModel(
       _externalSubtitles.clear()
       // Scan for previously downloaded/added subtitles
       scanLocalSubtitles(mediaTitle)
+
+      // 1. Reset Aspect Ratio to saved preference
+      val savedAspect = playerPreferences.defaultVideoAspect.get()
+      val savedCustomRatio = playerPreferences.defaultCustomAspectRatio.get()
+      
+      if (savedCustomRatio > 0) {
+        // Apply saved custom aspect ratio
+        _currentAspectRatio.value = savedCustomRatio
+        runCatching {
+          MPVLib.setPropertyDouble("panscan", 0.0)
+          MPVLib.setPropertyDouble("video-aspect-override", savedCustomRatio)
+        }
+      } else {
+        // Apply saved standard aspect mode (Fit, Crop, or Stretch)
+        _videoAspect.value = savedAspect
+        _currentAspectRatio.value = -1.0
+        runCatching {
+          when (savedAspect) {
+            VideoAspect.Fit -> {
+              MPVLib.setPropertyDouble("panscan", 0.0)
+              MPVLib.setPropertyDouble("video-aspect-override", -1.0)
+            }
+            VideoAspect.Crop -> {
+              MPVLib.setPropertyDouble("video-aspect-override", -1.0)
+              MPVLib.setPropertyDouble("panscan", 1.0)
+            }
+            VideoAspect.Stretch -> {
+              @Suppress("DEPRECATION")
+              val dm = DisplayMetrics()
+              @Suppress("DEPRECATION")
+              host.hostWindowManager.defaultDisplay.getRealMetrics(dm)
+              val rotate = MPVLib.getPropertyInt("video-params/rotate") ?: 0
+              val isVideoRotated = (rotate % 180 == 90)
+              val screenRatio = if (isVideoRotated) {
+                dm.heightPixels.toDouble() / dm.widthPixels.toDouble()
+              } else {
+                dm.widthPixels.toDouble() / dm.heightPixels.toDouble()
+              }
+              MPVLib.setPropertyDouble("video-aspect-override", screenRatio)
+              MPVLib.setPropertyDouble("panscan", 0.0)
+            }
+          }
+        }
+      }
+
+      // 2. Reset Video Zoom
+      if (_videoZoom.value != 0f) {
+          _videoZoom.value = 0f
+          runCatching { MPVLib.setPropertyDouble("video-zoom", 0.0) }
+      }
+
+      // 3. Reset Video Pan
+      if (_videoPanX.value != 0f || _videoPanY.value != 0f) {
+          _videoPanX.value = 0f
+          _videoPanY.value = 0f
+          runCatching {
+              MPVLib.setPropertyDouble("video-pan-x", 0.0)
+              MPVLib.setPropertyDouble("video-pan-y", 0.0)
+          }
+      }
+      // ---------------------------------------------------
     }
   }
 
@@ -866,10 +719,10 @@ class PlayerViewModel(
   }
 
   // --- Subtitle Search ---
-  fun searchSubtitles(query: String, season: Int? = null, episode: Int? = null) {
+  fun searchSubtitles(query: String, season: Int? = null, episode: Int? = null, year: String? = null) {
      viewModelScope.launch {
          _isSearchingSub.value = true
-         wyzieRepository.search(query, season, episode)
+         wyzieRepository.search(query, season, episode, year)
              .onSuccess { results ->
                  _wyzieSearchResults.value = results
              }
@@ -1237,9 +1090,11 @@ class PlayerViewModel(
       }
     }
 
-    // Update the state
+    // Update the state and persist to preferences
     _videoAspect.value = aspect
     _currentAspectRatio.value = -1.0 // Reset custom ratio when using standard modes
+    playerPreferences.defaultVideoAspect.set(aspect)
+    playerPreferences.defaultCustomAspectRatio.set(-1.0)
 
     // Notify the UI
     if (showUpdate) {
@@ -1251,6 +1106,7 @@ class PlayerViewModel(
     MPVLib.setPropertyDouble("panscan", 0.0)
     MPVLib.setPropertyDouble("video-aspect-override", ratio)
     _currentAspectRatio.value = ratio
+    playerPreferences.defaultCustomAspectRatio.set(ratio)
     playerUpdate.value = PlayerUpdates.AspectRatio
   }
 
@@ -1271,87 +1127,6 @@ class PlayerViewModel(
           ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         }
       }
-  }
-
-  // ==================== Lua Invocation Handling ====================
-
-  fun handleLuaInvocation(
-    property: String,
-    value: String,
-  ) {
-    val data = value.removeSurrounding("\"").ifEmpty { return }
-
-    when (property.substringAfterLast("/")) {
-      "show_text" -> playerUpdate.value = PlayerUpdates.ShowText(data)
-      "toggle_ui" -> handleToggleUI(data)
-      "show_panel" -> handleShowPanel(data)
-      "seek_to_with_text" -> {
-        val (seekValue, text) = data.split("|", limit = 2)
-        seekToWithText(seekValue.toInt(), text)
-      }
-      "seek_by_with_text" -> {
-        val (seekValue, text) = data.split("|", limit = 2)
-        seekByWithText(seekValue.toInt(), text)
-      }
-      "seek_by" -> seekByWithText(data.toInt(), null)
-      "seek_to" -> seekToWithText(data.toInt(), null)
-      "software_keyboard" -> handleSoftwareKeyboard(data)
-    }
-
-    MPVLib.setPropertyString(property, "")
-  }
-
-  private fun handleToggleUI(data: String) {
-    when (data) {
-      "show" -> showControls()
-      "toggle" -> if (controlsShown.value) hideControls() else showControls()
-      "hide" -> {
-        sheetShown.value = Sheets.None
-        panelShown.value = Panels.None
-        hideControls()
-      }
-    }
-  }
-
-  private fun handleShowPanel(data: String) {
-    when (data) {
-      "frame_navigation" -> {
-        sheetShown.value = Sheets.FrameNavigation
-      }
-      else -> {
-        panelShown.value =
-          when (data) {
-            "subtitle_settings" -> Panels.SubtitleSettings
-            "subtitle_delay" -> Panels.SubtitleDelay
-            "audio_delay" -> Panels.AudioDelay
-            "video_filters" -> Panels.VideoFilters
-            else -> Panels.None
-          }
-      }
-    }
-  }
-
-  private fun handleSoftwareKeyboard(data: String) {
-    when (data) {
-      "show" -> forceShowSoftwareKeyboard()
-      "hide" -> forceHideSoftwareKeyboard()
-      "toggle" ->
-        if (!inputMethodManager.isActive) {
-          forceShowSoftwareKeyboard()
-        } else {
-          forceHideSoftwareKeyboard()
-        }
-    }
-  }
-
-  @Suppress("DEPRECATION")
-  private fun forceShowSoftwareKeyboard() {
-    inputMethodManager.toggleSoftInput(InputMethodManager.SHOW_FORCED, 0)
-  }
-
-  @Suppress("DEPRECATION")
-  private fun forceHideSoftwareKeyboard() {
-    inputMethodManager.toggleSoftInput(InputMethodManager.SHOW_IMPLICIT, 0)
   }
 
   // ==================== Gesture Handling ====================
@@ -2111,6 +1886,10 @@ class PlayerViewModel(
 
   fun showToast(message: String) {
     Toast.makeText(host.context, message, Toast.LENGTH_SHORT).show()
+  }
+
+  override fun onCleared() {
+    super.onCleared()
   }
 }
 

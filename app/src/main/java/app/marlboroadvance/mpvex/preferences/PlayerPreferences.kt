@@ -1,3 +1,4 @@
+
 package app.marlboroadvance.mpvex.preferences
 
 import app.marlboroadvance.mpvex.preferences.preference.PreferenceStore
@@ -69,6 +70,13 @@ class PlayerPreferences(
 
   val keepScreenOnWhenPaused = preferenceStore.getBoolean("keep_screen_on_when_paused", false)
 
-  // Custom Buttons - JSON List
-  val customButtons = preferenceStore.getString("custom_buttons_json", "[]")
+  // Persist aspect ratio setting (default to Fit)
+  val defaultVideoAspect = preferenceStore.getEnum("default_video_aspect", VideoAspect.Fit)
+  val defaultCustomAspectRatio = preferenceStore.getObject(
+    key = "default_custom_aspect_ratio",
+    defaultValue = -1.0,
+    serializer = { it.toString() },
+    deserializer = { it.toDoubleOrNull() ?: -1.0 }
+  )
+
 }

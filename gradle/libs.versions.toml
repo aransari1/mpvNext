@@ -1,11 +1,11 @@
 [versions]
-agp = "9.0.1"
-commonsNet = "3.12.0"
+agp = "9.1.0"
+commonsNet = "3.13.0"
 smbj = "0.14.0"
-kotlin = "2.3.10"
-composeBom = "2026.02.01"
-activityCompose = "1.12.4"
-koin = "4.1.1"
+kotlin = "2.3.20"
+composeBom = "2026.03.00"
+activityCompose = "1.13.0"
+koin = "4.2.0"
 lazycolumnscrollbar = "2.2.0"
 nanohttpd = "2.3.1"
 room = "2.8.4"
@@ -24,7 +24,7 @@ smbj = { module = "com.hierynomus:smbj", version.ref = "smbj" }
 lazycolumnscrollbar = { module = "com.github.nanihadesuka:LazyColumnScrollbar", version.ref = "lazycolumnscrollbar" }
 nanohttpd = { module = "org.nanohttpd:nanohttpd", version.ref = "nanohttpd" }
 sardine-android = { module = "com.github.thegrizzlylabs:sardine-android", version.ref = "sardineAndroid" }
-saveable = { group = "androidx.compose.runtime", name = "runtime-saveable", version = "1.10.4" }
+saveable = { group = "androidx.compose.runtime", name = "runtime-saveable", version = "1.10.5" }
 androidx-ui = { group = "androidx.compose.ui", name = "ui" }
 androidx-ui-graphics = { group = "androidx.compose.ui", name = "ui-graphics" }
 androidx-ui-tooling = { group = "androidx.compose.ui", name = "ui-tooling" }
@@ -48,7 +48,7 @@ koin-android = { module = "io.insert-koin:koin-android" }
 koin-compose = { module = "io.insert-koin:koin-compose" }
 koin-viewmodel = { module = "io.insert-koin:koin-compose-viewmodel" }
 
-compose-prefs = { module = "me.zhanghai.compose.preference:preference", version = "2.1.1" }
+compose-prefs = { module = "me.zhanghai.compose.preference:preference", version = "2.2.0" }
 
 room-runtime = { module = "androidx.room:room-runtime", version.ref = "room" }
 room-compiler = { module = "androidx.room:room-compiler", version.ref = "room" }

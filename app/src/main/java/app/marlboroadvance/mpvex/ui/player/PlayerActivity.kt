@@ -39,7 +39,6 @@ import app.marlboroadvance.mpvex.database.entities.PlaybackStateEntity
 import app.marlboroadvance.mpvex.databinding.PlayerLayoutBinding
 import app.marlboroadvance.mpvex.domain.playbackstate.repository.PlaybackStateRepository
 import app.marlboroadvance.mpvex.preferences.AdvancedPreferences
-import app.marlboroadvance.mpvex.preferences.AppearancePreferences
 import app.marlboroadvance.mpvex.preferences.AudioPreferences
 import app.marlboroadvance.mpvex.preferences.BrowserPreferences
 import app.marlboroadvance.mpvex.preferences.PlayerPreferences
@@ -138,11 +137,6 @@ class PlayerActivity :
    * Preferences for browser settings.
    */
   private val browserPreferences: BrowserPreferences by inject()
-
-  /**
-   * Preferences for appearance settings.
-   */
-  private val appearancePreferences: AppearancePreferences by inject()
 
   /**
    * Manager for file operations.
@@ -337,8 +331,10 @@ class PlayerActivity :
     super.onCreate(savedInstanceState)
     setContentView(binding.root)
 
+    // OPTIMIZATION: Set volume control stream so hardware buttons control media volume
+    volumeControlStream = AudioManager.STREAM_MUSIC
+
     setupMPV()
-    viewModel.onMpvCoreInitialized()
     MediaPlaybackService.createNotificationChannel(this)
     setupAudio()
     setupBackPressHandler()
@@ -415,18 +411,6 @@ class PlayerActivity :
 
     // Apply persisted shuffle state after playlist is loaded
     viewModel.applyPersistedShuffleState()
-
-    // Observe selected Lua scripts for runtime loading
-    lifecycleScope.launch {
-      var previousScripts = advancedPreferences.selectedLuaScripts.get()
-      advancedPreferences.selectedLuaScripts.changes().collect { newScripts ->
-        val addedScripts = newScripts - previousScripts
-        addedScripts.forEach { scriptName ->
-          loadScriptAtRuntime(scriptName)
-        }
-        previousScripts = newScripts
-      }
-    }
 
     window.attributes.layoutInDisplayCutoutMode =
       WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
@@ -577,6 +561,9 @@ class PlayerActivity :
     Log.d(TAG, "PlayerActivity onDestroy")
 
     runCatching {
+      // OPTIMIZATION: Prevent any further UI updates or callbacks
+      isReady = false
+
       // Only stop the service if we're not doing manual background playback
       if ((isUserFinishing || isFinishing) && !isManualBackgroundPlayback) {
         if (serviceBound) {
@@ -677,7 +664,12 @@ class PlayerActivity :
       val shouldPause = (!audioPreferences.automaticBackgroundPlayback.get() && !isManualBackgroundPlayback) || 
                         (isUserFinishing && !isManualBackgroundPlayback)
 
-      if (!isInPip && shouldPause) {
+      // OPTIMIZATION: Stop playback immediately if finishing to reduce cleanup overhead
+      if (isFinishing && !isManualBackgroundPlayback) {
+        viewModel.pause()
+        // Tell MPV to stop processing to reduce busywork during cleanup
+        MPVLib.command("stop")
+      } else if (!isInPip && shouldPause) {
         wasPlayingBeforePause = !(viewModel.paused ?: true)
         viewModel.pause()
       }
@@ -687,7 +679,10 @@ class PlayerActivity :
         restoreSystemUI()
       }
 
-      saveVideoPlaybackState(fileName)
+      // OPTIMIZATION: Only save if not finishing (onDestroy will handle final save)
+      if (!isFinishing) {
+        saveVideoPlaybackState(fileName)
+      }
     }.onFailure { e ->
       Log.e(TAG, "Error during onPause", e)
     }
@@ -715,7 +710,7 @@ class PlayerActivity :
     super.finish()
   }
 
-  @RequiresApi(Build.VERSION_CODES.P)
+  // finishAndRemoveTask() was added in API 21, but since our minSdk is 26, it's always available
   override fun finishAndRemoveTask() {
     runCatching {
       // Don't restore UI during normal finish to prevent flickering
@@ -858,11 +853,9 @@ class PlayerActivity :
 
   /**
    * Initializes the MPV player with the necessary paths and observers.
-   * CRITICAL: Must copy config and scripts BEFORE initializing MPV, as MPV loads scripts during init.
    */
   private fun setupMPV() {
     // Copy essential files FIRST, before MPV initialization
-    // MPV will load scripts during initialize(), so they must exist beforehand
     runCatching {
       Utils.copyAssets(this@PlayerActivity)
       syncFromUserMpvDirectory()
@@ -901,9 +894,6 @@ class PlayerActivity :
     if (tree != null) {
       Log.d(TAG, "Syncing from user MPV directory: ${tree.uri}")
       syncConfigFiles(tree)
-      syncScripts(tree)
-      syncScriptOpts(tree)
-      syncShaders(tree)
       syncFonts(tree)
       Log.d(TAG, "Full MPV directory sync completed")
     } else {
@@ -951,130 +941,6 @@ class PlayerActivity :
         Log.e(TAG, "Error syncing config: $configName", e)
       }
     }
-  }
-
-  // ==================== Scripts Sync ====================
-
-  /**
-   * Syncs all script files (.lua, .js) from the user's MPV directory.
-   * Looks in scripts/ subfolder first (case-insensitive), falls back to root.
-   */
-  private fun syncScripts(tree: DocumentFile) {
-    val internalScriptsDir = File(filesDir, "scripts")
-    internalScriptsDir.mkdirs()
-    internalScriptsDir.listFiles()?.forEach { it.delete() }
-
-    if (!advancedPreferences.enableLuaScripts.get()) {
-      Log.d(TAG, "Lua scripts disabled, skipping")
-      return
-    }
-
-    val scriptsSubdir = findSubdirCaseInsensitive(tree, "scripts")
-    val sourceDir = scriptsSubdir ?: tree
-    val scriptExtensions = setOf("lua", "js")
-    var count = 0
-
-    sourceDir.listFiles().forEach { file ->
-      if (!file.isFile) return@forEach
-      val name = file.name ?: return@forEach
-      val ext = name.substringAfterLast('.', "").lowercase()
-      if (ext !in scriptExtensions) return@forEach
-
-      val selectedScripts = advancedPreferences.selectedLuaScripts.get()
-      if (!selectedScripts.contains(name)) {
-          return@forEach
-      }
-
-      runCatching {
-        contentResolver.openInputStream(file.uri)?.use { input ->
-          File(internalScriptsDir, name).outputStream().use { output ->
-            input.copyTo(output)
-          }
-          count++
-          Log.d(TAG, "Synced script: $name")
-        }
-      }.onFailure { e ->
-        Log.e(TAG, "Error syncing script: $name", e)
-      }
-    }
-
-    Log.d(TAG, "Scripts sync: $count file(s) from ${if (scriptsSubdir != null) "scripts/" else "root"}")
-  }
-
-  // ==================== Script Options Sync ====================
-
-  /**
-   * Syncs all files from script-opts/ subfolder (case-insensitive).
-   */
-  private fun syncScriptOpts(tree: DocumentFile) {
-    val internalScriptOptsDir = File(filesDir, "script-opts")
-    internalScriptOptsDir.mkdirs()
-    internalScriptOptsDir.listFiles()?.forEach { it.delete() }
-
-    val scriptOptsSubdir = findSubdirCaseInsensitive(tree, "script-opts")
-    if (scriptOptsSubdir == null) {
-      Log.d(TAG, "No script-opts/ subfolder found, skipping")
-      return
-    }
-
-    var count = 0
-    scriptOptsSubdir.listFiles().forEach { file ->
-      if (!file.isFile) return@forEach
-      val name = file.name ?: return@forEach
-
-      runCatching {
-        contentResolver.openInputStream(file.uri)?.use { input ->
-          File(internalScriptOptsDir, name).outputStream().use { output ->
-            input.copyTo(output)
-          }
-          count++
-          Log.d(TAG, "Synced script-opt: $name")
-        }
-      }.onFailure { e ->
-        Log.e(TAG, "Error syncing script-opt: $name", e)
-      }
-    }
-
-    Log.d(TAG, "Script-opts sync: $count file(s)")
-  }
-
-  // ==================== Shaders Sync ====================
-
-  /**
-   * Syncs shader files (.glsl, .hook, .comp) from the user's MPV directory.
-   * Looks in shaders/ subfolder first (case-insensitive), falls back to root.
-   * Saves to shaders/ (same as non-Play Store) so Lua scripts can find them at ~~/shaders/
-   */
-  private fun syncShaders(tree: DocumentFile) {
-    // Use shaders/ directory directly for compatibility with existing Lua scripts
-    val shadersDir = File(filesDir, "shaders")
-    shadersDir.mkdirs()
-
-    val shadersSubdir = findSubdirCaseInsensitive(tree, "shaders")
-    val sourceDir = shadersSubdir ?: tree
-    val shaderExtensions = setOf("glsl", "hook", "comp")
-    var count = 0
-
-    sourceDir.listFiles().forEach { file ->
-      if (!file.isFile) return@forEach
-      val name = file.name ?: return@forEach
-      val ext = name.substringAfterLast('.', "").lowercase()
-      if (ext !in shaderExtensions) return@forEach
-
-      runCatching {
-        contentResolver.openInputStream(file.uri)?.use { input ->
-          File(shadersDir, name).outputStream().use { output ->
-            input.copyTo(output)
-          }
-          count++
-          Log.d(TAG, "Synced shader: $name")
-        }
-      }.onFailure { e ->
-        Log.e(TAG, "Error syncing shader: $name", e)
-      }
-    }
-
-    Log.d(TAG, "Shaders sync: $count file(s)")
   }
 
   // ==================== Fonts Sync ====================
@@ -1136,59 +1002,6 @@ class PlayerActivity :
     Log.d(TAG, "Fonts sync: $count file(s) from MPV directory")
   }
 
-  /**
-   * Loads a specific Lua script at runtime without restarting the player.
-   * Finds the script in the user's MPV directory, copies it to internal storage,
-   * and commands MPV to load it.
-   */
-  private fun loadScriptAtRuntime(scriptName: String) {
-    if (!mpvInitialized || isFinishing) return
-
-    val mpvConfStorageUri = advancedPreferences.mpvConfStorageUri.get()
-    if (mpvConfStorageUri.isBlank()) return
-
-    lifecycleScope.launch(Dispatchers.IO) {
-      runCatching {
-        val tree = DocumentFile.fromTreeUri(this@PlayerActivity, mpvConfStorageUri.toUri())
-        if (tree != null && tree.exists()) {
-          // Look for scripts/ subfolder first (case-insensitive), fall back to root
-          val scriptsDir = findSubdirCaseInsensitive(tree, "scripts") ?: tree
-          
-          val scriptFile = scriptsDir.listFiles().firstOrNull { 
-            it.name == scriptName 
-          }
-
-          if (scriptFile != null) {
-            val internalScriptsDir = File(filesDir, "scripts")
-            if (!internalScriptsDir.exists()) internalScriptsDir.mkdirs()
-            
-            val targetFile = File(internalScriptsDir, scriptName)
-            
-            contentResolver.openInputStream(scriptFile.uri)?.use { input ->
-              targetFile.outputStream().use { output ->
-                input.copyTo(output)
-              }
-            }
-            
-            withContext(Dispatchers.Main) {
-              MPVLib.command("load-script", targetFile.absolutePath)
-              viewModel.showToast("Loaded script: $scriptName")
-            }
-          }
-        }
-      }.onFailure { e ->
-        Log.e(TAG, "Error loading script at runtime: $scriptName", e)
-        withContext(Dispatchers.Main) {
-          android.widget.Toast.makeText(
-            this@PlayerActivity,
-            "Failed to load script: ${e.message}",
-            android.widget.Toast.LENGTH_LONG
-          ).show()
-        }
-      }
-    }
-  }
-
   // ==================== Helpers ====================
 
   /**
@@ -1206,8 +1019,7 @@ class PlayerActivity :
         val content = advancedPreferences.inputConf.get()
         if (content.isNotBlank()) writeText(content)
       }
-      // Ensure scripts directory exists even without user dir
-      File(filesDir, "scripts").mkdirs()
+      // Ensure fonts directory exists even without user dir
       File(filesDir, "fonts").mkdirs()
     }.onFailure { e ->
       Log.e(TAG, "Error creating fallback config files", e)
@@ -1622,7 +1434,7 @@ class PlayerActivity :
         if (playerPreferences.orientation.get() == PlayerOrientation.Video && aspect != null) {
           setOrientation()
         }
-        
+
         // Re-apply Anime4K shaders (check for resolution limit)
         player.applyAnime4KShaders()
       }
@@ -1730,22 +1542,6 @@ class PlayerActivity :
   }
 
   /**
-   * Observer callback for MPV property changes (String values).
-   * Handles Lua script invocations.
-   *
-   * @param property The property name that changed
-   * @param value The new String value
-   */
-  internal fun onObserverEvent(
-    property: String,
-    value: String,
-  ) {
-    when (property.substringBeforeLast("/")) {
-      "user-data/mpvex" -> viewModel.handleLuaInvocation(property, value)
-    }
-  }
-
-  /**
    * Observer callback for MPV property changes (MPVNode values).
    *
    * This method is called when an MPV property (with MPVNode value) changes.
@@ -1754,7 +1550,6 @@ class PlayerActivity :
    * @param property The property name that changed
    * @param value The new MPVNode value
    */
-  @Suppress("UnusedParameter")
   internal fun onObserverEvent(
     property: String,
     value: MPVNode,
@@ -1771,7 +1566,6 @@ class PlayerActivity :
    * @param property The property name that changed
    * @param value The new Double value
    */
-  @Suppress("UnusedParameter")
   internal fun onObserverEvent(
     property: String,
     value: Double,
@@ -1796,6 +1590,22 @@ class PlayerActivity :
         }
       }
     }
+  }
+
+  /**
+   * Observer callback for MPV property changes (String values).
+   *
+   * This method is called when an MPV property (with String value) changes.
+   * Extend this method to handle properties as needed.
+   *
+   * @param property The property name that changed
+   * @param value The new String value
+   */
+  internal fun onObserverEvent(
+    property: String,
+    value: String,
+  ) {
+    // Currently no String properties are handled
   }
 
   /**
@@ -1872,6 +1682,20 @@ class PlayerActivity :
           val zoomPreference = playerPreferences.defaultVideoZoom.get()
           MPVLib.setPropertyDouble("video-zoom", zoomPreference.toDouble())
           viewModel.setVideoZoom(zoomPreference)
+        }
+      }
+
+      // Apply saved aspect ratio setting
+      withContext(Dispatchers.Main) {
+        val savedAspect = playerPreferences.defaultVideoAspect.get()
+        val savedCustomRatio = playerPreferences.defaultCustomAspectRatio.get()
+        
+        if (savedCustomRatio > 0) {
+          // Apply custom aspect ratio
+          viewModel.setCustomAspectRatio(savedCustomRatio)
+        } else {
+          // Apply standard aspect mode (Fit, Crop, or Stretch)
+          viewModel.changeVideoAspect(savedAspect, showUpdate = false)
         }
       }
     }
