@@ -1,5 +1,6 @@
 package app.marlboroadvance.mpvex.presentation.components
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -84,6 +85,7 @@ fun SliderItem(
   steps: Int = 0,
   min: Float = 0f,
   icon: @Composable () -> Unit = {},
+  onValueTextClick: (() -> Unit)? = null,
 ) {
   val haptic = LocalHapticFeedback.current
 
@@ -104,7 +106,15 @@ fun SliderItem(
         text = label,
         style = MaterialTheme.typography.bodyMedium,
       )
-      Text(valueText)
+      Text(
+        text = valueText,
+        modifier = if (onValueTextClick != null) {
+          Modifier.clickable { onValueTextClick() }
+        } else {
+          Modifier
+        },
+        color = if (onValueTextClick != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+      )
     }
 
     Slider(
