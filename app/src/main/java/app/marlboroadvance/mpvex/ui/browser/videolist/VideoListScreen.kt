@@ -428,6 +428,7 @@ data class VideoListScreen(
         itemType = "video",
         itemCount = selectionManager.selectedCount,
         itemNames = selectionManager.getSelectedItems().map { it.displayName },
+        totalSize = selectionManager.getSelectedItems().sumOf { it.size },
       )
 
       // Rename Dialog

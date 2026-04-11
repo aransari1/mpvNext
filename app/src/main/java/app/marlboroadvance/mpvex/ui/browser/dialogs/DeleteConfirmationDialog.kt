@@ -3,9 +3,11 @@ package app.marlboroadvance.mpvex.ui.browser.dialogs
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.weight
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -18,9 +20,13 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import java.util.Locale
+import kotlin.math.log10
+import kotlin.math.pow
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
@@ -31,6 +37,7 @@ fun DeleteConfirmationDialog(
   itemType: String,
   itemCount: Int,
   itemNames: List<String> = emptyList(),
+  totalSize: Long = 0L,
 ) {
   if (!isOpen) return
 
@@ -112,34 +119,55 @@ fun DeleteConfirmationDialog(
       }
     },
     confirmButton = {
-      Button(
-        onClick = {
-          onConfirm()
-          onDismiss()
-        },
-        colors =
-          ButtonDefaults.buttonColors(
-            containerColor = MaterialTheme.colorScheme.error,
-            contentColor = MaterialTheme.colorScheme.onError,
-          ),
-        shape = MaterialTheme.shapes.extraLarge,
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
       ) {
-        Text(
-          text = "Delete",
-          fontWeight = FontWeight.Bold,
-        )
+        if (totalSize > 0L) {
+          Text(
+            text = formatFileSize(totalSize),
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+          )
+        }
+        Spacer(modifier = Modifier.weight(1f))
+        TextButton(
+          onClick = onDismiss,
+          shape = MaterialTheme.shapes.extraLarge,
+        ) {
+          Text("Cancel", fontWeight = FontWeight.Medium)
+        }
+        Button(
+          onClick = {
+            onConfirm()
+            onDismiss()
+          },
+          colors =
+            ButtonDefaults.buttonColors(
+              containerColor = MaterialTheme.colorScheme.error,
+              contentColor = MaterialTheme.colorScheme.onError,
+            ),
+          shape = MaterialTheme.shapes.extraLarge,
+        ) {
+          Text(
+            text = "Delete",
+            fontWeight = FontWeight.Bold,
+          )
+        }
       }
     },
-    dismissButton = {
-      TextButton(
-        onClick = onDismiss,
-        shape = MaterialTheme.shapes.extraLarge,
-      ) {
-        Text("Cancel", fontWeight = FontWeight.Medium)
-      }
-    },
+    dismissButton = {},
     containerColor = MaterialTheme.colorScheme.surface,
     tonalElevation = 6.dp,
     shape = MaterialTheme.shapes.extraLarge,
   )
+}
+
+private fun formatFileSize(bytes: Long): String {
+  if (bytes <= 0) return "0 B"
+  val units = arrayOf("B", "KB", "MB", "GB", "TB")
+  val digitGroups = (log10(bytes.toDouble()) / log10(1024.0)).toInt()
+  val value = bytes / 1024.0.pow(digitGroups.toDouble())
+  return String.format(Locale.getDefault(), "%.1f %s", value, units[digitGroups])
 }

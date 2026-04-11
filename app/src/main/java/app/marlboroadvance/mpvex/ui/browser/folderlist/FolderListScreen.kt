@@ -599,6 +599,7 @@ object FolderListScreen : Screen {
         itemType = "folder",
         itemCount = selectionManager.selectedCount,
         itemNames = selectionManager.getSelectedItems().map { it.name },
+        totalSize = selectionManager.getSelectedItems().sumOf { it.totalSize },
       )
     }
   }

@@ -948,6 +948,8 @@ fun FileSystemBrowserScreen(path: String? = null) {
       itemCount = selectedCount,
       itemNames = (folderSelectionManager.getSelectedItems().map { it.name } +
         videoSelectionManager.getSelectedItems().map { it.displayName }),
+      totalSize = folderSelectionManager.getSelectedItems().sumOf { it.totalSize } +
+        videoSelectionManager.getSelectedItems().sumOf { it.size },
     )
 
     // Rename Dialog (only for videos)
