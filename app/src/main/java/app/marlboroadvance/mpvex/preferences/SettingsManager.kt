@@ -24,7 +24,7 @@ class SettingsManager(
   private val database: MpvExDatabase,
 ) {
   companion object {
-    private const val TAG_ROOT = "mpvNextSettings"
+    private const val TAG_ROOT = "mpvExSettings"
     private const val TAG_PREFERENCES = "preferences"
     private const val TAG_PREFERENCE = "preference"
     private const val TAG_DATABASE = "database"

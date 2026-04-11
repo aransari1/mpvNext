@@ -20,11 +20,11 @@ export const siteConfig = {
     apple: "/apple-icon.png",
   },
   links: {
-    github: "https://github.com/marlboro-advance/mpvNext",
-    releases: "https://github.com/marlboro-advance/mpvNext/releases",
-    latestRelease: "https://github.com/marlboro-advance/mpvNext/releases/latest",
+    github: "https://github.com/aransari1/mpvNext",
+    releases: "https://github.com/aransari1/mpvNext/releases",
+    latestRelease: "https://github.com/aransari1/mpvNext/releases/latest",
     izzyOnAndroid: "https://apt.izzysoft.de/packages/app.marlboroadvance.mpvex",
-    contributors: "https://github.com/marlboro-advance/mpvNext/graphs/contributors",
+    contributors: "https://github.com/aransari1/mpvNext/graphs/contributors",
   },
   author: {
     name: "marlboro-advance",

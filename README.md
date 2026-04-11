@@ -5,7 +5,7 @@
 [![GitHub all releases](https://img.shields.io/github/downloads/marlboro-advance/mpvex/total?logo=github&cacheSeconds=3600)](https://github.com/aransari1/mpvNext/releases/latest)
 
 
-**mpvNext is a fork of [mpvEx](https://github.com/marlboro-advance/mpvNext), built on the libmpv library. It aims
+**mpvNext is a fork of [mpvEx](https://github.com/marlboro-advance/mpvEx), built on the libmpv library. It aims
 to combine the powerful features of mpv with an easy to use interface and additional
 features.**
 
@@ -46,7 +46,7 @@ Or you can get the stable releases here
 ### Preview Builds
 For testing purposes only
 
-[![Download Preview Builds](https://img.shields.io/badge/Download-Preview%20Builds-red?style=for-the-badge)](https://marlboro-advance.github.io/mpvNext/)
+[![Download Preview Builds](https://img.shields.io/badge/Download-Preview%20Builds-red?style=for-the-badge)](https://aransari1.github.io/mpvNext/)
 
 ---
 
@@ -149,7 +149,7 @@ Copy the contents of `keystore.txt` and paste it as the value for the `SIGNING_K
 
 ## Acknowledgments
 
-- [mpvEx](https://github.com/marlboro-advance/mpvNext)
+- [mpvEx](https://github.com/marlboro-advance/mpvEx)
 - [mpv-android](https://github.com/mpv-android)
 - [mpvKt](https://github.com/abdallahmehiz/mpvKt)
 - [Next player](https://github.com/anilbeesetti/nextplayer)
