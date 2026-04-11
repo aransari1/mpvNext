@@ -32,7 +32,7 @@ export function ContributorsSection() {
             Contributors
           </h2>
           <p className="text-lg text-muted-foreground text-balance">
-            Amazing people making mpvExtended better every day
+            Amazing people making mpvNext better every day
           </p>
         </div>
 
