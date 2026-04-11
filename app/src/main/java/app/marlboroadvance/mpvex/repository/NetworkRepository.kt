@@ -6,10 +6,12 @@ import app.marlboroadvance.mpvex.domain.network.NetworkConnection
 import app.marlboroadvance.mpvex.domain.network.NetworkFile
 import app.marlboroadvance.mpvex.ui.browser.networkstreaming.clients.NetworkClient
 import app.marlboroadvance.mpvex.ui.browser.networkstreaming.clients.NetworkClientFactory
+import app.marlboroadvance.mpvex.utils.security.CredentialEncryption
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
 
 /**
  * Repository for managing network connections and file browsing
@@ -25,30 +27,37 @@ class NetworkRepository(
   val connectionStatuses: StateFlow<Map<Long, ConnectionStatus>> = _connectionStatuses.asStateFlow()
 
   /**
-   * Get all saved connections as a Flow
+   * Get all saved connections as a Flow.
+   * Passwords are decrypted transparently before being returned.
    */
-  fun getAllConnections(): Flow<List<NetworkConnection>> = dao.getAllConnections()
+  fun getAllConnections(): Flow<List<NetworkConnection>> =
+    dao.getAllConnections().map { connections -> connections.map { decryptPassword(it) } }
 
   /**
    * Get connections that should auto-connect on launch
    */
-  suspend fun getAutoConnectConnections(): List<NetworkConnection> = dao.getAutoConnectConnections()
+  suspend fun getAutoConnectConnections(): List<NetworkConnection> =
+    dao.getAutoConnectConnections().map { decryptPassword(it) }
 
   /**
    * Get a connection by ID
    */
-  suspend fun getConnectionById(id: Long): NetworkConnection? = dao.getConnectionById(id)
+  suspend fun getConnectionById(id: Long): NetworkConnection? =
+    dao.getConnectionById(id)?.let { decryptPassword(it) }
 
   /**
-   * Add a new connection
+   * Add a new connection.
+   * The password is encrypted before being persisted.
    */
-  suspend fun addConnection(connection: NetworkConnection): Long = dao.insert(connection)
+  suspend fun addConnection(connection: NetworkConnection): Long =
+    dao.insert(encryptPassword(connection))
 
   /**
-   * Update an existing connection
+   * Update an existing connection.
+   * The password is encrypted before being persisted.
    */
   suspend fun updateConnection(connection: NetworkConnection) {
-    dao.update(connection)
+    dao.update(encryptPassword(connection))
     // Disconnect and remove cached client if it exists
     // This ensures the next connection uses the updated credentials
     activeClients[connection.id]?.let { client ->
@@ -195,7 +204,8 @@ class NetworkRepository(
   ): Result<List<NetworkFile>> =
     try {
       // Always fetch the latest connection from database to ensure we have current credentials
-      val latestConnection = dao.getConnectionById(connection.id) ?: connection
+      val latestConnection =
+        dao.getConnectionById(connection.id)?.let { decryptPassword(it) } ?: connection
 
       // Check if we have an active client
       val existingClient = activeClients[connection.id]
@@ -248,4 +258,20 @@ class NetworkRepository(
   ) {
     _connectionStatuses.value += (connectionId to status)
   }
+
+  // ── credential helpers ──────────────────────────────────────────
+
+  private fun encryptPassword(connection: NetworkConnection): NetworkConnection =
+    if (connection.password.isBlank() || CredentialEncryption.isEncrypted(connection.password)) {
+      connection
+    } else {
+      connection.copy(password = CredentialEncryption.encrypt(connection.password))
+    }
+
+  private fun decryptPassword(connection: NetworkConnection): NetworkConnection =
+    if (CredentialEncryption.isEncrypted(connection.password)) {
+      connection.copy(password = CredentialEncryption.decrypt(connection.password))
+    } else {
+      connection
+    }
 }

@@ -3,6 +3,7 @@ package app.marlboroadvance.mpvex.ui.browser.networkstreaming.clients
 import android.net.Uri
 import app.marlboroadvance.mpvex.domain.network.NetworkConnection
 import app.marlboroadvance.mpvex.domain.network.NetworkFile
+import java.net.URLEncoder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.apache.commons.net.ftp.FTP
@@ -313,12 +314,16 @@ class FtpClient(private val connection: NetworkConnection) : NetworkClient {
   override suspend fun getFileUri(path: String): Result<Uri> =
     withContext(Dispatchers.IO) {
       try {
-        // Build FTP URI for mpv
+        // Build FTP URI for mpv.
+        // Credentials are URL-encoded to prevent URI injection when they contain
+        // special characters such as @, :, or /.
         val uriString =
           if (connection.isAnonymous) {
             "ftp://${connection.host}:${connection.port}$path"
           } else {
-            "ftp://${connection.username}:${connection.password}@${connection.host}:${connection.port}$path"
+            val encodedUser = URLEncoder.encode(connection.username, "UTF-8")
+            val encodedPass = URLEncoder.encode(connection.password, "UTF-8")
+            "ftp://$encodedUser:$encodedPass@${connection.host}:${connection.port}$path"
           }
 
         Result.success(Uri.parse(uriString))
