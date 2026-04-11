@@ -23,7 +23,7 @@ class BrowserPreferences(
   val videoSortOrderDuration = preferenceStore.getEnum("video_sort_order_duration", SortOrder.Ascending)
   val videoSortOrderDate = preferenceStore.getEnum("video_sort_order_date", SortOrder.Ascending)
   val videoSortOrderSize = preferenceStore.getEnum("video_sort_order_size", SortOrder.Ascending)
-  val videoSortOrderLength = preferenceStore.getEnum("video_sort_order_length", SortOrder.Ascending)
+  val videoSortOrderWatched = preferenceStore.getEnum("video_sort_order_watched", SortOrder.Ascending)
 
   // Per-type sort order preferences for folders (remembered per sort type)
   val folderSortOrderTitle = preferenceStore.getEnum("folder_sort_order_title", SortOrder.Ascending)
@@ -73,7 +73,7 @@ class BrowserPreferences(
       VideoSortType.Duration -> videoSortOrderDuration
       VideoSortType.Date -> videoSortOrderDate
       VideoSortType.Size -> videoSortOrderSize
-      VideoSortType.Length -> videoSortOrderLength
+      VideoSortType.Watched -> videoSortOrderWatched
     }
 
   /**
@@ -128,7 +128,7 @@ enum class VideoSortType {
   Duration,
   Date,
   Size,
-  Length,
+  Watched,
   ;
 
   val displayName: String
@@ -138,7 +138,7 @@ enum class VideoSortType {
         Duration -> "Duration"
         Date -> "Date"
         Size -> "Size"
-        Length -> "Length"
+        Watched -> "Status"
       }
 }
 

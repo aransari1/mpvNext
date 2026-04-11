@@ -34,7 +34,7 @@ import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SwapVert
-import androidx.compose.material.icons.filled.TextFields
+import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.Title
 import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material.icons.filled.ViewModule
@@ -152,12 +152,7 @@ data class VideoListScreen(
     val videoSortOrder by browserPreferences.videoSortOrder.collectAsState()
     val sortedVideosWithInfo =
       remember(videosWithPlaybackInfo, videoSortType, videoSortOrder) {
-        val infoById = videosWithPlaybackInfo.associateBy { it.video.id }
-        val sortedVideos = SortUtils.sortVideos(videosWithPlaybackInfo.map { it.video }, videoSortType, videoSortOrder)
-        // Maintain the playback info mapping — O(1) lookup per item
-        sortedVideos.map { video ->
-          infoById[video.id] ?: VideoWithPlaybackInfo(video)
-        }
+        SortUtils.sortVideosWithPlaybackInfo(videosWithPlaybackInfo, videoSortType, videoSortOrder)
       }
 
     // Selection manager
@@ -911,7 +906,7 @@ private fun VideoSortDialog(
         VideoSortType.Duration.displayName,
         VideoSortType.Date.displayName,
         VideoSortType.Size.displayName,
-        VideoSortType.Length.displayName,
+        VideoSortType.Watched.displayName,
       ),
     icons =
       listOf(
@@ -919,7 +914,7 @@ private fun VideoSortDialog(
         Icons.Filled.AccessTime,
         Icons.Filled.CalendarToday,
         Icons.Filled.SwapVert,
-        Icons.Filled.TextFields,
+        Icons.Filled.Visibility,
       ),
     getLabelForType = { type, _ ->
       when (type) {
@@ -927,7 +922,7 @@ private fun VideoSortDialog(
         VideoSortType.Duration.displayName -> Pair("Shortest", "Longest")
         VideoSortType.Date.displayName -> Pair("Oldest", "Newest")
         VideoSortType.Size.displayName -> Pair("Smallest", "Biggest")
-        VideoSortType.Length.displayName -> Pair("Short", "Long")
+        VideoSortType.Watched.displayName -> Pair("Unwatched", "Watched")
         else -> Pair("Asc", "Desc")
       }
     },
