@@ -121,6 +121,7 @@ fun GestureHandler(
   var hasSwipedEnough by remember { mutableStateOf(false) }
   var longPressTriggeredDuringTouch by remember { mutableStateOf(false) }
   var isVerticalGestureActive by remember { mutableStateOf(false) }
+  var isPanning by remember { mutableStateOf(false) }
   val currentVolume by viewModel.currentVolume.collectAsState()
   val currentMPVVolume by MPVLib.propInt["volume"].collectAsState()
   val currentBrightness by viewModel.currentBrightness.collectAsState()
@@ -737,6 +738,7 @@ fun GestureHandler(
         awaitEachGesture {
           val down = awaitFirstDown(requireUnconsumed = false)
           var panning = false
+          isPanning = false
           var prevX = down.position.x
           var prevY = down.position.y
           val startX = prevX
@@ -765,7 +767,7 @@ fun GestureHandler(
               // Activate after 20px drag threshold
               if (!panning) {
                 val d = sqrt((pos.x - startX).let { it * it } + (pos.y - startY).let { it * it })
-                if (d > 20f) { panning = true; prevX = pos.x; prevY = pos.y }
+                if (d > 20f) { panning = true; isPanning = true; prevX = pos.x; prevY = pos.y }
               }
 
               if (panning) {
@@ -796,6 +798,7 @@ fun GestureHandler(
               break
             }
           } while (event.changes.any { it.pressed })
+          isPanning = false
         }
       }
       .pointerInput(horizontalSwipeToSeek, areControlsLocked, gesturePreferences, isVerticalGestureActive) {
@@ -832,6 +835,7 @@ fun GestureHandler(
                       timeSinceStart > 100L && // Avoid conflicts with double-tap
                       !isLongPressing && // Don't conflict with long press
                       !isDynamicSpeedControlActive && // Don't conflict with speed control
+                      !isPanning && // Don't conflict with single-finger pan
                       panelShown == Panels.None) { // Only when no panels are shown
                     
                     gestureType = "horizontal_seek"
