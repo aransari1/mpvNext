@@ -665,7 +665,7 @@ fun GestureHandler(
           smoothState[0] += (targetX - smoothState[0]) * smoothFactor
           smoothState[1] += (targetY - smoothState[1]) * smoothFactor
           // Bounds: video edge can't go past screen edge
-          val maxPan = ((scale - 1f) / (2f * scale)).coerceAtLeast(0f)
+          val maxPan = ((scale - 1f) / (2f * scale)).coerceAtLeast(0.5f)
           viewModel.setVideoPan(
             smoothState[0].coerceIn(-maxPan, maxPan),
             smoothState[1].coerceIn(-maxPan, maxPan),
@@ -714,10 +714,8 @@ fun GestureHandler(
                   zoom = (zoom + zoomDelta).coerceIn(-1f, 3f)
                   viewModel.setVideoZoom(zoom)
 
-                  // Simultaneous pan while pinching
-                  if (panAndZoomEnabled) {
-                    applyPan(midX - prevMidX, midY - prevMidY, 2f.pow(zoom), panSmooth)
-                  }
+                  // Simultaneous pan while pinching (always enabled, independent of zoom)
+                  applyPan(midX - prevMidX, midY - prevMidY, 2f.pow(zoom), panSmooth)
                 }
 
                 prevDist = dist
@@ -732,7 +730,7 @@ fun GestureHandler(
           } while (event.changes.any { it.pressed })
         }
       }
-      // Single-finger pan (only when Pan & Zoom enabled and zoomed in)
+      // Single-finger pan (when Pan & Zoom enabled)
       .pointerInput(panAndZoomEnabled, pinchToZoomGesture, areControlsLocked, isVerticalGestureActive) {
         if (!panAndZoomEnabled || !pinchToZoomGesture || areControlsLocked || isVerticalGestureActive) return@pointerInput
 
@@ -761,7 +759,6 @@ fun GestureHandler(
             if (pressed.size == 1) {
               val change = pressed[0]
               val zoom = MPVLib.getPropertyDouble("video-zoom")?.toFloat() ?: 0f
-              if (zoom <= 0f) { continue }
 
               val pos = change.position
 
@@ -785,7 +782,7 @@ fun GestureHandler(
                   if (panSmooth[2] == 0f) { panSmooth[0] = targetX; panSmooth[1] = targetY; panSmooth[2] = 1f }
                   panSmooth[0] += (targetX - panSmooth[0]) * 0.5f
                   panSmooth[1] += (targetY - panSmooth[1]) * 0.5f
-                  val maxPan = ((scale - 1f) / (2f * scale)).coerceAtLeast(0f)
+                  val maxPan = ((scale - 1f) / (2f * scale)).coerceAtLeast(0.5f)
                   viewModel.setVideoPan(
                     panSmooth[0].coerceIn(-maxPan, maxPan),
                     panSmooth[1].coerceIn(-maxPan, maxPan),
