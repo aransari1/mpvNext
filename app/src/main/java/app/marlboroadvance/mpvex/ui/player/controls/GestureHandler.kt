@@ -110,7 +110,7 @@ fun GestureHandler(
   val volumeGesture by playerPreferences.volumeGesture.collectAsState()
   val swapVolumeAndBrightness by playerPreferences.swapVolumeAndBrightness.collectAsState()
   val pinchToZoomGesture by playerPreferences.pinchToZoomGesture.collectAsState()
-  val panAndZoomEnabled by playerPreferences.panAndZoomEnabled.collectAsState()
+  val videoPanEnabled by playerPreferences.videoPanEnabled.collectAsState()
   val horizontalSwipeToSeek by playerPreferences.horizontalSwipeToSeek.collectAsState()
   val horizontalSwipeSensitivity by playerPreferences.horizontalSwipeSensitivity.collectAsState()
   var isLongPressing by remember { mutableStateOf(false) }
@@ -121,7 +121,6 @@ fun GestureHandler(
   var hasSwipedEnough by remember { mutableStateOf(false) }
   var longPressTriggeredDuringTouch by remember { mutableStateOf(false) }
   var isVerticalGestureActive by remember { mutableStateOf(false) }
-  var isPanning by remember { mutableStateOf(false) }
   val currentVolume by viewModel.currentVolume.collectAsState()
   val currentMPVVolume by MPVLib.propInt["volume"].collectAsState()
   val currentBrightness by viewModel.currentBrightness.collectAsState()
@@ -634,8 +633,8 @@ fun GestureHandler(
           }
         }
       }
-      .pointerInput(pinchToZoomGesture, panAndZoomEnabled, areControlsLocked, isVerticalGestureActive) {
-        if (!pinchToZoomGesture || areControlsLocked || isVerticalGestureActive) return@pointerInput
+      .pointerInput(pinchToZoomGesture, videoPanEnabled, areControlsLocked, isVerticalGestureActive) {
+        if ((!pinchToZoomGesture && !videoPanEnabled) || areControlsLocked || isVerticalGestureActive) return@pointerInput
 
         // Helper: get video display dimensions at 1x (how mpv fits the video to screen)
         fun videoDisplaySize(): Pair<Float, Float> {
@@ -666,7 +665,7 @@ fun GestureHandler(
           smoothState[0] += (targetX - smoothState[0]) * smoothFactor
           smoothState[1] += (targetY - smoothState[1]) * smoothFactor
           // Bounds: video edge can't go past screen edge
-          val maxPan = ((scale - 1f) / (2f * scale)).coerceAtLeast(0.5f)
+          val maxPan = ((scale - 1f) / (2f * scale)).coerceAtLeast(0.15f)
           viewModel.setVideoPan(
             smoothState[0].coerceIn(-maxPan, maxPan),
             smoothState[1].coerceIn(-maxPan, maxPan),
@@ -710,13 +709,17 @@ fun GestureHandler(
                 }
 
                 if (gestureStarted) {
-                  // Per-frame zoom: small delta from previous distance → naturally smooth
-                  val zoomDelta = ln((dist / prevDist).toDouble()).toFloat() * 1.2f
-                  zoom = (zoom + zoomDelta).coerceIn(-1f, 3f)
-                  viewModel.setVideoZoom(zoom)
+                  if (pinchToZoomGesture) {
+                    // Per-frame zoom: small delta from previous distance → naturally smooth
+                    val zoomDelta = ln((dist / prevDist).toDouble()).toFloat() * 1.2f
+                    zoom = (zoom + zoomDelta).coerceIn(-1f, 3f)
+                    viewModel.setVideoZoom(zoom)
+                  }
 
-                  // Simultaneous pan while pinching (always enabled, independent of zoom)
-                  applyPan(midX - prevMidX, midY - prevMidY, 2f.pow(zoom), panSmooth)
+                  // Simultaneous pan while pinching (controlled by Video Pan toggle)
+                  if (videoPanEnabled) {
+                    applyPan(midX - prevMidX, midY - prevMidY, 2f.pow(zoom), panSmooth)
+                  }
                 }
 
                 prevDist = dist
@@ -729,76 +732,6 @@ fun GestureHandler(
               break
             }
           } while (event.changes.any { it.pressed })
-        }
-      }
-      // Single-finger pan (when Pan & Zoom enabled)
-      .pointerInput(panAndZoomEnabled, pinchToZoomGesture, areControlsLocked, isVerticalGestureActive) {
-        if (!panAndZoomEnabled || !pinchToZoomGesture || areControlsLocked || isVerticalGestureActive) return@pointerInput
-
-        awaitEachGesture {
-          val down = awaitFirstDown(requireUnconsumed = false)
-          var panning = false
-          isPanning = false
-          var prevX = down.position.x
-          var prevY = down.position.y
-          val startX = prevX
-          val startY = prevY
-          val panSmooth = floatArrayOf(0f, 0f, 0f)
-
-          // Helper: get video display dimensions at 1x
-          fun videoDisplaySize(): Pair<Float, Float> {
-            val sw = size.width.toFloat()
-            val sh = size.height.toFloat()
-            val va = MPVLib.getPropertyDouble("video-params/aspect")?.toFloat() ?: (sw / sh)
-            val sa = sw / sh
-            return if (va >= sa) Pair(sw, sw / va) else Pair(sh * va, sh)
-          }
-
-          do {
-            val event = awaitPointerEvent()
-            val pressed = event.changes.filter { it.pressed }
-
-            if (pressed.size == 1) {
-              val change = pressed[0]
-              val zoom = MPVLib.getPropertyDouble("video-zoom")?.toFloat() ?: 0f
-
-              val pos = change.position
-
-              // Activate after 20px drag threshold
-              if (!panning) {
-                val d = sqrt((pos.x - startX).let { it * it } + (pos.y - startY).let { it * it })
-                if (d > 20f) { panning = true; isPanning = true; prevX = pos.x; prevY = pos.y }
-              }
-
-              if (panning) {
-                val sw = size.width.toFloat()
-                val sh = size.height.toFloat()
-                if (sw > 0 && sh > 0) {
-                  val scale = 2f.pow(zoom)
-                  val (bw, bh) = videoDisplaySize()
-                  val curX = MPVLib.getPropertyDouble("video-pan-x")?.toFloat() ?: 0f
-                  val curY = MPVLib.getPropertyDouble("video-pan-y")?.toFloat() ?: 0f
-                  val targetX = curX + (pos.x - prevX) / (bw * scale)
-                  val targetY = curY + (pos.y - prevY) / (bh * scale)
-                  // Initialize smoothing on first pan frame
-                  if (panSmooth[2] == 0f) { panSmooth[0] = targetX; panSmooth[1] = targetY; panSmooth[2] = 1f }
-                  panSmooth[0] += (targetX - panSmooth[0]) * 0.5f
-                  panSmooth[1] += (targetY - panSmooth[1]) * 0.5f
-                  val maxPan = ((scale - 1f) / (2f * scale)).coerceAtLeast(0.5f)
-                  viewModel.setVideoPan(
-                    panSmooth[0].coerceIn(-maxPan, maxPan),
-                    panSmooth[1].coerceIn(-maxPan, maxPan),
-                  )
-                  prevX = pos.x
-                  prevY = pos.y
-                }
-                change.consume()
-              }
-            } else if (pressed.size > 1) {
-              break
-            }
-          } while (event.changes.any { it.pressed })
-          isPanning = false
         }
       }
       .pointerInput(horizontalSwipeToSeek, areControlsLocked, gesturePreferences, isVerticalGestureActive) {
@@ -835,7 +768,6 @@ fun GestureHandler(
                       timeSinceStart > 100L && // Avoid conflicts with double-tap
                       !isLongPressing && // Don't conflict with long press
                       !isDynamicSpeedControlActive && // Don't conflict with speed control
-                      !isPanning && // Don't conflict with single-finger pan
                       panelShown == Panels.None) { // Only when no panels are shown
                     
                     gestureType = "horizontal_seek"
