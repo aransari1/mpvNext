@@ -678,6 +678,8 @@ fun GestureHandler(
           var prevDist = 0f
           var prevMidX = 0f
           var prevMidY = 0f
+          var startMidX = 0f
+          var startMidY = 0f
           val panSmooth = floatArrayOf(0f, 0f, 0f) // smoothX, smoothY, initialized
 
           awaitFirstDown(requireUnconsumed = false)
@@ -701,9 +703,13 @@ fun GestureHandler(
                 zoom = MPVLib.getPropertyDouble("video-zoom")?.toFloat() ?: 0f
                 prevMidX = midX
                 prevMidY = midY
+                startMidX = midX
+                startMidY = midY
               } else {
                 // Activate on significant pinch or two-finger drag movement
-                val midpointMoved = sqrt((midX - prevMidX).let { it * it } + (midY - prevMidY).let { it * it }) > 10f
+                // Use startMid* (accumulated from initial position) for drag activation
+                // so slow drags reliably trigger, unlike per-frame prevMid* comparison
+                val midpointMoved = sqrt((midX - startMidX).let { it * it } + (midY - startMidY).let { it * it }) > 10f
                 if (!gestureStarted && (abs(dist - prevDist) > 5f || (videoPanEnabled && midpointMoved))) {
                   gestureStarted = true
                   if (pinchToZoomGesture) {
