@@ -705,7 +705,9 @@ fun GestureHandler(
                 // Activate on significant pinch movement
                 if (!gestureStarted && abs(dist - prevDist) > 5f) {
                   gestureStarted = true
-                  viewModel.playerUpdate.update { PlayerUpdates.VideoZoom }
+                  if (pinchToZoomGesture) {
+                    viewModel.playerUpdate.update { PlayerUpdates.VideoZoom }
+                  }
                 }
 
                 if (gestureStarted) {
