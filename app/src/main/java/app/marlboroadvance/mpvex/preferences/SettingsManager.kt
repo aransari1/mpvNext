@@ -179,7 +179,9 @@ class SettingsManager(
     serializer.attribute(null, "host", connection.host)
     serializer.attribute(null, "port", connection.port.toString())
     serializer.attribute(null, "username", connection.username)
-    serializer.attribute(null, "password", connection.password)
+    // Security: passwords are intentionally excluded from settings export
+    // to prevent credential leakage when users share exported settings files.
+    serializer.attribute(null, "password", "")
     serializer.attribute(null, "path", connection.path)
     serializer.attribute(null, "isAnonymous", connection.isAnonymous.toString())
     serializer.attribute(null, "lastConnected", connection.lastConnected.toString())

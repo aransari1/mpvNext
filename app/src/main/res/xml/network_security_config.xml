@@ -1,8 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
-    <!-- Allow cleartext (HTTP) traffic for all domains -->
-    <!-- This is necessary for WebDAV, FTP, SMB, and other network protocols that may use HTTP -->
-    <base-config cleartextTrafficPermitted="true">
+    <!-- Default: block cleartext traffic to enforce HTTPS -->
+    <base-config cleartextTrafficPermitted="false">
         <trust-anchors>
             <!-- Trust system certificates -->
             <certificates src="system" />
@@ -10,4 +9,11 @@
             <certificates src="user" />
         </trust-anchors>
     </base-config>
+
+    <!-- Allow cleartext only for localhost (required by the local HTTP proxy
+         that bridges network streams to the mpv player) -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">localhost</domain>
+    </domain-config>
 </network-security-config>

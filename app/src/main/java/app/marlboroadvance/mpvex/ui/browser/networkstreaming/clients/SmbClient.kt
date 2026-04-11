@@ -3,6 +3,7 @@ package app.marlboroadvance.mpvex.ui.browser.networkstreaming.clients
 import android.net.Uri
 import app.marlboroadvance.mpvex.domain.network.NetworkConnection
 import app.marlboroadvance.mpvex.domain.network.NetworkFile
+import java.net.URLEncoder
 import com.hierynomus.msdtyp.AccessMask
 import com.hierynomus.msfscc.fileinformation.FileIdBothDirectoryInformation
 import com.hierynomus.mssmb2.SMB2CreateDisposition
@@ -47,8 +48,13 @@ class SmbClient(private val connection: NetworkConnection) : NetworkClient {
           )
           .withDfsEnabled(false)
           .withMultiProtocolNegotiate(true)
-          .withSigningRequired(false) // Fix for Android: Disable signing to avoid Key.getEncoded() error
-          .withEncryptData(false) // Fix for Android: Disable encryption
+          // Security note: SMB signing and encryption are disabled due to Android
+          // Keystore compatibility issues (Key.getEncoded() returns null on some
+          // devices).  This means connections are vulnerable to man-in-the-middle
+          // attacks on untrusted networks.  Use a VPN when accessing SMB shares
+          // over the internet.
+          .withSigningRequired(false)
+          .withEncryptData(false)
           .build()
 
         smbClient = SMBClient(config)
@@ -416,14 +422,18 @@ class SmbClient(private val connection: NetworkConnection) : NetworkClient {
         val fullPath =
           if (path.startsWith("smb://")) path else "$baseUrl${if (path.startsWith("/")) path else "/$path"}"
 
-        // Build URI with credentials for mpv
+        // Build URI with credentials for mpv.
+        // Credentials are URL-encoded to prevent URI injection when they contain
+        // special characters such as @, :, or /.
         val uriString =
           if (connection.isAnonymous) {
             fullPath
           } else {
+            val encodedUser = URLEncoder.encode(connection.username, "UTF-8")
+            val encodedPass = URLEncoder.encode(connection.password, "UTF-8")
             val hostPart = "${connection.host}${if (connection.port != 445) ":${connection.port}" else ""}"
             val pathPart = if (path.startsWith("/")) path else "/$path"
-            "smb://${connection.username}:${connection.password}@$hostPart${connection.path}$pathPart"
+            "smb://$encodedUser:$encodedPass@$hostPart${connection.path}$pathPart"
           }
 
         Result.success(Uri.parse(uriString))

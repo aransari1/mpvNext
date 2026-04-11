@@ -4,6 +4,7 @@ import android.net.Uri
 import android.util.Log
 import app.marlboroadvance.mpvex.domain.network.NetworkConnection
 import app.marlboroadvance.mpvex.domain.network.NetworkFile
+import java.net.URLEncoder
 import com.thegrizzlylabs.sardineandroid.Sardine
 import com.thegrizzlylabs.sardineandroid.impl.OkHttpSardine
 import com.thegrizzlylabs.sardineandroid.DavResource
@@ -187,11 +188,15 @@ class WebDavClient(private val connection: NetworkConnection) : NetworkClient {
           else -> "$basePath/$cleanPath"
         }
 
-        // Build WebDAV URI with credentials embedded for mpv
+        // Build WebDAV URI with credentials embedded for mpv.
+        // Credentials are URL-encoded to prevent URI injection when they contain
+        // special characters such as @, :, or /.
         val uriString = if (connection.isAnonymous) {
           "$protocol://${connection.host}:${connection.port}/$fullPath"
         } else {
-          "$protocol://${connection.username}:${connection.password}@${connection.host}:${connection.port}/$fullPath"
+          val encodedUser = URLEncoder.encode(connection.username, "UTF-8")
+          val encodedPass = URLEncoder.encode(connection.password, "UTF-8")
+          "$protocol://$encodedUser:$encodedPass@${connection.host}:${connection.port}/$fullPath"
         }
 
         Result.success(Uri.parse(uriString))
