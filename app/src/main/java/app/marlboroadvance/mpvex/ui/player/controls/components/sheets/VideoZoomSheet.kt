@@ -182,7 +182,7 @@ private fun ZoomVideoSheet(
         )
         Spacer(modifier = Modifier.width(8.dp))
         Text(
-          text = "Video Zoom",
+          text = stringResource(R.string.pref_player_gestures_pinch_to_zoom),
           style = MaterialTheme.typography.bodyMedium,
           color = if (zoomEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
         )
