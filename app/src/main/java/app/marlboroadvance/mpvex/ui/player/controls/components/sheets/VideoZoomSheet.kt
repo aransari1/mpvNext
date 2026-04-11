@@ -51,7 +51,8 @@ fun VideoZoomSheet(
 ) {
   val playerPreferences = koinInject<PlayerPreferences>()
   val defaultZoom by playerPreferences.defaultVideoZoom.collectAsState()
-  val panAndZoomEnabled by playerPreferences.panAndZoomEnabled.collectAsState()
+  val pinchToZoomGesture by playerPreferences.pinchToZoomGesture.collectAsState()
+  val videoPanEnabled by playerPreferences.videoPanEnabled.collectAsState()
   var zoom by remember { mutableFloatStateOf(videoZoom) }
 
   val currentOnSetVideoZoom by rememberUpdatedState(onSetVideoZoom)
@@ -69,7 +70,8 @@ fun VideoZoomSheet(
     ZoomVideoSheet(
       zoom = zoom,
       defaultZoom = defaultZoom,
-      panAndZoomEnabled = panAndZoomEnabled,
+      zoomEnabled = pinchToZoomGesture,
+      panEnabled = videoPanEnabled,
       onZoomChange = { newZoom -> zoom = newZoom },
       onSetAsDefault = {
         playerPreferences.defaultVideoZoom.set(zoom)
@@ -79,8 +81,11 @@ fun VideoZoomSheet(
         playerPreferences.defaultVideoZoom.set(0f)
         onResetVideoPan()
       },
-      onPanAndZoomToggle = { enabled ->
-        playerPreferences.panAndZoomEnabled.set(enabled)
+      onZoomToggle = { enabled ->
+        playerPreferences.pinchToZoomGesture.set(enabled)
+      },
+      onPanToggle = { enabled ->
+        playerPreferences.videoPanEnabled.set(enabled)
         if (!enabled) {
           onResetVideoPan()
         }
@@ -94,11 +99,13 @@ fun VideoZoomSheet(
 private fun ZoomVideoSheet(
   zoom: Float,
   defaultZoom: Float,
-  panAndZoomEnabled: Boolean,
+  zoomEnabled: Boolean,
+  panEnabled: Boolean,
   onZoomChange: (Float) -> Unit,
   onSetAsDefault: () -> Unit,
   onReset: () -> Unit,
-  onPanAndZoomToggle: (Boolean) -> Unit,
+  onZoomToggle: (Boolean) -> Unit,
+  onPanToggle: (Boolean) -> Unit,
   modifier: Modifier = Modifier,
 ) {
   val isDefault = zoom == defaultZoom
@@ -157,7 +164,7 @@ private fun ZoomVideoSheet(
       color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
     )
 
-    // Pan & Zoom toggle + action buttons
+    // Zoom and Pan toggles + action buttons
     Column(
       modifier =
         Modifier
@@ -165,19 +172,35 @@ private fun ZoomVideoSheet(
           .padding(horizontal = MaterialTheme.spacing.medium),
       verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.small),
     ) {
-      // Pan & Zoom toggle
+      // Video Zoom toggle
       Row(
         verticalAlignment = Alignment.CenterVertically,
       ) {
         Switch(
-          checked = panAndZoomEnabled,
-          onCheckedChange = onPanAndZoomToggle,
+          checked = zoomEnabled,
+          onCheckedChange = onZoomToggle,
         )
         Spacer(modifier = Modifier.width(8.dp))
         Text(
-          text = "Pan & Zoom",
+          text = stringResource(R.string.pref_player_gestures_pinch_to_zoom),
           style = MaterialTheme.typography.bodyMedium,
-          color = if (panAndZoomEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+          color = if (zoomEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+      }
+
+      // Video Pan toggle
+      Row(
+        verticalAlignment = Alignment.CenterVertically,
+      ) {
+        Switch(
+          checked = panEnabled,
+          onCheckedChange = onPanToggle,
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(
+          text = "Video Pan",
+          style = MaterialTheme.typography.bodyMedium,
+          color = if (panEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
         )
       }
 
