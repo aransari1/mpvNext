@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.weight
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -167,7 +166,7 @@ fun DeleteConfirmationDialog(
 private fun formatFileSize(bytes: Long): String {
   if (bytes <= 0) return "0 B"
   val units = arrayOf("B", "KB", "MB", "GB", "TB")
-  val digitGroups = (log10(bytes.toDouble()) / log10(1024.0)).toInt()
+  val digitGroups = (log10(bytes.toDouble()) / log10(1024.0)).toInt().coerceAtMost(units.size - 1)
   val value = bytes / 1024.0.pow(digitGroups.toDouble())
   return String.format(Locale.getDefault(), "%.1f %s", value, units[digitGroups])
 }
