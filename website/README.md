@@ -3,9 +3,9 @@
 
 **The Most Powerful, Material3-Powered Video Experience for Android**
 
-[![GitHub release](https://img.shields.io/github/v/release/marlboro-advance/mpvEx?style=for-the-badge&logo=github&color=7C3AED)](https://github.com/marlboro-advance/mpvEx/releases/latest)
-[![Downloads](https://img.shields.io/github/downloads/marlboro-advance/mpvEx/total?style=for-the-badge&logo=github&color=3B82F6)](https://github.com/marlboro-advance/mpvEx/releases/latest)
-[![Stars](https://img.shields.io/github/stars/marlboro-advance/mpvEx?style=for-the-badge&logo=github&color=F59E0B)](https://github.com/marlboro-advance/mpvEx/stargazers)
+[![GitHub release](https://img.shields.io/github/v/release/marlboro-advance/mpvNext?style=for-the-badge&logo=github&color=7C3AED)](https://github.com/marlboro-advance/mpvNext/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/marlboro-advance/mpvNext/total?style=for-the-badge&logo=github&color=3B82F6)](https://github.com/marlboro-advance/mpvNext/releases/latest)
+[![Stars](https://img.shields.io/github/stars/marlboro-advance/mpvNext?style=for-the-badge&logo=github&color=F59E0B)](https://github.com/marlboro-advance/mpvNext/stargazers)
 [![License](https://img.shields.io/badge/License-Apache%202.0-green?style=for-the-badge)](LICENSE)
 
 </div>
@@ -20,17 +20,17 @@ Get the latest stable release directly from GitHub or the IzzyOnDroid repository
 
 | Source              | Link                                                                                                                                                              |
 | :------------------ | :---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **GitHub Releases** | [![Download](https://img.shields.io/badge/Download-Latest%20APK-7C3AED?style=flat-square&logo=github)](https://github.com/marlboro-advance/mpvEx/releases/latest) |
+| **GitHub Releases** | [![Download](https://img.shields.io/badge/Download-Latest%20APK-7C3AED?style=flat-square&logo=github)](https://github.com/marlboro-advance/mpvNext/releases/latest) |
 | **IzzyOnDroid**     | [![IzzyOnDroid](https://img.shields.io/badge/Get%20it%20on-IzzyOnDroid-blue?style=flat-square)](https://apt.izzysoft.de/packages/app.marlboroadvance.mpvex)       |
 
 ### Preview Builds
 
 Want to try the cutting-edge features? Download the preview builds (Testing only).
-[![Preview](https://img.shields.io/badge/Download-Preview%20Builds-red?style=for-the-badge)](https://marlboro-advance.github.io/mpvEx/)
+[![Preview](https://img.shields.io/badge/Download-Preview%20Builds-red?style=for-the-badge)](https://marlboro-advance.github.io/mpvNext/)
 
 ---
 
-## 🌐 mpvEx Web
+## 🌐 mpvNext Web
 
 This is the official Next.js website for **mpvNext** - a powerful Android video player built on mpv. The website showcases features, provides downloads, and serves as the project's online presence.
 

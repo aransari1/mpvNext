@@ -22,6 +22,7 @@ object SortUtils {
         VideoSortType.Duration -> videos.sortedBy { it.duration }
         VideoSortType.Date -> videos.sortedBy { it.dateModified }
         VideoSortType.Size -> videos.sortedBy { it.size }
+        VideoSortType.Length -> videos.sortedBy { it.displayName.length }
       }
     return if (sortOrder.isAscending) sorted else sorted.reversed()
   }

@@ -1568,16 +1568,22 @@ fun FileSystemSortDialog(
     title = "Sort & View Options",
     sortType = folderSortType.displayName,
     onSortTypeChange = { typeName ->
-      app.marlboroadvance.mpvex.preferences.FolderSortType.entries.find { it.displayName == typeName }?.let {
-        browserPreferences.folderSortType.set(it)
+      app.marlboroadvance.mpvex.preferences.FolderSortType.entries.find { it.displayName == typeName }?.let { newType ->
+        // Save current sort order for the old type
+        browserPreferences.getFolderSortOrderForType(folderSortType).set(folderSortOrder)
+        // Load the remembered sort order for the new type
+        val rememberedOrder = browserPreferences.getFolderSortOrderForType(newType).get()
+        browserPreferences.folderSortType.set(newType)
+        browserPreferences.folderSortOrder.set(rememberedOrder)
       }
     },
     sortOrderAsc = folderSortOrder.isAscending,
     onSortOrderChange = { isAsc ->
-      browserPreferences.folderSortOrder.set(
-        if (isAsc) app.marlboroadvance.mpvex.preferences.SortOrder.Ascending
-        else app.marlboroadvance.mpvex.preferences.SortOrder.Descending,
-      )
+      val newOrder = if (isAsc) app.marlboroadvance.mpvex.preferences.SortOrder.Ascending
+        else app.marlboroadvance.mpvex.preferences.SortOrder.Descending
+      browserPreferences.folderSortOrder.set(newOrder)
+      // Also save per-type sort order
+      browserPreferences.getFolderSortOrderForType(folderSortType).set(newOrder)
     },
     types = listOf(
       app.marlboroadvance.mpvex.preferences.FolderSortType.Title.displayName,
