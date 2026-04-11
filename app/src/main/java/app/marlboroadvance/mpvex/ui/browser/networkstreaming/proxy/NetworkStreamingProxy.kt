@@ -136,11 +136,7 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
         handleFullRequest(session, streamInfo)
       }
     } catch (e: Exception) {
-      Log.e(TAG, "Error serving request for stream $streamId: ${streamInfo.filePath}", e)
-      Log.e(
-        TAG,
-        "Connection: ${streamInfo.connection.protocol} ${streamInfo.connection.host}:${streamInfo.connection.port}${streamInfo.connection.path}",
-      )
+      Log.e(TAG, "Error serving request for stream $streamId", e)
       newFixedLengthResponse(
         Response.Status.INTERNAL_ERROR,
         MIME_PLAINTEXT,
@@ -277,8 +273,6 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
   private suspend fun getFileSizeSMB(streamInfo: StreamInfo): Long {
     try {
       Log.d(TAG, "SMB getFileSize called")
-      Log.d(TAG, "  Connection path: ${streamInfo.connection.path}")
-      Log.d(TAG, "  File path: ${streamInfo.filePath}")
 
       // Extract share name from connection path (just the share name, no subfolders)
       val shareName = streamInfo.connection.path.trim('/')
@@ -310,19 +304,15 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
           } else {
             // Get everything after "shareName/"
             val extracted = pathAfterHost.substring(secondSlash + 1)
-            Log.d(TAG, "  Extracted from SMB URL: $extracted")
-            extracted
+              extracted
           }
         }
         else -> {
           // Fallback: assume it's already a relative path
           val extracted = streamInfo.filePath.trim('/')
-          Log.d(TAG, "  Using as relative path: $extracted")
           extracted
         }
       }
-
-      Log.d(TAG, "  Final: share=$shareName, relativePath=$relativePath")
 
       val smbConfig = SmbConfig.builder()
         .withTimeout(30000, TimeUnit.MILLISECONDS)
@@ -354,7 +344,6 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
       )
 
       val fileSize = file.fileInformation.standardInformation.endOfFile
-      Log.d(TAG, "  File size: $fileSize")
 
       file.close()
       diskShare.close()
@@ -631,7 +620,7 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
       val cleanFilePath = if (streamInfo.filePath.startsWith("/")) streamInfo.filePath else "/${streamInfo.filePath}"
       val url = "$protocol://${streamInfo.connection.host}:${streamInfo.connection.port}$cleanBasePath$cleanFilePath"
 
-      Log.d(TAG, "WebDAV stream request - Protocol: $protocol, URL: $url")
+      Log.d(TAG, "WebDAV stream request")
 
       // Use OkHttp directly to add Range header support
       val okHttpClient = okhttp3.OkHttpClient.Builder()
@@ -702,8 +691,6 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
   private suspend fun getStreamWithOffsetSMB(streamInfo: StreamInfo, offset: Long): InputStream? {
     try {
       Log.d(TAG, "SMB getStreamWithOffset called, offset=$offset")
-      Log.d(TAG, "  Connection path: ${streamInfo.connection.path}")
-      Log.d(TAG, "  File path: ${streamInfo.filePath}")
 
       // Extract share name from connection path (just the share name, no subfolders)
       val shareName = streamInfo.connection.path.trim('/')
@@ -735,19 +722,15 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
           } else {
             // Get everything after "shareName/"
             val extracted = pathAfterHost.substring(secondSlash + 1)
-            Log.d(TAG, "  Extracted from SMB URL: '$extracted'")
             extracted
           }
         }
         else -> {
           // Fallback: assume it's already a relative path
           val extracted = streamInfo.filePath.trim('/')
-          Log.d(TAG, "  Using as relative path: '$extracted'")
           extracted
         }
       }
-
-      Log.d(TAG, "  Final: share=$shareName, relativePath=$relativePath")
 
       val smbConfig = SmbConfig.builder()
         .withTimeout(120000, TimeUnit.MILLISECONDS) // Increase timeout for large seeks
@@ -856,7 +839,6 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
         }
       }
 
-      Log.d(TAG, "  Stream created successfully starting at offset $offset")
       return seekableStream
     } catch (e: Exception) {
       Log.e(TAG, "SMB getStreamWithOffset error: ${e.message}", e)
