@@ -577,8 +577,19 @@ object FolderListScreen : Screen {
         onDismiss = { sortDialogOpen.value = false },
         sortType = folderSortType,
         sortOrder = folderSortOrder,
-        onSortTypeChange = { browserPreferences.folderSortType.set(it) },
-        onSortOrderChange = { browserPreferences.folderSortOrder.set(it) },
+        onSortTypeChange = { newType ->
+          // Save current sort order for the old type
+          browserPreferences.getFolderSortOrderForType(folderSortType).set(folderSortOrder)
+          // Load the remembered sort order for the new type
+          val rememberedOrder = browserPreferences.getFolderSortOrderForType(newType).get()
+          browserPreferences.folderSortType.set(newType)
+          browserPreferences.folderSortOrder.set(rememberedOrder)
+        },
+        onSortOrderChange = { newOrder ->
+          browserPreferences.folderSortOrder.set(newOrder)
+          // Also save per-type sort order
+          browserPreferences.getFolderSortOrderForType(folderSortType).set(newOrder)
+        },
       )
 
       DeleteConfirmationDialog(

@@ -18,6 +18,19 @@ class BrowserPreferences(
   val videoSortType = preferenceStore.getEnum("video_sort_type", VideoSortType.Title)
   val videoSortOrder = preferenceStore.getEnum("video_sort_order", SortOrder.Ascending)
 
+  // Per-type sort order preferences for videos (remembered per sort type)
+  val videoSortOrderTitle = preferenceStore.getEnum("video_sort_order_title", SortOrder.Ascending)
+  val videoSortOrderDuration = preferenceStore.getEnum("video_sort_order_duration", SortOrder.Ascending)
+  val videoSortOrderDate = preferenceStore.getEnum("video_sort_order_date", SortOrder.Ascending)
+  val videoSortOrderSize = preferenceStore.getEnum("video_sort_order_size", SortOrder.Ascending)
+  val videoSortOrderWatched = preferenceStore.getEnum("video_sort_order_watched", SortOrder.Ascending)
+
+  // Per-type sort order preferences for folders (remembered per sort type)
+  val folderSortOrderTitle = preferenceStore.getEnum("folder_sort_order_title", SortOrder.Ascending)
+  val folderSortOrderDate = preferenceStore.getEnum("folder_sort_order_date", SortOrder.Ascending)
+  val folderSortOrderSize = preferenceStore.getEnum("folder_sort_order_size", SortOrder.Ascending)
+  val folderSortOrderVideoCount = preferenceStore.getEnum("folder_sort_order_video_count", SortOrder.Ascending)
+
   val folderViewMode = preferenceStore.getEnum("folder_view_mode", FolderViewMode.AlbumView)
 
   private val isTablet = context.resources.configuration.smallestScreenWidthDp >= 600
@@ -50,6 +63,29 @@ class BrowserPreferences(
 
   // Watched threshold preference (percentage 1-100)
   val watchedThreshold = preferenceStore.getInt("watched_threshold", 95)
+
+  /**
+   * Get the per-type sort order preference for a given video sort type.
+   */
+  fun getVideoSortOrderForType(type: VideoSortType): app.marlboroadvance.mpvex.preferences.preference.Preference<SortOrder> =
+    when (type) {
+      VideoSortType.Title -> videoSortOrderTitle
+      VideoSortType.Duration -> videoSortOrderDuration
+      VideoSortType.Date -> videoSortOrderDate
+      VideoSortType.Size -> videoSortOrderSize
+      VideoSortType.Watched -> videoSortOrderWatched
+    }
+
+  /**
+   * Get the per-type sort order preference for a given folder sort type.
+   */
+  fun getFolderSortOrderForType(type: FolderSortType): app.marlboroadvance.mpvex.preferences.preference.Preference<SortOrder> =
+    when (type) {
+      FolderSortType.Title -> folderSortOrderTitle
+      FolderSortType.Date -> folderSortOrderDate
+      FolderSortType.Size -> folderSortOrderSize
+      FolderSortType.VideoCount -> folderSortOrderVideoCount
+    }
 }
 
 /**
@@ -92,6 +128,7 @@ enum class VideoSortType {
   Duration,
   Date,
   Size,
+  Watched,
   ;
 
   val displayName: String
@@ -101,6 +138,7 @@ enum class VideoSortType {
         Duration -> "Duration"
         Date -> "Date"
         Size -> "Size"
+        Watched -> "Status"
       }
 }
 

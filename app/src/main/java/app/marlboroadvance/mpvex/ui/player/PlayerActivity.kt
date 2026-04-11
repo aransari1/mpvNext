@@ -3274,8 +3274,31 @@ class PlayerActivity :
               context,
               setOf(bucketId)
             )
-          val sortedVideos = app.marlboroadvance.mpvex.utils.sort.SortUtils.sortVideos(videosInFolder, videoSortType, videoSortOrder)
-          sortedVideos.mapNotNull { video -> files.find { it.absolutePath == video.path } }
+          if (videoSortType == app.marlboroadvance.mpvex.preferences.VideoSortType.Watched) {
+            // Watched sort requires playback info — build VideoWithPlaybackInfo for each video
+            val watchedThreshold = browserPreferences.watchedThreshold.get()
+            val videosWithInfo = videosInFolder.map { video ->
+              val playbackState = playbackStateRepository.getVideoDataByTitle(video.displayName)
+              val isWatched = if (playbackState != null && video.duration > 0) {
+                val durationSeconds = video.duration / 1000
+                val timeRemaining = playbackState.timeRemaining.toLong()
+                val watched = durationSeconds - timeRemaining
+                val progressValue = (watched.toFloat() / durationSeconds.toFloat()).coerceIn(0f, 1f)
+                playbackState.hasBeenWatched || progressValue >= (watchedThreshold / 100f)
+              } else {
+                false
+              }
+              app.marlboroadvance.mpvex.ui.browser.videolist.VideoWithPlaybackInfo(
+                video = video,
+                isWatched = isWatched,
+              )
+            }
+            val sorted = app.marlboroadvance.mpvex.utils.sort.SortUtils.sortVideosWithPlaybackInfo(videosWithInfo, videoSortType, videoSortOrder)
+            sorted.mapNotNull { info -> files.find { it.absolutePath == info.video.path } }
+          } else {
+            val sortedVideos = app.marlboroadvance.mpvex.utils.sort.SortUtils.sortVideos(videosInFolder, videoSortType, videoSortOrder)
+            sortedVideos.mapNotNull { video -> files.find { it.absolutePath == video.path } }
+          }
         } else {
           files.sortedWith { f1, f2 -> app.marlboroadvance.mpvex.utils.sort.SortUtils.NaturalOrderComparator.DEFAULT.compare(f1.name, f2.name) }
         }

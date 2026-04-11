@@ -46,7 +46,7 @@ Or you can get the stable releases here
 ### Preview Builds
 For testing purposes only
 
-[![Download Preview Builds](https://img.shields.io/badge/Download-Preview%20Builds-red?style=for-the-badge)](https://marlboro-advance.github.io/mpvEx/)
+[![Download Preview Builds](https://img.shields.io/badge/Download-Preview%20Builds-red?style=for-the-badge)](https://aransari1.github.io/mpvNext/)
 
 ---
 

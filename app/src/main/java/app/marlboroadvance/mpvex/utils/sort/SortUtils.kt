@@ -6,6 +6,7 @@ import app.marlboroadvance.mpvex.domain.media.model.VideoFolder
 import app.marlboroadvance.mpvex.preferences.FolderSortType
 import app.marlboroadvance.mpvex.preferences.SortOrder
 import app.marlboroadvance.mpvex.preferences.VideoSortType
+import app.marlboroadvance.mpvex.ui.browser.videolist.VideoWithPlaybackInfo
 
 object SortUtils {
   /**
@@ -22,6 +23,30 @@ object SortUtils {
         VideoSortType.Duration -> videos.sortedBy { it.duration }
         VideoSortType.Date -> videos.sortedBy { it.dateModified }
         VideoSortType.Size -> videos.sortedBy { it.size }
+        VideoSortType.Watched -> videos // Watch status requires playback info; use sortVideosWithPlaybackInfo instead
+      }
+    return if (sortOrder.isAscending) sorted else sorted.reversed()
+  }
+
+  /**
+   * Sort videos with playback info by the specified type and order.
+   * This is needed for watch status sorting which requires playback info.
+   */
+  fun sortVideosWithPlaybackInfo(
+    videos: List<VideoWithPlaybackInfo>,
+    sortType: VideoSortType,
+    sortOrder: SortOrder,
+  ): List<VideoWithPlaybackInfo> {
+    val sorted =
+      when (sortType) {
+        VideoSortType.Title -> videos.sortedWith { t1, t2 -> NaturalOrderComparator.DEFAULT.compare(t1.video.displayName, t2.video.displayName) }
+        VideoSortType.Duration -> videos.sortedBy { it.video.duration }
+        VideoSortType.Date -> videos.sortedBy { it.video.dateModified }
+        VideoSortType.Size -> videos.sortedBy { it.video.size }
+        VideoSortType.Watched -> videos.sortedWith(
+          compareBy<VideoWithPlaybackInfo> { it.isWatched }
+            .thenComparator { t1, t2 -> NaturalOrderComparator.DEFAULT.compare(t1.video.displayName, t2.video.displayName) }
+        )
       }
     return if (sortOrder.isAscending) sorted else sorted.reversed()
   }
