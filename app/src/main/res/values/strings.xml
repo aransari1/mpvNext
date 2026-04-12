@@ -1,6 +1,8 @@
 <resources>
   <string name="app_name" translatable="false">mpvNext</string>
   <string name="generic_reset">Reset</string>
+  <string name="reset_speed">Reset Speed</string>
+  <string name="reset_to_default">Reset To Default</string>
   <string name="generic_share">Share</string>
   <string name="generic_confirm">Confirm</string>
   <string name="generic_cancel">Cancel</string>
@@ -397,6 +399,7 @@
   <string name="clear_font_directory">Clear font directory</string>
   <string name="reset_to_default_font">Reset to default font</string>
   <string name="set_as_default">Set as default</string>
+  <string name="set_as_default_zoom">Set as default zoom</string>
   <!-- Notification strings -->
   <string name="notification_channel_name">Media Playback</string>
   <string name="notification_channel_description">Media playback controls</string>

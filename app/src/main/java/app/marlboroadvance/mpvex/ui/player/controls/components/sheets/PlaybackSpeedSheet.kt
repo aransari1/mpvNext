@@ -1,66 +1,57 @@
 package app.marlboroadvance.mpvex.ui.player.controls.components.sheets
 
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.Colors
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Remove
-import androidx.compose.material.icons.filled.RestartAlt
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonColors
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.FilledIconButton
-import androidx.compose.material3.FilledTonalIconButton
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.scale
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import app.marlboroadvance.mpvex.R
 import app.marlboroadvance.mpvex.preferences.AudioPreferences
 import app.marlboroadvance.mpvex.preferences.preference.collectAsState
 import app.marlboroadvance.mpvex.presentation.components.PlayerSheet
-import app.marlboroadvance.mpvex.presentation.components.SliderItem
+import app.marlboroadvance.mpvex.presentation.components.RepeatingIconButton
 import app.marlboroadvance.mpvex.ui.theme.spacing
 import `is`.xyz.mpv.MPVLib
 import me.zhanghai.compose.preference.ProvidePreferenceLocals
-import me.zhanghai.compose.preference.SwitchPreference
 import org.koin.compose.koinInject
-import app.marlboroadvance.mpvex.presentation.components.RepeatingIconButton
 import kotlin.math.pow
 import kotlin.math.roundToInt
 
@@ -82,22 +73,22 @@ fun PlaybackSpeedSheet(
       modifier
         .verticalScroll(rememberScrollState())
         .padding(vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp)
+      verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-      
-      // Slider and +/- Buttons
 
-        
+      // Slider and +/- Buttons
+      var showSpeedInputDialog by remember { mutableStateOf(false) }
+
       // Calculate slider parameters
       val minSpeed = speedPresets.firstOrNull() ?: 0.25f
       val maxSpeed = speedPresets.lastOrNull() ?: 4.0f
-      
+
       // Helper to map speed to linear slider value (0..presets.size-1)
       fun speedToSliderProp(speed: Float): Float {
         if (speedPresets.isEmpty()) return 0f
         if (speed <= minSpeed) return 0f
         if (speed >= maxSpeed) return (speedPresets.size - 1).toFloat()
-        
+
         for (i in 0 until speedPresets.size - 1) {
           val p1 = speedPresets[i]
           val p2 = speedPresets[i + 1]
@@ -114,10 +105,10 @@ fun PlaybackSpeedSheet(
         if (speedPresets.isEmpty()) return 1f
         val index = prop.toInt()
         val fraction = prop - index
-        
+
         if (index >= speedPresets.size - 1) return speedPresets.last()
         if (index < 0) return speedPresets.first()
-        
+
         val p1 = speedPresets[index]
         val p2 = speedPresets[index + 1]
         return p1 + (p2 - p1) * fraction
@@ -125,15 +116,25 @@ fun PlaybackSpeedSheet(
 
       // Speed Label and Value
       Column(
-          modifier = Modifier.fillMaxWidth().padding(horizontal = MaterialTheme.spacing.medium),
-          horizontalAlignment = Alignment.CenterHorizontally
+        modifier = Modifier
+          .fillMaxWidth()
+          .padding(horizontal = MaterialTheme.spacing.medium),
+        horizontalAlignment = Alignment.CenterHorizontally,
       ) {
-          Text(text = stringResource(R.string.player_sheets_speed_slider_label), style = MaterialTheme.typography.bodyMedium)
+        Text(
+          text = stringResource(R.string.player_sheets_speed_slider_label),
+          style = MaterialTheme.typography.bodyMedium,
+        )
+        TextButton(
+          onClick = {showSpeedInputDialog = true}
+        ) {
           Text(
-              text = "${speed.toFixed(2)}x", 
-              style = MaterialTheme.typography.headlineMedium,
-              fontWeight = FontWeight.Bold
+            text = "${speed.toFixed(2)}x",
+            style = MaterialTheme.typography.headlineMedium,
+            fontWeight = FontWeight.Bold,
           )
+        }
+
       }
 
       // Slider and +/- Buttons
@@ -145,137 +146,154 @@ fun PlaybackSpeedSheet(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.small),
       ) {
-         RepeatingIconButton(
-           onClick = { onSpeedChange((speed - 0.05f).coerceAtLeast(0.05f)) },
-           modifier = Modifier.size(40.dp)
+        RepeatingIconButton(
+          onClick = { onSpeedChange((speed - 0.05f).coerceAtLeast(0.05f)) },
+          modifier = Modifier.size(40.dp),
         ) {
-           Icon(Icons.Default.Remove, null, modifier = Modifier.size(24.dp))
+          Icon(Icons.Default.Remove, null, modifier = Modifier.size(24.dp))
         }
 
-          Slider(
-            value = speed,
-            onValueChange = {
-                // Snap to nearest 0.05
-               val snapped = (it * 20).roundToInt() / 20f
-               onSpeedChange(snapped)
-            },
-            valueRange = 0.1f..4.0f,
-            modifier = Modifier.weight(1f)
+        Slider(
+          value = speed,
+          onValueChange = {
+            // Snap to nearest 0.05
+            val snapped = (it * 20).roundToInt() / 20f
+            onSpeedChange(snapped)
+          },
+          valueRange = 0.1f..4.0f,
+          modifier = Modifier.weight(1f),
+
           )
-          
+
         RepeatingIconButton(
-           onClick = { onSpeedChange((speed + 0.05f).coerceAtMost(4.0f)) },
-           modifier = Modifier.size(40.dp)
+          onClick = { onSpeedChange((speed + 0.05f).coerceAtMost(4.0f)) },
+          modifier = Modifier.size(40.dp),
         ) {
-           Icon(Icons.Default.Add, null, modifier = Modifier.size(24.dp))
+          Icon(Icons.Default.Add, null, modifier = Modifier.size(24.dp))
         }
       }
 
       // Chips and Add/Remove Button
       Row(
-          modifier = Modifier.fillMaxWidth().padding(horizontal = MaterialTheme.spacing.medium),
-          verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.small)
+        modifier = Modifier
+          .fillMaxWidth()
+          .padding(horizontal = MaterialTheme.spacing.medium),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.small),
       ) {
-          val defaultPresets = remember {
-            listOf(0.25f, 0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f, 2.5f, 3.0f, 3.5f, 4.0f)
-          }
+        val defaultPresets = remember {
+          listOf(0.25f, 0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f, 2.5f, 3.0f, 3.5f, 4.0f)
+        }
 
-          LazyRow(
-            modifier = Modifier.weight(1f),
-            contentPadding = PaddingValues(end = MaterialTheme.spacing.small),
-            horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.small),
+        LazyRow(
+          modifier = Modifier.weight(1f),
+          contentPadding = PaddingValues(end = MaterialTheme.spacing.small),
+          horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.small),
+        ) {
+          items(speedPresets.sorted()) { presetSpeed ->
+            val isDefault = defaultPresets.any { kotlin.math.abs(it - presetSpeed) < 0.001f }
+
+            FilterChip(
+              selected = kotlin.math.abs(presetSpeed - speed) < 0.01f,
+              onClick = { onSpeedChange(presetSpeed) },
+              label = { Text("${presetSpeed.toFixed(2)}") },
+              leadingIcon = null,
+              colors = if (!isDefault) {
+                androidx.compose.material3.FilterChipDefaults.filterChipColors(
+                  containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+                  labelColor = MaterialTheme.colorScheme.onTertiaryContainer,
+                )
+              } else {
+                androidx.compose.material3.FilterChipDefaults.filterChipColors()
+              },
+            )
+          }
+        }
+
+        // Add / Remove Preset Buttons
+        val buttonModifier = Modifier
+          .height(32.dp)
+          .width(110.dp)
+
+        val isCurrentSpeedSaved = speedPresets.any { kotlin.math.abs(it - speed) < 0.001f }
+//            val isDefaultPreset = defaultPresets.any { kotlin.math.abs(it - speed) < 0.001f }
+
+        if (isCurrentSpeedSaved) {
+//                if (!isDefaultPreset) {
+          Button(
+            onClick = { onRemoveSpeedPreset(speed) },
+            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+            modifier = buttonModifier,
           ) {
-            items(speedPresets.sorted()) { presetSpeed ->
-              val isDefault = defaultPresets.any { kotlin.math.abs(it - presetSpeed) < 0.001f }
-              
-              FilterChip(
-                selected = kotlin.math.abs(presetSpeed - speed) < 0.01f,
-                onClick = { onSpeedChange(presetSpeed) },
-                label = { Text("${presetSpeed.toFixed(2)}") },
-                leadingIcon = null,
-                colors = if (!isDefault) {
-                    androidx.compose.material3.FilterChipDefaults.filterChipColors(
-                        containerColor = MaterialTheme.colorScheme.tertiaryContainer,
-                        labelColor = MaterialTheme.colorScheme.onTertiaryContainer
-                    )
-                } else {
-                    androidx.compose.material3.FilterChipDefaults.filterChipColors()
-                }
-              )
-            }
+            Icon(
+              Icons.Default.Remove, null,
+              modifier = Modifier
+                .size(16.dp)
+                .padding(end = 4.dp),
+            )
+            Text("Remove")
           }
-
-            // Add / Remove Preset Buttons
-            val buttonModifier = Modifier
-                .height(32.dp)
-                .width(110.dp)
-            
-            val isCurrentSpeedSaved = speedPresets.any { kotlin.math.abs(it - speed) < 0.001f }
-            val isDefaultPreset = defaultPresets.any { kotlin.math.abs(it - speed) < 0.001f }
-
-            if (isCurrentSpeedSaved) {
-                if (!isDefaultPreset) {
-                     Button(
-                        onClick = { onRemoveSpeedPreset(speed) },
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
-                        modifier = buttonModifier
-                    ) {
-                       Icon(Icons.Default.Remove, null, modifier = Modifier.size(16.dp).padding(end = 4.dp))
-                       Text("Remove")
-                    }
-                }
-            } else {
-                 Button(
-                    onClick = { onAddSpeedPreset(speed) },
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
-                    modifier = buttonModifier
-                ) {
-                  Icon(Icons.Default.Add, null, modifier = Modifier.size(16.dp).padding(end = 4.dp))
-                  Text("Add")
-                }
-            }
+//                }
+        } else {
+          Button(
+            onClick = { onAddSpeedPreset(speed) },
+            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+            modifier = buttonModifier,
+          ) {
+            Icon(
+              Icons.Default.Add, null,
+              modifier = Modifier
+                .size(16.dp)
+                .padding(end = 4.dp),
+            )
+            Text("Add")
+          }
+        }
       }
 
       ProvidePreferenceLocals {
         val audioPreferences = koinInject<AudioPreferences>()
-        
+
         // Audio Pitch Correction
         val pitchCorrection by audioPreferences.audioPitchCorrection.collectAsState()
-        
+
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable { 
-                    val newValue = !pitchCorrection
-                    audioPreferences.audioPitchCorrection.set(newValue)
-                    MPVLib.setPropertyBoolean("audio-pitch-correction", newValue)
-                }
-                .padding(horizontal = MaterialTheme.spacing.medium, vertical = 2.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Column(modifier = Modifier.weight(1f).padding(end = 16.dp)) {
-                Text(
-                    text = stringResource(id = R.string.pref_audio_pitch_correction_title),
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Text(
-                    text = stringResource(id = R.string.pref_audio_pitch_correction_summary),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+          modifier = Modifier
+            .fillMaxWidth()
+            .clickable {
+              val newValue = !pitchCorrection
+              audioPreferences.audioPitchCorrection.set(newValue)
+              MPVLib.setPropertyBoolean("audio-pitch-correction", newValue)
             }
-            androidx.compose.material3.Switch(
-                checked = pitchCorrection,
-                onCheckedChange = { 
-                    audioPreferences.audioPitchCorrection.set(it)
-                    MPVLib.setPropertyBoolean("audio-pitch-correction", it)
-                },
-                modifier = Modifier.scale(0.8f) // Make switch slightly smaller
+            .padding(horizontal = MaterialTheme.spacing.medium, vertical = 2.dp),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+          Column(
+            modifier = Modifier
+              .weight(1f)
+              .padding(end = 16.dp),
+          ) {
+            Text(
+              text = stringResource(id = R.string.pref_audio_pitch_correction_title),
+              style = MaterialTheme.typography.bodyMedium,
+              fontWeight = FontWeight.SemiBold,
             )
+            Text(
+              text = stringResource(id = R.string.pref_audio_pitch_correction_summary),
+              style = MaterialTheme.typography.bodySmall,
+              color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+          }
+          androidx.compose.material3.Switch(
+            checked = pitchCorrection,
+            onCheckedChange = {
+              audioPreferences.audioPitchCorrection.set(it)
+              MPVLib.setPropertyBoolean("audio-pitch-correction", it)
+            },
+            modifier = Modifier.scale(0.8f), // Make switch slightly smaller
+          )
         }
 
 
@@ -286,20 +304,55 @@ fun PlaybackSpeedSheet(
           Modifier
             .padding(horizontal = MaterialTheme.spacing.medium),
         horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.smaller),
-      ) {
+      )
+      {
         Button(
           modifier = Modifier.weight(1f),
           onClick = { onMakeDefault(speed) },
         ) {
           Text(text = stringResource(id = R.string.player_sheets_speed_make_default))
         }
-        Button(onClick = {
+        Button(
+          colors =
+            ButtonDefaults.buttonColors(
+              containerColor = MaterialTheme.colorScheme.onErrorContainer,
+              contentColor = MaterialTheme.colorScheme.onError,
+            ),
+          onClick = {
+            onResetDefault()
+            onSpeedChange(1.0f)
+          },
+        ) {
+          Text(text = stringResource(id = R.string.reset_speed))
+        }
+
+        Button(
+          colors =
+            ButtonDefaults.buttonColors(
+              containerColor = MaterialTheme.colorScheme.error,
+              contentColor = MaterialTheme.colorScheme.onError,
+            ),
+          onClick = {
             onResetDefault()
             onResetPresets()
             onSpeedChange(1.0f)
-        }) {
-          Text(text = stringResource(id = R.string.generic_reset))
+          },
+
+
+          ) {
+          Text(text = stringResource(id = R.string.reset_to_default))
         }
+      }
+      // Manual zoom input dialog
+      if (showSpeedInputDialog) {
+        SpeedInputDialog(
+          currentSpeed = speed,
+          onConfirm = { speed ->
+            onSpeedChange(speed)
+            showSpeedInputDialog = false
+          },
+          onDismiss = { showSpeedInputDialog = false },
+        )
       }
     }
   }
@@ -310,3 +363,89 @@ fun Float.toFixed(precision: Int = 1): Float {
   return (this * factor).roundToInt() / factor
 }
 
+@Composable
+private fun SpeedInputDialog(
+  currentSpeed: Float,
+  onConfirm: (Float) -> Unit,
+  onDismiss: () -> Unit,
+) {
+  var text by remember { mutableStateOf("%.2f".format(currentSpeed)) }
+  var isError by remember { mutableStateOf(false) }
+  var errorMessage by remember { mutableStateOf("") }
+
+  fun validate(input: String): Float? {
+    val value = input.toFloatOrNull()
+    if (value == null) {
+      isError = true
+      errorMessage = "Enter a valid number"
+      return null
+    }
+    if (value !in 0.01f..10f) {
+      isError = true
+      errorMessage = "Speed must be between 0.01x and 10x"
+      return null
+    }
+    isError = false
+    errorMessage = ""
+    return value
+  }
+
+  AlertDialog(
+    onDismissRequest = onDismiss,
+    title = { Text("Set Custom Speed") },
+    text = {
+      Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedTextField(
+          value = text,
+          onValueChange = {
+            text = it
+            validate(it)
+          },
+          label = { Text("Speed value (0.01 to 10.00)") },
+          isError = isError,
+          supportingText = if (isError) {
+            { Text(errorMessage, color = MaterialTheme.colorScheme.error) }
+          } else {
+            null
+          },
+          keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+          keyboardActions = KeyboardActions(
+            onDone = {
+              val value = validate(text)
+              if (value != null) onConfirm(value)
+            },
+          ),
+          singleLine = true,
+          modifier = Modifier.fillMaxWidth(),
+        )
+      }
+    },
+    confirmButton = {
+      TextButton(
+        colors =
+          ButtonDefaults.buttonColors(
+            containerColor = MaterialTheme.colorScheme.primary,
+            contentColor = MaterialTheme.colorScheme.onPrimary,
+          ),
+        onClick = {
+          val value = validate(text)
+          if (value != null) onConfirm(value)
+        },
+      ) {
+        Text("Apply")
+      }
+    },
+    dismissButton = {
+      TextButton(
+        colors =
+          ButtonDefaults.buttonColors(
+            containerColor = MaterialTheme.colorScheme.error,
+            contentColor = MaterialTheme.colorScheme.onError,
+          ),
+        onClick = onDismiss,
+      ) {
+        Text("Cancel")
+      }
+    },
+  )
+}

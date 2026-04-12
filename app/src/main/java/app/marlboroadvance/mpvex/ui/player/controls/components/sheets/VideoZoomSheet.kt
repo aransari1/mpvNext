@@ -17,6 +17,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -90,6 +91,10 @@ fun VideoZoomSheet(
       },
       onZoomToggle = { enabled ->
         playerPreferences.pinchToZoomGesture.set(enabled)
+        if (!enabled) {
+          zoom = 0f
+          playerPreferences.defaultVideoZoom.set(0f)
+        }
       },
       onPanToggle = { enabled ->
         playerPreferences.videoPanEnabled.set(enabled)
@@ -128,41 +133,47 @@ private fun ZoomVideoSheet(
     verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.small),
   ) {
     // Top row: Pinch to Zoom and Video Pan toggles
-    Column(
+    Row(
       modifier =
         Modifier
           .fillMaxWidth()
           .padding(horizontal = MaterialTheme.spacing.medium),
-      verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.small),
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.SpaceAround,
     ) {
-      Row(
-        verticalAlignment = Alignment.CenterVertically,
+      Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.small),
       ) {
-        Switch(
-          checked = zoomEnabled,
-          onCheckedChange = onZoomToggle,
-        )
-        Spacer(modifier = Modifier.width(8.dp))
-        Text(
-          text = stringResource(R.string.pref_player_gestures_pinch_to_zoom),
-          style = MaterialTheme.typography.bodyMedium,
-          color = if (zoomEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        Row() {
+          Switch(
+            checked = zoomEnabled,
+            onCheckedChange = onZoomToggle,
+          )
+          Spacer(modifier = Modifier.width(8.dp))
+          Text(
+            text = stringResource(R.string.pref_player_gestures_pinch_to_zoom),
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (zoomEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+          )
+        }
       }
-
-      Row(
-        verticalAlignment = Alignment.CenterVertically,
+      Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.small),
       ) {
-        Switch(
-          checked = panEnabled,
-          onCheckedChange = onPanToggle,
-        )
-        Spacer(modifier = Modifier.width(8.dp))
-        Text(
-          text = "Video Pan",
-          style = MaterialTheme.typography.bodyMedium,
-          color = if (panEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        Row() {
+          Switch(
+            checked = panEnabled,
+            onCheckedChange = onPanToggle,
+          )
+          Spacer(modifier = Modifier.width(8.dp))
+          Text(
+            text = "Video Pan",
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (panEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+          )
+        }
       }
     }
 
@@ -172,73 +183,87 @@ private fun ZoomVideoSheet(
     )
 
     // Middle row: Zoom slider with +/- buttons
-    Row(
-      modifier =
-        Modifier
-          .fillMaxWidth()
-          .padding(horizontal = MaterialTheme.spacing.medium),
-      verticalAlignment = Alignment.CenterVertically,
-      horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.small),
-    ) {
-      FilledTonalIconButton(
-        onClick = {
-          val newZoom = (zoom - 0.05f).coerceAtLeast(-1f)
-          onZoomChange(newZoom)
-        },
-        modifier = Modifier.size(36.dp),
-      ) {
-        Icon(Icons.Default.Remove, contentDescription = "Decrease zoom", modifier = Modifier.size(18.dp))
-      }
-
-      SliderItem(
-        label = stringResource(id = R.string.player_sheets_zoom_slider_label),
-        value = zoom,
-        valueText = "%.2fx".format(zoom),
-        onChange = onZoomChange,
-        max = 3f,
-        min = -1f,
-        modifier = Modifier.weight(1f),
-        onValueTextClick = { showZoomInputDialog = true },
+    if (zoomEnabled) {
+      Row(
+        modifier =
+          Modifier
+            .fillMaxWidth()
+            .padding(horizontal = MaterialTheme.spacing.medium),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.small),
       )
+      {
+        FilledTonalIconButton(
+          onClick = {
+            val newZoom = (zoom - 0.05f).coerceAtLeast(-1f)
+            onZoomChange(newZoom)
+          },
+          modifier = Modifier.size(36.dp),
+        ) {
+          Icon(Icons.Default.Remove, contentDescription = "Decrease zoom", modifier = Modifier.size(18.dp))
+        }
 
-      FilledTonalIconButton(
-        onClick = {
-          val newZoom = (zoom + 0.05f).coerceAtMost(3f)
-          onZoomChange(newZoom)
-        },
-        modifier = Modifier.size(36.dp),
-      ) {
-        Icon(Icons.Default.Add, contentDescription = "Increase zoom", modifier = Modifier.size(18.dp))
+        SliderItem(
+          label = stringResource(id = R.string.player_sheets_zoom_slider_label),
+          value = zoom,
+          valueText = "%.2fx".format(zoom),
+          onChange = onZoomChange,
+          max = 3f,
+          min = -1f,
+          modifier = Modifier.weight(1f),
+          onValueTextClick = { showZoomInputDialog = true },
+        )
+
+        FilledTonalIconButton(
+          onClick = {
+            val newZoom = (zoom + 0.05f).coerceAtMost(3f)
+            onZoomChange(newZoom)
+          },
+          modifier = Modifier.size(36.dp),
+        ) {
+          Icon(Icons.Default.Add, contentDescription = "Increase zoom", modifier = Modifier.size(18.dp))
+        }
       }
     }
+
 
     HorizontalDivider(
       modifier = Modifier.padding(horizontal = MaterialTheme.spacing.medium),
       color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
     )
 
-    // Bottom row: Action buttons
-    Row(
-      modifier =
-        Modifier
-          .fillMaxWidth()
-          .padding(horizontal = MaterialTheme.spacing.medium),
-      horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-      OutlinedButton(
-        onClick = onSetAsDefault,
-        enabled = !isDefault,
-        modifier = Modifier.weight(1f),
-      ) {
-        Text(stringResource(R.string.set_as_default), style = MaterialTheme.typography.labelMedium)
-      }
+    if (zoomEnabled || panEnabled) {
+      // Bottom row: Action buttons
+      Row(
+        modifier =
+          Modifier
+            .fillMaxWidth()
+            .padding(horizontal = MaterialTheme.spacing.medium),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+      )
+      {
+        if (zoomEnabled) {
+          OutlinedButton(
+            onClick = onSetAsDefault,
+            enabled = !isDefault,
+            modifier = Modifier.weight(1f),
+          ) {
+            Text(stringResource(R.string.set_as_default_zoom), style = MaterialTheme.typography.labelMedium)
+          }
+        }
 
-      Button(
-        onClick = onReset,
-        enabled = !isZero,
-        modifier = Modifier.weight(1f),
-      ) {
-        Text(stringResource(R.string.generic_reset), style = MaterialTheme.typography.labelMedium)
+        Button(
+          onClick = onReset,
+          enabled = panEnabled || (!isZero),
+          modifier = Modifier.weight(1f),
+          colors =
+            ButtonDefaults.buttonColors(
+              containerColor = MaterialTheme.colorScheme.error,
+              contentColor = MaterialTheme.colorScheme.onError,
+            ),
+        ) {
+          Text(stringResource(R.string.generic_reset), style = MaterialTheme.typography.labelMedium)
+        }
       }
     }
   }
@@ -315,6 +340,11 @@ private fun ZoomInputDialog(
     },
     confirmButton = {
       TextButton(
+        colors =
+          ButtonDefaults.buttonColors(
+            containerColor = MaterialTheme.colorScheme.primary,
+            contentColor = MaterialTheme.colorScheme.onPrimary,
+          ),
         onClick = {
           val value = validate(text)
           if (value != null) onConfirm(value)
@@ -324,7 +354,14 @@ private fun ZoomInputDialog(
       }
     },
     dismissButton = {
-      TextButton(onClick = onDismiss) {
+      TextButton(
+        colors =
+          ButtonDefaults.buttonColors(
+            containerColor = MaterialTheme.colorScheme.error,
+            contentColor = MaterialTheme.colorScheme.onError,
+          ),
+        onClick = onDismiss,
+      ) {
         Text("Cancel")
       }
     },

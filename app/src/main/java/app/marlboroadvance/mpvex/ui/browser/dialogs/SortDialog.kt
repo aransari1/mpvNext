@@ -30,6 +30,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SelectableChipColors
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
@@ -62,7 +63,7 @@ fun SortDialog(
   modifier: Modifier = Modifier,
   visibilityToggles: List<VisibilityToggle> = emptyList(),
   viewModeSelector: ViewModeSelector? = null,
-  layoutModeSelector:  ViewModeSelector? = null,
+  layoutModeSelector: ViewModeSelector? = null,
   folderGridColumnSelector: GridColumnSelector? = null,
   videoGridColumnSelector: GridColumnSelector? = null,
   showSortOptions: Boolean = true,
@@ -111,7 +112,9 @@ fun SortDialog(
 
         if (viewModeSelector != null || layoutModeSelector != null) {
           Row(
-            modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min),
+            modifier = Modifier
+              .fillMaxWidth()
+              .height(IntrinsicSize.Min),
             horizontalArrangement = Arrangement.spacedBy(16.dp),
             verticalAlignment = Alignment.Top,
           ) {
@@ -126,7 +129,7 @@ fun SortDialog(
             if (viewModeSelector != null && layoutModeSelector != null) {
               VerticalDivider(
                 modifier = Modifier.padding(vertical = 8.dp),
-                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f),
               )
             }
 
@@ -182,7 +185,7 @@ data class GridColumnSelector(
   val currentValue: Int,
   val onValueChange: (Int) -> Unit,
   val valueRange: ClosedFloatingPointRange<Float> = 1f..4f,
-  val steps: Int = 2,
+  val steps: Int = 1,
 )
 
 // -----------------------------------------------------------------------------
@@ -224,14 +227,14 @@ private fun SortTypeSelector(
           Box(
             modifier =
               Modifier
-                .size(56.dp)
+                .size(45.dp)
                 .clip(shape)
                 .background(
                   color =
                     if (selected) {
-                      MaterialTheme.colorScheme.primaryContainer
+                      MaterialTheme.colorScheme.primary
                     } else {
-                      MaterialTheme.colorScheme.surfaceContainerHighest
+                      MaterialTheme.colorScheme.primaryContainer
                     },
                 )
                 .clickable(
@@ -246,9 +249,9 @@ private fun SortTypeSelector(
               contentDescription = type,
               tint =
                 if (selected) {
-                  MaterialTheme.colorScheme.onPrimaryContainer
+                  MaterialTheme.colorScheme.onPrimary
                 } else {
-                  MaterialTheme.colorScheme.onSurfaceVariant
+                  MaterialTheme.colorScheme.onPrimaryContainer
                 },
               modifier = Modifier.size(24.dp),
             )
@@ -260,9 +263,9 @@ private fun SortTypeSelector(
             fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
             color =
               if (selected) {
-                MaterialTheme.colorScheme.onSurface
+                MaterialTheme.colorScheme.primary
               } else {
-                MaterialTheme.colorScheme.onSurfaceVariant
+                MaterialTheme.colorScheme.onSurface
               },
           )
         }
@@ -287,6 +290,13 @@ private fun SortOrderSelector(
   ) {
     options.forEachIndexed { index, label ->
       SegmentedButton(
+        colors = SegmentedButtonDefaults.colors(
+          if (index == selectedIndex) {
+            MaterialTheme.colorScheme.primary
+          } else {
+            MaterialTheme.colorScheme.surface
+          },
+        ),
         shape =
           SegmentedButtonDefaults.itemShape(
             index = index,
@@ -298,11 +308,27 @@ private fun SortOrderSelector(
           Icon(
             if (index == 0) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
             contentDescription = null,
-            modifier = Modifier.size(18.dp),
+            tint = (
+              if (index == selectedIndex) {
+                MaterialTheme.colorScheme.onPrimary
+              } else {
+                MaterialTheme.colorScheme.onSurface
+              }
+              ),
+            modifier = Modifier
+              .size(18.dp),
           )
         },
       ) {
-        Text(label)
+        Text(
+          label,
+          color = (
+            if (index == selectedIndex) {
+              MaterialTheme.colorScheme.onPrimary
+            } else {
+              MaterialTheme.colorScheme.onSurface
+            }),
+        )
       }
     }
   }
@@ -327,9 +353,9 @@ private fun ViewModeSelectorComponent(
       style = MaterialTheme.typography.titleMedium,
       fontWeight = FontWeight.Medium,
       color = if (enabled) {
-        MaterialTheme.colorScheme.onSurface
+        MaterialTheme.colorScheme.primary
       } else {
-        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+        MaterialTheme.colorScheme.onSurface/*.copy(alpha = 0.38f)*/
       },
     )
 
@@ -347,7 +373,7 @@ private fun ViewModeSelectorComponent(
           verticalArrangement = Arrangement.spacedBy(6.dp),
           modifier = Modifier
             .clip(shape)
-            .clickable(enabled = enabled) { 
+            .clickable(enabled = enabled) {
               if (enabled) {
                 viewModeSelector.onViewModeChange(index == 0)
               }
@@ -360,7 +386,7 @@ private fun ViewModeSelectorComponent(
               .clip(shape)
               .background(
                 color = if (selected && enabled) {
-                  MaterialTheme.colorScheme.primaryContainer
+                  MaterialTheme.colorScheme.primary
                 } else if (enabled) {
                   MaterialTheme.colorScheme.surfaceContainerHighest
                 } else {
@@ -373,7 +399,7 @@ private fun ViewModeSelectorComponent(
               imageVector = icons[index],
               contentDescription = label,
               tint = if (selected && enabled) {
-                MaterialTheme.colorScheme.onPrimaryContainer
+                MaterialTheme.colorScheme.onPrimary
               } else if (enabled) {
                 MaterialTheme.colorScheme.onSurfaceVariant
               } else {
@@ -448,10 +474,26 @@ private fun VisibilityTogglesSection(
           FilterChip(
             selected = toggle.checked,
             onClick = { toggle.onCheckedChange(!toggle.checked) },
+            colors =
+              if (toggle.checked) {
+                FilterChipDefaults.filterChipColors(
+                  selectedContainerColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                )
+              } else {
+                FilterChipDefaults.filterChipColors(
+                  MaterialTheme.colorScheme.surface,
+                )
+              },
+
             label = {
               Text(
                 text = toggle.label,
                 style = MaterialTheme.typography.labelLarge,
+                color = if (toggle.checked) {
+                  MaterialTheme.colorScheme.primaryContainer
+                } else {
+                  MaterialTheme.colorScheme.onSurface
+                },
               )
             },
             leadingIcon = null,
