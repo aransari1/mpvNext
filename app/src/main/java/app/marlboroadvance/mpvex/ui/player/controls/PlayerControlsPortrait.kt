@@ -22,6 +22,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import app.marlboroadvance.mpvex.preferences.preference.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -145,7 +146,7 @@ fun TopPlayerControlsPortrait(
 }
 
 @Composable
-fun BottomPlayerControlsPortrait(
+fun PortraitControlsGrid(
   buttons: List<PlayerButton>,
   chapters: List<Segment>,
   currentChapter: Int?,
@@ -162,13 +163,12 @@ fun BottomPlayerControlsPortrait(
   viewModel: PlayerViewModel,
   activity: PlayerActivity,
   gridColumns: Int,
+  modifier: Modifier = Modifier,
 ) {
   val spacing = MaterialTheme.spacing
 
   Column(
-    modifier = Modifier
-      .fillMaxWidth()
-      .padding(bottom = spacing.large),
+    modifier = modifier.fillMaxWidth(),
     verticalArrangement = Arrangement.spacedBy(spacing.smaller)
   ) {
     buttons.chunked(gridColumns).forEach { rowButtons ->
@@ -214,5 +214,84 @@ fun BottomPlayerControlsPortrait(
       }
     }
   }
+}
+
+@Composable
+fun TopPlayerControlsGridPortrait(
+  buttons: List<PlayerButton>,
+  chapters: List<Segment>,
+  currentChapter: Int?,
+  isSpeedNonOne: Boolean,
+  currentZoom: Float,
+  aspect: VideoAspect,
+  mediaTitle: String?,
+  hideBackground: Boolean,
+  decoder: app.marlboroadvance.mpvex.ui.player.Decoder,
+  playbackSpeed: Float,
+  onBackPress: () -> Unit,
+  onOpenSheet: (Sheets) -> Unit,
+  onOpenPanel: (Panels) -> Unit,
+  viewModel: PlayerViewModel,
+  activity: PlayerActivity,
+  gridColumns: Int,
+) {
+  PortraitControlsGrid(
+    buttons = buttons,
+    chapters = chapters,
+    currentChapter = currentChapter,
+    isSpeedNonOne = isSpeedNonOne,
+    currentZoom = currentZoom,
+    aspect = aspect,
+    mediaTitle = mediaTitle,
+    hideBackground = hideBackground,
+    decoder = decoder,
+    playbackSpeed = playbackSpeed,
+    onBackPress = onBackPress,
+    onOpenSheet = onOpenSheet,
+    onOpenPanel = onOpenPanel,
+    viewModel = viewModel,
+    activity = activity,
+    gridColumns = gridColumns,
+    modifier = Modifier.padding(top = MaterialTheme.spacing.smaller)
+  )
+}
+
+@Composable
+fun BottomPlayerControlsPortrait(
+  buttons: List<PlayerButton>,
+  chapters: List<Segment>,
+  currentChapter: Int?,
+  isSpeedNonOne: Boolean,
+  currentZoom: Float,
+  aspect: VideoAspect,
+  mediaTitle: String?,
+  hideBackground: Boolean,
+  decoder: app.marlboroadvance.mpvex.ui.player.Decoder,
+  playbackSpeed: Float,
+  onBackPress: () -> Unit,
+  onOpenSheet: (Sheets) -> Unit,
+  onOpenPanel: (Panels) -> Unit,
+  viewModel: PlayerViewModel,
+  activity: PlayerActivity,
+  gridColumns: Int,
+) {
+  PortraitControlsGrid(
+    buttons = buttons,
+    chapters = chapters,
+    currentChapter = currentChapter,
+    isSpeedNonOne = isSpeedNonOne,
+    currentZoom = currentZoom,
+    aspect = aspect,
+    mediaTitle = mediaTitle,
+    hideBackground = hideBackground,
+    decoder = decoder,
+    playbackSpeed = playbackSpeed,
+    onBackPress = onBackPress,
+    onOpenSheet = onOpenSheet,
+    onOpenPanel = onOpenPanel,
+    viewModel = viewModel,
+    activity = activity,
+    gridColumns = gridColumns,
+  )
 }
 

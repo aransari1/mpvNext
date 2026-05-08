@@ -98,6 +98,8 @@ fun PlayerButtonChip(
                 fontSize = 15.sp, 
                 textAlign = TextAlign.Center,
                 lineHeight = 14.sp,
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                 modifier = Modifier.padding(start = 8.dp),
               )
             }

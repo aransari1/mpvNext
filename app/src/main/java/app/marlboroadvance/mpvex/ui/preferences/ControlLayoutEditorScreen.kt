@@ -2,11 +2,12 @@ package app.marlboroadvance.mpvex.ui.preferences
 
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -18,7 +19,6 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
-import androidx.compose.ui.draw.rotate
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.filled.AddCircle
@@ -39,22 +39,27 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import app.marlboroadvance.mpvex.preferences.AppearancePreferences
 import app.marlboroadvance.mpvex.preferences.PlayerButton
 import app.marlboroadvance.mpvex.preferences.allPlayerButtons
 import app.marlboroadvance.mpvex.preferences.preference.Preference
+import app.marlboroadvance.mpvex.preferences.preference.collectAsState
+import app.marlboroadvance.mpvex.preferences.preference.deleteAndGet
 import app.marlboroadvance.mpvex.presentation.Screen
 import app.marlboroadvance.mpvex.presentation.components.ConfirmDialog
 import app.marlboroadvance.mpvex.ui.preferences.components.PlayerButtonChip
 import app.marlboroadvance.mpvex.ui.utils.LocalBackStack
 import kotlinx.serialization.Serializable
-import me.zhanghai.compose.preference.PreferenceCategory
 import me.zhanghai.compose.preference.ProvidePreferenceLocals
+import me.zhanghai.compose.preference.SliderPreference
 import org.koin.compose.koinInject
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyGridState
+import kotlin.math.roundToInt
 
 @Serializable
 data class ControlLayoutEditorScreen(
@@ -65,187 +70,101 @@ data class ControlLayoutEditorScreen(
   override fun Content() {
     val backstack = LocalBackStack.current
     val preferences = koinInject<AppearancePreferences>()
+    val portraitGridColumns by preferences.portraitGridColumns.collectAsState()
 
-    // Get all 4 preferences as a List
-    val prefs =
-      remember(region) {
-        when (region) {
-          ControlRegion.TOP_RIGHT ->
-            listOf(
-              preferences.topRightControls,
-              preferences.topLeftControls,
-              preferences.bottomRightControls,
-              preferences.bottomLeftControls,
-            )
-          ControlRegion.BOTTOM_RIGHT ->
-            listOf(
-              preferences.bottomRightControls,
-              preferences.topLeftControls,
-              preferences.topRightControls,
-              preferences.bottomLeftControls,
-            )
-          ControlRegion.BOTTOM_LEFT ->
-            listOf(
-              preferences.bottomLeftControls,
-              preferences.topLeftControls,
-              preferences.topRightControls,
-              preferences.bottomRightControls,
-            )
-          ControlRegion.PORTRAIT_BOTTOM ->
-            listOf(
-              preferences.portraitBottomControls,
-            )
-          ControlRegion.MORE_SHEET ->
-            listOf(
-              preferences.moreSheetControls,
-            )
-        }
+    val prefs = remember(region) {
+      when (region) {
+        ControlRegion.TOP_RIGHT -> listOf(preferences.topRightControls, preferences.topLeftControls, preferences.bottomRightControls, preferences.bottomLeftControls)
+        ControlRegion.BOTTOM_RIGHT -> listOf(preferences.bottomRightControls, preferences.topLeftControls, preferences.topRightControls, preferences.bottomLeftControls)
+        ControlRegion.BOTTOM_LEFT -> listOf(preferences.bottomLeftControls, preferences.topLeftControls, preferences.topRightControls, preferences.bottomRightControls)
+        ControlRegion.PORTRAIT_BOTTOM -> listOf(preferences.portraitBottomControls)
+        ControlRegion.MORE_SHEET -> listOf(preferences.moreSheetControls)
       }
+    }
 
     val prefToEdit: Preference<String> = prefs[0]
 
-    // Calculate buttons used in ALL regions except the current one being edited
-    // This is used for BOTH primary regions (to disable used buttons) 
-    // AND the More Sheet (to calculate what is NOT on screen)
-    val usedInOtherRegions by remember(region) {
-        mutableStateOf(
-            if (region == ControlRegion.MORE_SHEET) {
-                // THE FINAL FIX: A button is only 'Used' (hidden from More Sheet setting)
-                // if it is present in BOTH Landscape AND Portrait.
-                // If it's missing from either, it will appear in the More Sheet in that mode.
-                val landscapeSet = (preferences.topLeftControls.get().split(',') +
-                                    preferences.topRightControls.get().split(',') +
-                                    preferences.bottomLeftControls.get().split(',') +
-                                    preferences.bottomRightControls.get().split(','))
-                                    .filter(String::isNotBlank)
-                                    .mapNotNull { try { PlayerButton.valueOf(it) } catch (_: Exception) { null } }
-                                    .toSet()
-                
-                val portraitSet = preferences.portraitBottomControls.get().split(',')
-                                    .filter(String::isNotBlank)
-                                    .mapNotNull { try { PlayerButton.valueOf(it) } catch (_: Exception) { null } }
-                                    .toSet()
-                
-                landscapeSet.intersect(portraitSet)
-            } else {
-                // For a primary region, "other" means the other primary regions 
-                // (BUT NOT the more sheet itself)
-                val others = when (region) {
-                    ControlRegion.TOP_RIGHT -> listOf(preferences.topLeftControls, preferences.bottomRightControls, preferences.bottomLeftControls, preferences.portraitBottomControls)
-                    ControlRegion.BOTTOM_RIGHT -> listOf(preferences.topLeftControls, preferences.topRightControls, preferences.bottomLeftControls, preferences.portraitBottomControls)
-                    ControlRegion.BOTTOM_LEFT -> listOf(preferences.topLeftControls, preferences.topRightControls, preferences.bottomRightControls, preferences.portraitBottomControls)
-                    ControlRegion.PORTRAIT_BOTTOM -> listOf(preferences.topLeftControls, preferences.topRightControls, preferences.bottomRightControls, preferences.bottomLeftControls)
-                    else -> emptyList()
-                }
-                others.flatMap { it.get().split(',') }
-                    .filter(String::isNotBlank)
-                    .mapNotNull { try { PlayerButton.valueOf(it) } catch (_: Exception) { null } }
-                    .toSet()
-            }
-        )
+        val usedInOtherRegions by remember(region) {
+      mutableStateOf(
+        if (region == ControlRegion.MORE_SHEET) {
+          val landscapeSet = (preferences.topLeftControls.get().split(',') +
+                  preferences.topRightControls.get().split(',') +
+                  preferences.bottomLeftControls.get().split(',') +
+                  preferences.bottomRightControls.get().split(','))
+            .filter(String::isNotBlank)
+            .mapNotNull { try { PlayerButton.valueOf(it) } catch (_: Exception) { null } }
+            .toSet()
+          val portraitSet = preferences.portraitBottomControls.get().split(',')
+            .filter(String::isNotBlank)
+            .mapNotNull { try { PlayerButton.valueOf(it) } catch (_: Exception) { null } }
+            .toSet()
+          landscapeSet.intersect(portraitSet)
+        } else {
+          val others = when (region) {
+            ControlRegion.TOP_RIGHT -> listOf(preferences.topLeftControls, preferences.bottomRightControls, preferences.bottomLeftControls)
+            ControlRegion.BOTTOM_RIGHT -> listOf(preferences.topLeftControls, preferences.topRightControls, preferences.bottomLeftControls)
+            ControlRegion.BOTTOM_LEFT -> listOf(preferences.topLeftControls, preferences.topRightControls, preferences.bottomRightControls)
+            ControlRegion.PORTRAIT_BOTTOM -> emptyList() // Portrait is independent
+            else -> emptyList()
+          }
+          others.flatMap { it.get().split(',') }
+            .filter(String::isNotBlank)
+            .mapNotNull { try { PlayerButton.valueOf(it) } catch (_: Exception) { null } }
+            .toSet()
+        }
+      )
     }
 
     var selectedButtons by remember {
       mutableStateOf(
         if (region == ControlRegion.MORE_SHEET) {
-            // THE CORE FIX: More Sheet list is "EVERYTHING ELSE"
-            // We take all available buttons, subtract what's on screen
-            // AND we respect the user's manual ordering from the moreSheet preference
-            val manualOrder = prefToEdit.get().split(',')
-                .filter(String::isNotBlank)
-                .mapNotNull { try { PlayerButton.valueOf(it) } catch (_: Exception) { null } }
-            
-            val allOrphaned = allPlayerButtons.filter { it !in usedInOtherRegions }
-            
-            // Reconstruct the list: User's ordered items first (if still orphaned), 
-            // then the rest of the orphans
-            val orderedOrphans = manualOrder.filter { it in allOrphaned }
-            val remainingOrphans = allOrphaned.filter { it !in orderedOrphans }
-            
-            orderedOrphans + remainingOrphans
+          val landscapeSet = (preferences.topLeftControls.get().split(',') +
+                  preferences.topRightControls.get().split(',') +
+                  preferences.bottomLeftControls.get().split(',') +
+                  preferences.bottomRightControls.get().split(','))
+            .filter(String::isNotBlank)
+            .toSet()
+          val portraitSet = preferences.portraitBottomControls.get().split(',')
+            .filter(String::isNotBlank)
+            .toSet()
+          val onBothScreens = landscapeSet.intersect(portraitSet)
+          preferences.moreSheetControls.get().split(',')
+            .filter(String::isNotBlank)
+            .filter { it !in onBothScreens }
+            .mapNotNull { try { PlayerButton.valueOf(it) } catch (_: Exception) { null } }
         } else {
-            prefToEdit
-              .get()
-              .split(',')
-              .filter(String::isNotBlank)
-              .mapNotNull {
-                try {
-                  PlayerButton.valueOf(it)
-                } catch (_: Exception) {
-                  null
-                }
-              }
+          prefToEdit.get().split(',')
+            .filter(String::isNotBlank)
+            .mapNotNull { try { PlayerButton.valueOf(it) } catch (_: Exception) { null } }
         }
       )
     }
 
-    DisposableEffect(Unit) {
+    var showResetDialog by remember { mutableStateOf(false) }
+
+    DisposableEffect(selectedButtons) {
       onDispose {
-        if (region == ControlRegion.MORE_SHEET) {
-            // Save only the items that ARE orphans to the preference
-            // Items already in other regions will stay there
-            prefToEdit.set(selectedButtons.filter { it !in usedInOtherRegions }.joinToString(","))
-        } else {
-            // Save the primary region
-            prefToEdit.set(selectedButtons.joinToString(","))
-            
-            // AUTOMATIC MOVE:
-            // When we add a button to a primary region, we should only remove it 
-            // from the moreSheet manual order if it is now present in BOTH modes.
-            val landscapeSet = (preferences.topLeftControls.get().split(',') +
-                                preferences.topRightControls.get().split(',') +
-                                preferences.bottomLeftControls.get().split(',') +
-                                preferences.bottomRightControls.get().split(','))
-                                .filter(String::isNotBlank)
-            val portraitSet = preferences.portraitBottomControls.get().split(',')
-                                .filter(String::isNotBlank)
-            
-            val intersection = landscapeSet.intersect(portraitSet.toSet())
-            
-            val currentMoreSheet = preferences.moreSheetControls.get().split(',')
-                .filter(String::isNotBlank)
-                .filter { btn -> btn !in intersection }
-            
-            preferences.moreSheetControls.set(currentMoreSheet.joinToString(","))
-        }
+        prefToEdit.set(selectedButtons.joinToString(","))
       }
     }
 
-    val title =
-      remember(region) {
-        when (region) {
-          ControlRegion.TOP_RIGHT -> "Edit Top Right"
-          ControlRegion.BOTTOM_RIGHT -> "Edit Bottom Right"
-          ControlRegion.BOTTOM_LEFT -> "Edit Bottom Left"
-          ControlRegion.PORTRAIT_BOTTOM -> "Edit Portrait Bottom"
-          ControlRegion.MORE_SHEET -> "Edit More Sheet Buttons"
-        }
-      }
-
-    var showResetDialog by remember { mutableStateOf(false) }
+    val title = when (region) {
+      ControlRegion.TOP_RIGHT -> "Top-Right Region"
+      ControlRegion.BOTTOM_RIGHT -> "Bottom-Right Region"
+      ControlRegion.BOTTOM_LEFT -> "Bottom-Left Region"
+      ControlRegion.PORTRAIT_BOTTOM -> "Portrait Controls"
+      ControlRegion.MORE_SHEET -> "More Options Menu"
+    }
 
     if (showResetDialog) {
       ConfirmDialog(
-        title = "Reset to default?",
-        subtitle = "This will reset the controls in this region to their default configuration.",
+        title = "Reset Layout",
+        subtitle = "Are you sure you want to reset this region to defaults?",
         onConfirm = {
-          prefToEdit.delete()
-          selectedButtons = prefToEdit
-            .get()
-            .split(',')
-            .filter(String::isNotBlank)
-            .mapNotNull {
-              try {
-                PlayerButton.valueOf(it)
-              } catch (_: Exception) {
-                null
-              }
-            }
-          showResetDialog = false
+          prefToEdit.deleteAndGet()
+          backstack.removeLastOrNull()
         },
-        onCancel = {
-          showResetDialog = false
-        },
+        onCancel = { showResetDialog = false },
       )
     }
 
@@ -268,274 +187,230 @@ data class ControlLayoutEditorScreen(
     ) { padding ->
       ProvidePreferenceLocals {
         val gridState = rememberLazyGridState()
+        val availableButtons = remember { allPlayerButtons.filter { it != PlayerButton.NONE } }
         val reorderableState = rememberReorderableLazyGridState(gridState) { from, to ->
-            val fromKey = from.key as? PlayerButton
-            val toKey = to.key as? PlayerButton
-            
-            val fromIndex = selectedButtons.indexOf(fromKey)
-            val toIndex = selectedButtons.indexOf(toKey)
-            
-            // Only update if indices are valid to prevent unnecessary state changes
-            if (fromIndex in selectedButtons.indices && toIndex in selectedButtons.indices && fromIndex != toIndex) {
-                selectedButtons = selectedButtons.toMutableList().apply {
-                    add(toIndex, removeAt(fromIndex))
-                }
+          val fromKey = from.key as? PlayerButton
+          val toKey = to.key as? PlayerButton
+          val fromIndex = selectedButtons.indexOf(fromKey)
+          val toIndex = selectedButtons.indexOf(toKey)
+          if (fromIndex in selectedButtons.indices && toIndex in selectedButtons.indices && fromIndex != toIndex) {
+            selectedButtons = selectedButtons.toMutableList().apply {
+              add(toIndex, removeAt(fromIndex))
             }
+          }
         }
 
         LazyVerticalGrid(
-            state = gridState,
-            columns = GridCells.Adaptive(minSize = 72.dp),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
+          state = gridState,
+          columns = GridCells.Adaptive(minSize = 72.dp),
+          contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
+          verticalArrangement = Arrangement.spacedBy(4.dp),
+          horizontalArrangement = Arrangement.spacedBy(4.dp),
+          modifier = Modifier
+            .fillMaxSize()
+            .padding(padding)
         ) {
-            // --- 1. Header & Active Selected Zone ---
+          if (region == ControlRegion.PORTRAIT_BOTTOM) {
             item(span = { GridItemSpan(maxLineSpan) }) {
-              androidx.compose.material3.Text(
-                      text = "Long press to reorder items. Tap the '-' icon to remove them.",
-                      style = MaterialTheme.typography.bodySmall,
-                      color = MaterialTheme.colorScheme.onSurfaceVariant,
-                      modifier = Modifier.padding(bottom = 12.dp, start = 4.dp)
+              androidx.compose.material3.Surface(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerLow,
+              ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                  Text(
+                    text = "Portrait Grid Configuration",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
                   )
-            }
-
-            // --- 2. Selected Controls (Reorderable) ---
-            if (selectedButtons.isEmpty()) {
-                 item(span = { GridItemSpan(maxLineSpan) }) {
-                     androidx.compose.material3.Surface(
-                         modifier = Modifier
-                             .fillMaxWidth()
-                             .height(120.dp),
-                         shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
-                         color = MaterialTheme.colorScheme.surfaceContainerLowest,
-                         border = BorderStroke(
-                             1.dp,
-                             MaterialTheme.colorScheme.outlineVariant
-                         ),
-                     ) {
-                         androidx.compose.foundation.layout.Column(
-                             modifier = Modifier.fillMaxSize(),
-                             horizontalAlignment = Alignment.CenterHorizontally,
-                             verticalArrangement = Arrangement.Center
-                         ) {
-                             Icon(
-                                 imageVector = Icons.Default.AddCircle,
-                                 contentDescription = null,
-                                 modifier = Modifier
-                                     .size(32.dp)
-                                     .padding(bottom = 8.dp),
-                                 tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
-                             )
-                             androidx.compose.material3.Text(
-                                  text = "Drop zone is empty",
-                                  style = MaterialTheme.typography.bodyMedium,
-                                  fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
-                                  color = MaterialTheme.colorScheme.onSurfaceVariant,
-                             )
-                             androidx.compose.material3.Text(
-                                  text = "Tap buttons from the 'Available Palette' below",
-                                  style = MaterialTheme.typography.labelSmall,
-                                  color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                             )
-                         }
-                     }
-                 }
-            } else {
-                items(
-                    count = selectedButtons.size,
-                    key = { selectedButtons[it] },
-                    span = { index ->
-                        val button = selectedButtons[index]
-                        if (button == PlayerButton.CURRENT_CHAPTER || button == PlayerButton.VIDEO_TITLE) {
-                            GridItemSpan(maxLineSpan) 
-                        } else {
-                            GridItemSpan(1)
-                        }
-                    }
-                ) { index ->
-                    val button = selectedButtons[index]
-                    ReorderableItem(reorderableState, key = button) { isDragging ->
-                       val elevation by animateFloatAsState(
-                           targetValue = if (isDragging) 8f else 0f,
-                           label = "drag_elevation"
-                       )
-                       
-                       // Wrap in Box to control alignment/filling within the grid cell
-                       androidx.compose.material3.Surface(
-                           modifier = Modifier
-                               .draggableHandle()
-                               .then(
-                                   if (button == PlayerButton.CURRENT_CHAPTER || button == PlayerButton.VIDEO_TITLE) {
-                                       Modifier.wrapContentWidth(Alignment.Start)
-                                   } else {
-                                       Modifier
-                                   }
-                               ),
-                           shape = androidx.compose.foundation.shape.RoundedCornerShape(24.dp), // Match chip border radius
-                           shadowElevation = elevation.dp,
-                           color = Color.Transparent
-                       ) {
-                            PlayerButtonChip(
-                                button = button,
-                                enabled = true,
-                                onClick = { selectedButtons = selectedButtons - button },
-                                badgeIcon = Icons.Default.RemoveCircle,
-                                badgeColor = Color(0xFFEF5350),
-                            )
-                       }
-                    }
+                  Spacer(modifier = Modifier.height(8.dp))
+                  SliderPreference(
+                    value = portraitGridColumns.toFloat(),
+                    onValueChange = { preferences.portraitGridColumns.set(it.roundToInt()) },
+                    sliderValue = portraitGridColumns.toFloat(),
+                    onSliderValueChange = { preferences.portraitGridColumns.set(it.roundToInt()) },
+                    title = { Text(text = "Columns per row") },
+                    summary = { Text(text = "$portraitGridColumns columns (Total capacity: ${portraitGridColumns * 2} buttons)") },
+                    valueRange = 1f..10f,
+                    valueSteps = 8
+                  )
                 }
+              }
             }
+          }
 
-            // --- 3. SPaceing ---
-            item(span = { GridItemSpan(maxLineSpan) }) {
-                Spacer(modifier = Modifier.height(40.dp)) 
-            }
+          item(span = { GridItemSpan(maxLineSpan) }) {
+            Text(
+              text = if (region == ControlRegion.PORTRAIT_BOTTOM) {
+                "Buttons will be distributed to Top Row (first $portraitGridColumns) and Bottom Row (next $portraitGridColumns). Any extra will go to More Sheet."
+              } else {
+                "Long press to reorder items. Tap the '-' icon to remove them."
+              },
+              style = MaterialTheme.typography.bodySmall,
+              color = MaterialTheme.colorScheme.onSurfaceVariant,
+              modifier = Modifier.padding(bottom = 12.dp, start = 4.dp)
+            )
+          }
 
-            // --- 4. Available Controls  ---
+          if (selectedButtons.isEmpty()) {
             item(span = { GridItemSpan(maxLineSpan) }) {
-                 androidx.compose.material3.Card(
-                     modifier = Modifier.fillMaxWidth(),
-                     shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
-                     colors = androidx.compose.material3.CardDefaults.cardColors(
-                         containerColor = MaterialTheme.colorScheme.surfaceContainer
-                     ),
-                 ) {
-                     FlowRow(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp), 
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
-                    ) {
-                        val availableButtons = allPlayerButtons.filter { it !in selectedButtons }
-                        availableButtons.forEach { button ->
-                            val isEnabled = button !in usedInOtherRegions
-                            PlayerButtonChip(
-                                button = button,
-                                enabled = isEnabled,
-                                onClick = { selectedButtons = selectedButtons + button },
-                                badgeIcon = Icons.Default.AddCircle,
-                                badgeColor = if (isEnabled) MaterialTheme.colorScheme.primary 
-                                             else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
-                            )
-                        }
-                        
-                        if (availableButtons.isEmpty()) {
-                            androidx.compose.foundation.layout.Box(
-                                modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                androidx.compose.material3.Text(
-                                    text = "All available buttons are in use.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                    }
-                 }
+              androidx.compose.material3.Surface(
+                modifier = Modifier.fillMaxWidth().height(120.dp),
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerLowest,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+              ) {
+                Column(
+                  modifier = Modifier.fillMaxSize(),
+                  horizontalAlignment = Alignment.CenterHorizontally,
+                  verticalArrangement = Arrangement.Center
+                ) {
+                  Icon(
+                    imageVector = Icons.Default.AddCircle,
+                    contentDescription = null,
+                    modifier = Modifier.size(32.dp).padding(bottom = 8.dp),
+                    tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
+                  )
+                  Text(
+                    text = "Drop zone is empty",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                  )
+                }
+              }
             }
-            
-            // --- 5. Icons Legend ---
-            item(span = { GridItemSpan(maxLineSpan) }) {
-                IconsLegend()
-                Spacer(Modifier.height(16.dp))
+          } else {
+            selectedButtons.forEachIndexed { index, button ->
+              if (region == ControlRegion.PORTRAIT_BOTTOM) {
+                if (index == 0) {
+                  item(span = { GridItemSpan(maxLineSpan) }, key = "marker_top") {
+                    RowMarker(title = "TOP ROW", color = MaterialTheme.colorScheme.primary)
+                  }
+                } else if (index == portraitGridColumns) {
+                  item(span = { GridItemSpan(maxLineSpan) }, key = "marker_bottom") {
+                    RowMarker(title = "BOTTOM ROW", color = MaterialTheme.colorScheme.secondary)
+                  }
+                } else if (index == 2 * portraitGridColumns) {
+                  item(span = { GridItemSpan(maxLineSpan) }, key = "marker_more") {
+                    RowMarker(title = "MORE SHEET (OVERFLOW)", color = MaterialTheme.colorScheme.outline)
+                  }
+                }
+              }
+
+              item(
+                key = button,
+                span = {
+                  if (button == PlayerButton.CURRENT_CHAPTER || button == PlayerButton.VIDEO_TITLE) {
+                    GridItemSpan(2)
+                  } else {
+                    GridItemSpan(1)
+                  }
+                }
+              ) {
+                ReorderableItem(reorderableState, key = button) { isDragging ->
+                  val elevation by animateFloatAsState(targetValue = if (isDragging) 8f else 0f, label = "drag_elevation")
+                  androidx.compose.material3.Surface(
+                    modifier = Modifier.draggableHandle().then(
+                      if (button == PlayerButton.CURRENT_CHAPTER || button == PlayerButton.VIDEO_TITLE) Modifier.wrapContentWidth(Alignment.Start) else Modifier
+                    ),
+                    shape = androidx.compose.foundation.shape.RoundedCornerShape(24.dp),
+                    shadowElevation = elevation.dp,
+                    color = Color.Transparent
+                  ) {
+                    PlayerButtonChip(
+                      button = button,
+                      enabled = true,
+                      onClick = { selectedButtons = selectedButtons - button },
+                      badgeIcon = Icons.Default.RemoveCircle,
+                      badgeColor = Color(0xFFEF5350),
+                    )
+                  }
+                }
+              }
             }
+          }
+
+          item(span = { GridItemSpan(maxLineSpan) }) {
+            Spacer(modifier = Modifier.height(40.dp))
+          }
+
+          item(span = { GridItemSpan(maxLineSpan) }) {
+            Text(
+              text = "Available Palette",
+              style = MaterialTheme.typography.titleMedium,
+              fontWeight = FontWeight.Bold,
+              color = MaterialTheme.colorScheme.primary,
+              modifier = Modifier.padding(bottom = 8.dp, start = 4.dp)
+            )
+          }
+
+          items(
+            count = availableButtons.size,
+            key = { "palette_${availableButtons[it].name}" },
+            span = { index ->
+              val button = availableButtons[index]
+              if (button == PlayerButton.CURRENT_CHAPTER || button == PlayerButton.VIDEO_TITLE) {
+                GridItemSpan(2)
+              } else {
+                GridItemSpan(1)
+              }
+            }
+          ) { index ->
+            val button = availableButtons[index]
+            val isUsed = button in selectedButtons || button in usedInOtherRegions
+            PlayerButtonChip(
+              button = button,
+              enabled = !isUsed,
+              onClick = { if (!isUsed) selectedButtons = selectedButtons + button },
+              badgeIcon = Icons.Default.AddCircle,
+              badgeColor = MaterialTheme.colorScheme.primary,
+            )
+          }
+
+          item(span = { GridItemSpan(maxLineSpan) }) {
+            IconsLegend()
+            Spacer(Modifier.height(16.dp))
+          }
         }
       }
     }
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// UI Components
-// ─────────────────────────────────────────────────────────────────────────────
-
 @Composable
 private fun IconsLegend() {
-    androidx.compose.material3.Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 24.dp, bottom = 8.dp),
-        shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
-        colors = androidx.compose.material3.CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
-        ),
-    ) {
-        androidx.compose.foundation.layout.Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            // Header
-            Text(
-                text = "Icons Legend",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-
-            // FlowRow grid of icons
-            FlowRow(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                // We use allPlayerButtons to avoid showing NONE and defaults like Back/Title which are static
-                allPlayerButtons.forEach { button ->
-                    androidx.compose.foundation.layout.Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier.wrapContentWidth()
-                    ) {
-                        if (button == PlayerButton.AB_LOOP) {
-                            // Show "AB" text instead of icon for AB_LOOP
-                            Box(
-                                modifier = Modifier.size(20.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = "AB",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                                )
-                            }
-                        } else {
-                            val modifier = if (button == PlayerButton.VERTICAL_FLIP) {
-                                Modifier.rotate(90f)
-                            } else {
-                                Modifier
-                            }
-
-                            Icon(
-                                imageVector = button.icon,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier
-                                    .size(20.dp)
-                                    .then(modifier)
-                            )
-                        }
-                        
-                        Text(
-                            text = app.marlboroadvance.mpvex.preferences.getPlayerButtonLabel(button),
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier.padding(end = 4.dp)
-                        )
-                    }
-                }
+  androidx.compose.material3.Card(
+    modifier = Modifier.fillMaxWidth().padding(top = 24.dp, bottom = 8.dp),
+    shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
+    colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+  ) {
+    Column(modifier = Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+      Text(text = "Icons Legend", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+      FlowRow(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        allPlayerButtons.forEach { button ->
+          Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.wrapContentWidth()) {
+            if (button == PlayerButton.AB_LOOP) {
+              Box(modifier = Modifier.size(20.dp), contentAlignment = Alignment.Center) {
+                Text(text = "AB", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+              }
+            } else {
+              Icon(imageVector = button.icon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp).then(if (button == PlayerButton.VERTICAL_FLIP) Modifier.rotate(90f) else Modifier))
             }
+            Text(text = app.marlboroadvance.mpvex.preferences.getPlayerButtonLabel(button), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurface)
+          }
         }
+      }
     }
+  }
 }
 
-
+@Composable
+private fun RowMarker(title: String, color: Color) {
+  Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(top = 16.dp, bottom = 8.dp)) {
+    androidx.compose.material3.HorizontalDivider(modifier = Modifier.weight(1f), thickness = 1.dp, color = color.copy(alpha = 0.3f))
+    Text(text = title, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = color, modifier = Modifier.padding(horizontal = 12.dp))
+    androidx.compose.material3.HorizontalDivider(modifier = Modifier.weight(1f), thickness = 1.dp, color = color.copy(alpha = 0.3f))
+  }
+}

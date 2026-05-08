@@ -424,6 +424,7 @@ fun ControlsTab(
   val bottomLeftControlsPref by appearancePreferences.bottomLeftControls.collectAsState()
   val portraitBottomControlsPref by appearancePreferences.portraitBottomControls.collectAsState()
   val moreSheetControlsPref by appearancePreferences.moreSheetControls.collectAsState()
+  val portraitGridColumns by appearancePreferences.portraitGridColumns.collectAsState()
 
   val configuration = LocalConfiguration.current
   val isPortrait = configuration.orientation == android.content.res.Configuration.ORIENTATION_PORTRAIT
@@ -439,11 +440,24 @@ fun ControlsTab(
       topRightControlsPref,
       bottomRightControlsPref,
       bottomLeftControlsPref,
-      portraitBottomControlsPref
+      portraitBottomControlsPref,
+      chapters,
+      hasPlaylistSupport,
+      portraitGridColumns
   ) {
       val visible = mutableSetOf<PlayerButton>()
       if (isPortrait) {
-          visible.addAll(appearancePreferences.parseButtons(portraitBottomControlsPref, mutableSetOf()))
+          val allPortrait = appearancePreferences.parseButtons(portraitBottomControlsPref, mutableSetOf())
+          val visibleInRows = allPortrait.filter { button ->
+              when (button) {
+                  PlayerButton.BOOKMARKS_CHAPTERS -> chapters.isNotEmpty()
+                  PlayerButton.SHUFFLE -> hasPlaylistSupport
+                  PlayerButton.CURRENT_CHAPTER -> false
+                  PlayerButton.NONE -> false
+                  else -> true
+              }
+          }.take(2 * portraitGridColumns)
+          visible.addAll(visibleInRows)
       } else {
           visible.addAll(appearancePreferences.parseButtons(topRightControlsPref, mutableSetOf()))
           visible.addAll(appearancePreferences.parseButtons(bottomRightControlsPref, mutableSetOf()))

@@ -196,6 +196,7 @@ fun PlayerControls(
   }
   val playerTimeToDisappear by playerPreferences.playerTimeToDisappear.collectAsState()
   val chapters by viewModel.chapters.collectAsState(persistentListOf())
+  val playlist by viewModel.playlistManager.playlist.collectAsState()
   val playlistMode by playerPreferences.playlistMode.collectAsState()
   val haptic = LocalHapticFeedback.current
 
@@ -247,8 +248,26 @@ fun PlayerControls(
       listOf(topR, bottomR, bottomL)
     }
 
-  val portraitBottomButtons = remember(portraitBottomControlsPref) {
+  val portraitBottomButtonsRaw = remember(portraitBottomControlsPref) {
     appearancePreferences.parseButtons(portraitBottomControlsPref, mutableSetOf())
+  }
+
+  val portraitVisibleButtons = remember(portraitBottomButtonsRaw, chapters, playlist, viewModel) {
+    portraitBottomButtonsRaw.filter { button ->
+      when (button) {
+        app.marlboroadvance.mpvex.preferences.PlayerButton.BOOKMARKS_CHAPTERS -> chapters.isNotEmpty()
+        app.marlboroadvance.mpvex.preferences.PlayerButton.SHUFFLE -> viewModel.hasPlaylistSupport()
+        app.marlboroadvance.mpvex.preferences.PlayerButton.CURRENT_CHAPTER -> false
+        app.marlboroadvance.mpvex.preferences.PlayerButton.NONE -> false
+        else -> true
+      }
+    }
+  }
+
+  val (portraitTopButtons, portraitBottomButtons) = remember(portraitVisibleButtons, portraitGridColumns) {
+    val topChunk = portraitVisibleButtons.take(portraitGridColumns)
+    val bottomChunk = portraitVisibleButtons.drop(portraitGridColumns).take(portraitGridColumns)
+    topChunk to bottomChunk
   }
 
   var isUnlockSliderDragging by remember { mutableStateOf(false) }
@@ -312,6 +331,7 @@ fun PlayerControls(
             ),
       ) {
         val (topLeftControls, topRightControls) = createRefs()
+        val portraitTopGrid = createRef()
         val (volumeSlider, brightnessSlider) = createRefs()
         val unlockControlsButton = createRef()
         val (bottomRightControls, bottomLeftControls) = createRefs()
@@ -832,7 +852,7 @@ fun PlayerControls(
 
         AnimatedVisibility(
           visible =
-            (controlsShown && !areControlsLocked || doubleTapSeekAmount != 0) || pausedForCache == true,
+            ((controlsShown && !areSlidersShown) && !areControlsLocked || doubleTapSeekAmount != 0) || pausedForCache == true,
           enter = fadeIn(playerControlsEnterAnimationSpec()),
           exit = fadeOut(playerControlsExitAnimationSpec()),
           modifier =
@@ -840,8 +860,10 @@ fun PlayerControls(
               end.linkTo(parent.absoluteRight)
               start.linkTo(parent.absoluteLeft)
               if (isPortrait) {
-                top.linkTo(topLeftControls.bottom)
-                bottom.linkTo(seekbar.top)
+                top.linkTo(parent.top)
+                bottom.linkTo(parent.bottom)
+                // Biased slightly upwards to account for navigation bars and the bottom grid
+                verticalBias = 0.45f
               } else {
                 top.linkTo(parent.top)
                 bottom.linkTo(parent.bottom)
@@ -1092,14 +1114,18 @@ fun PlayerControls(
               )
               .constrainAs(seekbar) {
                 if (isPortrait) {
-                  bottom.linkTo(bottomRightControls.top, spacing.small)
-                } else if (bottomControlsBelowSeekbar) {
-                  // When bottom controls are below seekbar, position seekbar above them
-                  // Use a stable margin to prevent jumping when controls are hiding
-                  val bottomMargin = if (isPortrait) 96.dp else 45.dp + spacing.medium + spacing.small
-                  bottom.linkTo(parent.bottom, bottomMargin)
+                  if (bottomControlsBelowSeekbar) {
+                    bottom.linkTo(bottomRightControls.top, spacing.smaller) // Tight gap to grid below
+                  } else {
+                    bottom.linkTo(parent.bottom, spacing.large) // Space from screen bottom
+                  }
                 } else {
-                  bottom.linkTo(parent.bottom, if (isPortrait) 64.dp else spacing.extraSmall)
+                  if (bottomControlsBelowSeekbar) {
+                    val bottomMargin = 45.dp + spacing.medium + spacing.small
+                    bottom.linkTo(parent.bottom, bottomMargin)
+                  } else {
+                    bottom.linkTo(parent.bottom, spacing.extraSmall)
+                  }
                 }
                 start.linkTo(parent.start, spacing.large)
                 end.linkTo(parent.end, spacing.large)
@@ -1228,6 +1254,50 @@ fun PlayerControls(
         }
 
         AnimatedVisibility(
+          visible = controlsShown && !areSlidersShown && !areControlsLocked && isPortrait && portraitTopButtons.isNotEmpty(),
+          enter = fadeIn(playerControlsEnterAnimationSpec()),
+          exit = fadeOut(playerControlsExitAnimationSpec()),
+          modifier =
+            Modifier
+              .then(
+                if (showSystemNavigationBar) {
+                  val navBarPadding = WindowInsets.navigationBars.asPaddingValues()
+                  Modifier.padding(
+                    start = navBarPadding.calculateLeftPadding(androidx.compose.ui.unit.LayoutDirection.Ltr),
+                    end = navBarPadding.calculateRightPadding(androidx.compose.ui.unit.LayoutDirection.Ltr)
+                  )
+                } else {
+                  Modifier
+                }
+              )
+              .constrainAs(portraitTopGrid) {
+                top.linkTo(topLeftControls.bottom)
+                start.linkTo(parent.start, spacing.medium)
+                end.linkTo(parent.end, spacing.medium)
+                width = Dimension.fillToConstraints
+              },
+        ) {
+          TopPlayerControlsGridPortrait(
+            buttons = portraitTopButtons,
+            chapters = chapters,
+            currentChapter = currentChapter,
+            isSpeedNonOne = isSpeedNonOne,
+            currentZoom = videoZoom,
+            aspect = aspect,
+            mediaTitle = mediaTitle,
+            hideBackground = hideBackground,
+            decoder = decoder,
+            playbackSpeed = playbackSpeed ?: 1f,
+            onBackPress = onBackPress,
+            onOpenSheet = onOpenSheet,
+            onOpenPanel = onOpenPanel,
+            viewModel = viewModel,
+            activity = activity,
+            gridColumns = portraitGridColumns,
+          )
+        }
+
+        AnimatedVisibility(
           visible = controlsShown && !areControlsLocked && !isPortrait,
           enter =
             if (!reduceMotion) {
@@ -1318,7 +1388,11 @@ fun PlayerControls(
               )
               .constrainAs(bottomRightControls) {
                 if (isPortrait) {
-                  bottom.linkTo(parent.bottom, spacing.medium)
+                  if (bottomControlsBelowSeekbar) {
+                    bottom.linkTo(parent.bottom, spacing.large) // Space from screen bottom
+                  } else {
+                    bottom.linkTo(seekbar.top, spacing.smaller) // Tight gap to seekbar
+                  }
                   start.linkTo(parent.start, spacing.medium)
                   end.linkTo(parent.end, spacing.medium)
                   width = Dimension.fillToConstraints
