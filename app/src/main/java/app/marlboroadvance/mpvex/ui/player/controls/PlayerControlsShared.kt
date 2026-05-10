@@ -50,6 +50,7 @@ import androidx.compose.material.icons.filled.Flip
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.Headset
+import androidx.compose.material.icons.filled.HeadsetOff
 import androidx.compose.material.icons.filled.BlurOn
 import androidx.compose.material.icons.outlined.BlurOn
 import androidx.compose.material.icons.outlined.Memory
@@ -1155,6 +1156,10 @@ fun RenderPlayerButton(
     }
 
     PlayerButton.BACKGROUND_PLAYBACK -> {
+      val audioPreferences = org.koin.compose.koinInject<app.marlboroadvance.mpvex.preferences.AudioPreferences>()
+      val automaticBackgroundPlayback by audioPreferences.automaticBackgroundPlayback.collectAsState()
+      val icon = if (automaticBackgroundPlayback) Icons.Default.Headset else Icons.Default.HeadsetOff
+
       if (isMoreSheet) {
           Surface(
             shape = CircleShape,
@@ -1164,7 +1169,12 @@ fun RenderPlayerButton(
             modifier = Modifier
               .height(buttonSize)
               .clip(CircleShape)
-              .clickable { activity.triggerBackgroundPlayback() }
+              .combinedClickable(
+                onClick = { audioPreferences.automaticBackgroundPlayback.set(!automaticBackgroundPlayback) },
+                onLongClick = { activity.triggerBackgroundPlayback() },
+                interactionSource = remember { MutableInteractionSource() },
+                indication = ripple()
+              )
           ) {
             Row(
               verticalAlignment = Alignment.CenterVertically,
@@ -1172,7 +1182,7 @@ fun RenderPlayerButton(
               modifier = Modifier.padding(horizontal = MaterialTheme.spacing.smaller)
             ) {
               Icon(
-                imageVector = Icons.Default.Headset,
+                imageVector = icon,
                 contentDescription = null,
                 modifier = Modifier.size(24.dp)
               )
@@ -1185,8 +1195,9 @@ fun RenderPlayerButton(
           }
       } else {
           ControlsButton(
-            icon = Icons.Default.Headset,
-            onClick = { activity.triggerBackgroundPlayback() },
+            icon = icon,
+            onClick = { audioPreferences.automaticBackgroundPlayback.set(!automaticBackgroundPlayback) },
+            onLongClick = { activity.triggerBackgroundPlayback() },
             modifier = Modifier.size(buttonSize),
           )
       }
