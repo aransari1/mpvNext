@@ -104,6 +104,9 @@ import app.marlboroadvance.mpvex.ui.browser.dialogs.FolderPickerDialog
 import app.marlboroadvance.mpvex.ui.browser.dialogs.RenameDialog
 import app.marlboroadvance.mpvex.ui.browser.dialogs.SortDialog
 import app.marlboroadvance.mpvex.ui.browser.dialogs.ViewModeSelector
+import app.marlboroadvance.mpvex.ui.browser.dialogs.MultiViewModeSelector
+import app.marlboroadvance.mpvex.ui.browser.dialogs.ViewModeOption
+import androidx.compose.material.icons.filled.VideoLibrary
 import app.marlboroadvance.mpvex.ui.browser.dialogs.VisibilityToggle
 import app.marlboroadvance.mpvex.ui.browser.selection.rememberSelectionManager
 import app.marlboroadvance.mpvex.ui.browser.sheets.PlayLinkSheet
@@ -1381,13 +1384,17 @@ private fun FileSystemBrowserContent(
               items = items.filterIsInstance<FileSystemItem.VideoFile>(),
               key = { "${it.video.id}_${it.video.path}" },
             ) { videoFile ->
+              val isRecentlyPlayed = recentlyPlayedFilePath?.let { 
+                videoFile.video.path == it || videoFile.video.uri.toString() == it 
+              } ?: false
+
               VideoCard(
                 video = videoFile.video,
                 uiSettings = uiSettings,
                 progressPercentage = videoFilesWithPlayback[videoFile.video.id],
                 isOldAndUnplayed = newVideoIds.contains(videoFile.video.id),
                 isWatched = watchedVideoIds.contains(videoFile.video.id),
-                isRecentlyPlayed = recentlyPlayedFilePath == videoFile.video.path,
+                isRecentlyPlayed = isRecentlyPlayed,
                 isNeverPlayed = videoFilesWithPlayback[videoFile.video.id] == null,
                 isSelected = videoSelectionManager.isSelected(videoFile.video),
                 onClick = { onVideoClick(videoFile.video) },
@@ -1669,22 +1676,28 @@ fun FileSystemSortDialog(
       }
     },
     showSortOptions = true,
-    viewModeSelector = ViewModeSelector(
+    viewModeSelector = MultiViewModeSelector(
       label = "View Mode",
-      firstOptionLabel = "Folder",
-      secondOptionLabel = "Tree",
-      firstOptionIcon = Icons.Filled.ViewModule,
-      secondOptionIcon = Icons.Filled.AccountTree,
-      isFirstOptionSelected = folderViewMode == app.marlboroadvance.mpvex.preferences.FolderViewMode.AlbumView,
-      onViewModeChange = { isFirstOption ->
-        browserPreferences.folderViewMode.set(
-          if (isFirstOption) {
-            app.marlboroadvance.mpvex.preferences.FolderViewMode.AlbumView
-          } else {
-            app.marlboroadvance.mpvex.preferences.FolderViewMode.FileManager
-          },
+      options = listOf(
+        ViewModeOption(
+          label = "Folder",
+          icon = Icons.Filled.ViewModule,
+          isSelected = folderViewMode == app.marlboroadvance.mpvex.preferences.FolderViewMode.AlbumView,
+          onClick = { browserPreferences.folderViewMode.set(app.marlboroadvance.mpvex.preferences.FolderViewMode.AlbumView) }
+        ),
+        ViewModeOption(
+          label = "Tree",
+          icon = Icons.Filled.AccountTree,
+          isSelected = folderViewMode == app.marlboroadvance.mpvex.preferences.FolderViewMode.FileManager,
+          onClick = { browserPreferences.folderViewMode.set(app.marlboroadvance.mpvex.preferences.FolderViewMode.FileManager) }
+        ),
+        ViewModeOption(
+          label = "Library",
+          icon = Icons.Filled.VideoLibrary,
+          isSelected = folderViewMode == app.marlboroadvance.mpvex.preferences.FolderViewMode.MediaLibrary,
+          onClick = { browserPreferences.folderViewMode.set(app.marlboroadvance.mpvex.preferences.FolderViewMode.MediaLibrary) }
         )
-      },
+      )
     ),
     layoutModeSelector = ViewModeSelector(
       label = "Layout",

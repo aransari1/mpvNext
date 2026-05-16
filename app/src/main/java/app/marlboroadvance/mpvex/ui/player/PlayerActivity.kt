@@ -377,9 +377,14 @@ class PlayerActivity :
 
     // Only auto-generate playlist from folder if playlist mode is enabled and no playlist_id
     if (viewModel.playlistManager.playlist.value.isEmpty() && playlistId == null && playerPreferences.playlistMode.get()) {
+      val launchSource = intent.getStringExtra("launch_source")
       val path = parsePathFromIntent(intent)
       if (path != null) {
-        generatePlaylistFromFolder(path)
+        if (launchSource == "media_library_list") {
+          generatePlaylistFromMediaLibrary(path)
+        } else {
+          generatePlaylistFromFolder(path)
+        }
       }
     }
 
@@ -2536,9 +2541,14 @@ class PlayerActivity :
 
     // Auto-generate playlist from folder if playlist mode is enabled and no playlist_id
     if (viewModel.playlistManager.playlist.value.isEmpty() && viewModel.playlistManager.playlistId == null && playerPreferences.playlistMode.get()) {
+      val launchSource = intent.getStringExtra("launch_source")
       val path = parsePathFromIntent(intent)
       if (path != null) {
-        generatePlaylistFromFolder(path)
+        if (launchSource == "media_library_list") {
+          generatePlaylistFromMediaLibrary(path)
+        } else {
+          generatePlaylistFromFolder(path)
+        }
       }
     }
 
@@ -3390,6 +3400,40 @@ class PlayerActivity :
       "${fileName}_${uri.toString().hashCode()}"
     } else {
       fileName
+    }
+  }
+
+  private fun generatePlaylistFromMediaLibrary(currentPath: String) {
+    lifecycleScope.launch(Dispatchers.IO) {
+      runCatching {
+        val allVideos = app.marlboroadvance.mpvex.repository.MediaFileRepository.getAllVideos(this@PlayerActivity)
+        
+        val videoSortType = browserPreferences.videoSortType.get()
+        val videoSortOrder = browserPreferences.videoSortOrder.get()
+        
+        var filteredVideos = allVideos
+        if (!browserPreferences.showAudioFiles.get()) {
+          filteredVideos = allVideos.filterNot { it.isAudio }
+        }
+        
+        val sortedVideos = app.marlboroadvance.mpvex.utils.sort.SortUtils.sortVideos(filteredVideos, videoSortType, videoSortOrder)
+        if (sortedVideos.size <= 1) return@runCatching
+
+        val newPlaylist = sortedVideos.map { it.uri }
+        val newIndex = sortedVideos.indexOfFirst { it.path == currentPath || it.uri.toString() == currentPath }
+        
+        if (newIndex != -1) {
+          withContext(Dispatchers.Main) {
+            viewModel.playlistManager.setPlaylist(
+              items = newPlaylist,
+              index = newIndex
+            )
+            Log.d(TAG, "Auto-playlist generated from Media Library: ${newPlaylist.size} videos")
+          }
+        }
+      }.onFailure { e ->
+        Log.e(TAG, "Failed to auto-generate library playlist", e)
+      }
     }
   }
 

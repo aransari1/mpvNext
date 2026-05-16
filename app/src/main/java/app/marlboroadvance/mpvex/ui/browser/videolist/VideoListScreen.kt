@@ -97,6 +97,8 @@ import app.marlboroadvance.mpvex.ui.browser.dialogs.LoadingDialog
 import app.marlboroadvance.mpvex.ui.browser.dialogs.RenameDialog
 import app.marlboroadvance.mpvex.ui.browser.dialogs.SortDialog
 import app.marlboroadvance.mpvex.ui.browser.dialogs.ViewModeSelector
+import app.marlboroadvance.mpvex.ui.browser.dialogs.MultiViewModeSelector
+import app.marlboroadvance.mpvex.ui.browser.dialogs.ViewModeOption
 import app.marlboroadvance.mpvex.ui.browser.dialogs.VisibilityToggle
 import app.marlboroadvance.mpvex.ui.browser.fab.FabScrollHelper
 import app.marlboroadvance.mpvex.ui.browser.selection.SelectionManager
@@ -545,7 +547,7 @@ data class VideoListScreen(
 }
 
 @Composable
-private fun VideoListContent(
+fun VideoListContent(
   folderId: String,
   videosWithInfo: List<VideoWithPlaybackInfo>,
   isLoading: Boolean,
@@ -759,7 +761,9 @@ private fun VideoListContent(
               key = { index -> "${videosWithInfo[index].video.id}_${videosWithInfo[index].video.path}" },
             ) { index ->
               val videoWithInfo = videosWithInfo[index]
-              val isRecentlyPlayed = recentlyPlayedFilePath?.let { videoWithInfo.video.path == it } ?: false
+              val isRecentlyPlayed = recentlyPlayedFilePath?.let { 
+                videoWithInfo.video.path == it || videoWithInfo.video.uri.toString() == it 
+              } ?: false
 
               VideoCard(
                 video = videoWithInfo.video,
@@ -814,7 +818,9 @@ private fun VideoListContent(
                 key = { index -> "${videosWithInfo[index].video.id}_${videosWithInfo[index].video.path}" },
               ) { index ->
                 val videoWithInfo = videosWithInfo[index]
-                val isRecentlyPlayed = recentlyPlayedFilePath?.let { videoWithInfo.video.path == it } ?: false
+                val isRecentlyPlayed = recentlyPlayedFilePath?.let { 
+                videoWithInfo.video.path == it || videoWithInfo.video.uri.toString() == it 
+              } ?: false
 
                 VideoCard(
                   video = videoWithInfo.video,
@@ -847,7 +853,7 @@ private fun VideoListContent(
   }
 
 @Composable
-private fun VideoSortDialog(
+fun VideoSortDialog(
   isOpen: Boolean,
   onDismiss: () -> Unit,
   sortType: VideoSortType,
@@ -939,18 +945,28 @@ private fun VideoSortDialog(
         else -> Pair("Asc", "Desc")
       }
     },
-    viewModeSelector = ViewModeSelector(
+    viewModeSelector = MultiViewModeSelector(
       label = "View Mode",
-      firstOptionLabel = "Folder",
-      secondOptionLabel = "Tree",
-      firstOptionIcon = Icons.Filled.ViewModule,
-      secondOptionIcon = Icons.Filled.AccountTree,
-      isFirstOptionSelected = folderViewMode == FolderViewMode.AlbumView,
-      onViewModeChange = { isFirstOption ->
-        browserPreferences.folderViewMode.set(
-          if (isFirstOption) FolderViewMode.AlbumView else FolderViewMode.FileManager,
+      options = listOf(
+        ViewModeOption(
+          label = "Folder",
+          icon = Icons.Filled.ViewModule,
+          isSelected = folderViewMode == FolderViewMode.AlbumView,
+          onClick = { browserPreferences.folderViewMode.set(FolderViewMode.AlbumView) }
+        ),
+        ViewModeOption(
+          label = "Tree",
+          icon = Icons.Filled.AccountTree,
+          isSelected = folderViewMode == FolderViewMode.FileManager,
+          onClick = { browserPreferences.folderViewMode.set(FolderViewMode.FileManager) }
+        ),
+        ViewModeOption(
+          label = "Library",
+          icon = Icons.Filled.VideoLibrary,
+          isSelected = folderViewMode == FolderViewMode.MediaLibrary,
+          onClick = { browserPreferences.folderViewMode.set(FolderViewMode.MediaLibrary) }
         )
-      },
+      )
     ),
     layoutModeSelector = ViewModeSelector(
       label = "Layout",

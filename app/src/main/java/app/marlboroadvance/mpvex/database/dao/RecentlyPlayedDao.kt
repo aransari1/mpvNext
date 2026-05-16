@@ -27,7 +27,7 @@ interface RecentlyPlayedDao {
   @Query(
     """
     SELECT * FROM RecentlyPlayedEntity 
-    WHERE (launchSource IS NULL OR launchSource = '' OR launchSource = 'normal' OR launchSource = 'playlist' OR launchSource = 'video_list')
+    WHERE (launchSource IS NULL OR launchSource IN ('', 'normal', 'playlist', 'video_list', 'media_library_list', 'share', 'open_file', 'recently_played_button', 'first_video_button'))
     AND (NOT (filePath LIKE '%.m3u%' OR filePath LIKE '%.m3u8%'))
     ORDER BY timestamp DESC 
     LIMIT 1
@@ -38,7 +38,7 @@ interface RecentlyPlayedDao {
   @Query(
     """
     SELECT * FROM RecentlyPlayedEntity 
-    WHERE (launchSource IS NULL OR launchSource = '' OR launchSource = 'normal' OR launchSource = 'playlist' OR launchSource = 'video_list')
+    WHERE (launchSource IS NULL OR launchSource IN ('', 'normal', 'playlist', 'video_list', 'media_library_list', 'share', 'open_file', 'recently_played_button', 'first_video_button'))
     AND (NOT (filePath LIKE '%.m3u%' OR filePath LIKE '%.m3u8%'))
     ORDER BY timestamp DESC 
     LIMIT 1

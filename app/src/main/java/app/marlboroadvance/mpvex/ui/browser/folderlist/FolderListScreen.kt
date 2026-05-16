@@ -36,6 +36,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material.icons.filled.Title
+import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material.icons.filled.ViewModule
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -106,6 +107,9 @@ import app.marlboroadvance.mpvex.ui.browser.dialogs.GridColumnSelector
 import app.marlboroadvance.mpvex.ui.browser.dialogs.SortDialog
 import app.marlboroadvance.mpvex.ui.browser.dialogs.ViewModeSelector
 import app.marlboroadvance.mpvex.ui.browser.dialogs.VisibilityToggle
+import app.marlboroadvance.mpvex.ui.browser.medialibrary.MediaLibraryContent
+import app.marlboroadvance.mpvex.ui.browser.dialogs.MultiViewModeSelector
+import app.marlboroadvance.mpvex.ui.browser.dialogs.ViewModeOption
 import app.marlboroadvance.mpvex.ui.browser.filesystem.FileSystemDirectoryScreen
 import app.marlboroadvance.mpvex.ui.browser.filesystem.FileSystemBrowserRootScreen
 import app.marlboroadvance.mpvex.ui.browser.selection.rememberSelectionManager
@@ -144,6 +148,7 @@ object FolderListScreen : Screen {
         folderSortType = folderSortType,
         folderSortOrder = folderSortOrder
       )
+      FolderViewMode.MediaLibrary -> MediaLibraryContent()
     }
   }
 
@@ -1035,18 +1040,28 @@ private fun FolderSortDialog(
       }
     },
     showSortOptions = isAlbumView,
-    viewModeSelector = ViewModeSelector(
+    viewModeSelector = MultiViewModeSelector(
       label = "View Mode",
-      firstOptionLabel = "Folder",
-      secondOptionLabel = "Tree",
-      firstOptionIcon = Icons.Filled.ViewModule,
-      secondOptionIcon = Icons.Filled.AccountTree,
-      isFirstOptionSelected = folderViewMode == FolderViewMode.AlbumView,
-      onViewModeChange = { isFirstOption ->
-        browserPreferences.folderViewMode.set(
-          if (isFirstOption) FolderViewMode.AlbumView else FolderViewMode.FileManager,
+      options = listOf(
+        ViewModeOption(
+          label = "Folder",
+          icon = Icons.Filled.ViewModule,
+          isSelected = folderViewMode == FolderViewMode.AlbumView,
+          onClick = { browserPreferences.folderViewMode.set(FolderViewMode.AlbumView) }
+        ),
+        ViewModeOption(
+          label = "Tree",
+          icon = Icons.Filled.AccountTree,
+          isSelected = folderViewMode == FolderViewMode.FileManager,
+          onClick = { browserPreferences.folderViewMode.set(FolderViewMode.FileManager) }
+        ),
+        ViewModeOption(
+          label = "Library",
+          icon = Icons.Filled.VideoLibrary,
+          isSelected = folderViewMode == FolderViewMode.MediaLibrary,
+          onClick = { browserPreferences.folderViewMode.set(FolderViewMode.MediaLibrary) }
         )
-      },
+      )
     ),
     layoutModeSelector = ViewModeSelector(
       label = "Layout",

@@ -62,7 +62,7 @@ fun SortDialog(
   getLabelForType: (String, Boolean) -> Pair<String, String>,
   modifier: Modifier = Modifier,
   visibilityToggles: List<VisibilityToggle> = emptyList(),
-  viewModeSelector: ViewModeSelector? = null,
+  viewModeSelector: MultiViewModeSelector? = null,
   layoutModeSelector:  ViewModeSelector? = null,
   folderGridColumnSelector: GridColumnSelector? = null,
   videoGridColumnSelector: GridColumnSelector? = null,
@@ -113,14 +113,14 @@ fun SortDialog(
         if (viewModeSelector != null || layoutModeSelector != null) {
           Row(
             modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min),
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.Top,
           ) {
             if (viewModeSelector != null) {
-              ViewModeSelectorComponent(
-                viewModeSelector = viewModeSelector,
+              MultiViewModeSelectorComponent(
+                selector = viewModeSelector,
                 enabled = enableViewModeOptions,
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.weight(3f),
               )
             }
 
@@ -135,7 +135,7 @@ fun SortDialog(
               ViewModeSelectorComponent(
                 viewModeSelector = layoutModeSelector,
                 enabled = enableLayoutModeOptions,
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.weight(2f),
               )
             }
           }
@@ -176,6 +176,18 @@ data class ViewModeSelector(
   val secondOptionIcon: ImageVector,
   val isFirstOptionSelected: Boolean,
   val onViewModeChange: (Boolean) -> Unit,
+)
+
+data class ViewModeOption(
+  val label: String,
+  val icon: ImageVector,
+  val isSelected: Boolean,
+  val onClick: () -> Unit,
+)
+
+data class MultiViewModeSelector(
+  val label: String,
+  val options: List<ViewModeOption>,
 )
 
 data class GridColumnSelector(
@@ -225,7 +237,7 @@ private fun SortTypeSelector(
           Box(
             modifier =
               Modifier
-                .size(56.dp)
+                .size(48.dp)
                 .clip(shape)
                 .background(
                   color =
@@ -318,6 +330,98 @@ private fun SortOrderSelector(
 }
 
 @Composable
+private fun MultiViewModeSelectorComponent(
+  selector: MultiViewModeSelector,
+  enabled: Boolean = true,
+  modifier: Modifier = Modifier,
+) {
+  Column(
+    modifier = modifier,
+    verticalArrangement = Arrangement.spacedBy(8.dp),
+  ) {
+    Text(
+      text = selector.label,
+      style = MaterialTheme.typography.titleMedium,
+      fontWeight = FontWeight.Medium,
+      color = if (enabled) {
+        MaterialTheme.colorScheme.onSurface
+      } else {
+        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+      },
+    )
+
+    Row(
+      modifier = Modifier.fillMaxWidth(),
+      horizontalArrangement = Arrangement.SpaceEvenly,
+      verticalAlignment = Alignment.CenterVertically,
+    ) {
+      selector.options.forEach { option ->
+        val selected = option.isSelected
+        val shape = RoundedCornerShape(12.dp)
+
+        Column(
+          horizontalAlignment = Alignment.CenterHorizontally,
+          verticalArrangement = Arrangement.spacedBy(4.dp),
+          modifier = Modifier
+            .clip(shape)
+            .background(
+              if (selected && enabled) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)
+              else Color.Transparent
+            )
+            .clickable(enabled = enabled) {
+              if (enabled) {
+                option.onClick()
+              }
+            }
+            .padding(4.dp),
+        ) {
+          Box(
+            modifier = Modifier
+              .size(36.dp)
+              .clip(shape)
+              .background(
+                color = if (selected && enabled) {
+                  MaterialTheme.colorScheme.primaryContainer
+                } else if (enabled) {
+                  MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.4f)
+                } else {
+                  MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.2f)
+                }
+              ),
+            contentAlignment = Alignment.Center,
+          ) {
+            Icon(
+              imageVector = option.icon,
+              contentDescription = null,
+              modifier = Modifier.size(18.dp),
+              tint = if (selected && enabled) {
+                MaterialTheme.colorScheme.onPrimaryContainer
+              } else if (enabled) {
+                MaterialTheme.colorScheme.onSurfaceVariant
+              } else {
+                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
+              },
+            )
+          }
+
+          Text(
+            text = option.label,
+            style = MaterialTheme.typography.labelMedium,
+            color = if (selected && enabled) {
+              MaterialTheme.colorScheme.primary
+            } else if (enabled) {
+              MaterialTheme.colorScheme.onSurface
+            } else {
+              MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+            },
+          )
+        }
+      }
+    }
+  }
+}
+
+@Composable
 private fun ViewModeSelectorComponent(
   viewModeSelector: ViewModeSelector,
   enabled: Boolean = true,
@@ -353,7 +457,7 @@ private fun ViewModeSelectorComponent(
 
         Column(
           horizontalAlignment = Alignment.CenterHorizontally,
-          verticalArrangement = Arrangement.spacedBy(6.dp),
+          verticalArrangement = Arrangement.spacedBy(4.dp),
           modifier = Modifier
             .clip(shape)
             .background(
@@ -365,11 +469,11 @@ private fun ViewModeSelectorComponent(
                 viewModeSelector.onViewModeChange(index == 0)
               }
             }
-            .padding(8.dp),
+            .padding(4.dp),
         ) {
           Box(
             modifier = Modifier
-              .size(44.dp)
+              .size(36.dp)
               .clip(shape)
               .background(
                 color = if (selected && enabled) {
@@ -392,7 +496,7 @@ private fun ViewModeSelectorComponent(
               } else {
                 MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
               },
-              modifier = Modifier.size(20.dp),
+              modifier = Modifier.size(18.dp),
             )
           }
 

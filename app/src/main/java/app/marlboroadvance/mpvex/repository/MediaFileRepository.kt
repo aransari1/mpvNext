@@ -52,6 +52,13 @@ object MediaFileRepository {
       }
     }
 
+  suspend fun getAllVideos(context: Context): List<Video> =
+    withContext(Dispatchers.IO) {
+      val folders = getAllVideoFolders(context)
+      val bucketIds = folders.map { it.bucketId }.toSet()
+      getVideosForBuckets(context, bucketIds)
+    }
+
   // ==================== FILE SYSTEM BROWSING ====================
 
   fun getPathComponents(path: String): List<PathComponent> =

@@ -26,7 +26,7 @@ class RecentlyPlayedRepositoryImpl(
     val existingEntry = recentlyPlayedDao.getByFilePath(filePath)
     
     if (existingEntry != null) {
-      // Update existing entry, but preserve the original launchSource
+      // Update existing entry with the latest info
       val entity = RecentlyPlayedEntity(
         id = existingEntry.id,
         filePath = filePath,
@@ -37,8 +37,8 @@ class RecentlyPlayedRepositoryImpl(
         width = if (width > 0) width else existingEntry.width,
         height = if (height > 0) height else existingEntry.height,
         timestamp = System.currentTimeMillis(),
-        // Preserve the original launch source when reopening the same file
-        launchSource = existingEntry.launchSource,
+        // Update launch source if a new one is provided, otherwise keep the old one
+        launchSource = launchSource ?: existingEntry.launchSource,
         playlistId = playlistId ?: existingEntry.playlistId,
         isAudio = isAudio,
         artist = if (artist.isNotBlank()) artist else existingEntry.artist,

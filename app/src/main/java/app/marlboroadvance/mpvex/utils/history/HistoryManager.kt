@@ -50,7 +50,11 @@ class HistoryManager(
         scope.launch(Dispatchers.IO) {
             runCatching {
                 val filePath = resolveFilePath(uri)
-                if (shouldSkipHistory(filePath)) return@launch
+                Log.d(TAG, "recordPlaybackStart: uri=$uri, resolvedPath=$filePath, source=$launchSource")
+                if (shouldSkipHistory(filePath)) {
+                    Log.d(TAG, "recordPlaybackStart: skipping history for $filePath")
+                    return@launch
+                }
 
                 val videoTitle = MPVLib.getPropertyString("media-title")?.takeIf { it != fileName }
                 val duration = (MPVLib.getPropertyDouble("duration") ?: 0.0).times(1000).toLong()
@@ -202,7 +206,7 @@ class HistoryManager(
      * Resolves a URI to a stable file path for history tracking.
      */
     fun resolveFilePath(uri: Uri): String {
-        return when (uri.scheme) {
+        val path = when (uri.scheme) {
             "file" -> uri.path ?: uri.toString()
             "content" -> {
                 try {
@@ -219,11 +223,14 @@ class HistoryManager(
                         } else null
                     } ?: uri.toString()
                 } catch (e: Exception) {
+                    Log.w(TAG, "Failed to resolve content URI: $uri", e)
                     uri.toString()
                 }
             }
             else -> uri.toString()
         }
+        Log.v(TAG, "resolveFilePath: $uri -> $path")
+        return path
     }
 
     // ==================== Private Helpers ====================
