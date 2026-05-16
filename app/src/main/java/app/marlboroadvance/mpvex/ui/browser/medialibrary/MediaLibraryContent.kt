@@ -1,6 +1,7 @@
 package app.marlboroadvance.mpvex.ui.browser.medialibrary
 
 import android.content.Intent
+import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
@@ -124,6 +125,9 @@ fun MediaLibraryContent() {
   val deleteDialogOpen = rememberSaveable { mutableStateOf(false) }
   val renameDialogOpen = rememberSaveable { mutableStateOf(false) }
 
+  var mediaInfoUri by remember { mutableStateOf<Uri?>(null) }
+  var multiSelectionInfo by remember { mutableStateOf<Triple<Int, Long, Long>?>(null) }
+
   // Search state
   var searchQuery by rememberSaveable { mutableStateOf("") }
   var isSearching by rememberSaveable { mutableStateOf(false) }
@@ -204,15 +208,15 @@ fun MediaLibraryContent() {
           onDeleteClick = { deleteDialogOpen.value = true },
           isSingleSelection = selectionManager.isSingleSelection,
           onInfoClick = {
+            val selected = selectionManager.getSelectedItems()
             if (selectionManager.isSingleSelection) {
-              val video = selectionManager.getSelectedItems().firstOrNull()
-              if (video != null) {
-                val intent = Intent(context, app.marlboroadvance.mpvex.ui.mediainfo.MediaInfoActivity::class.java)
-                intent.action = Intent.ACTION_VIEW
-                intent.data = video.uri
-                context.startActivity(intent)
-                selectionManager.clear()
-              }
+              mediaInfoUri = selected.firstOrNull()?.uri
+            } else {
+              multiSelectionInfo = Triple(
+                selected.size,
+                selected.sumOf { it.size },
+                selected.sumOf { it.duration },
+              )
             }
           },
           onShareClick = { selectionManager.shareSelected() },
@@ -360,6 +364,13 @@ fun MediaLibraryContent() {
           itemType = "video"
         )
       }
+    }
+
+    mediaInfoUri?.let { uri ->
+      app.marlboroadvance.mpvex.ui.browser.sheets.MediaInfoSheet(uri = uri, onDismiss = { mediaInfoUri = null })
+    }
+    multiSelectionInfo?.let { (count, bytes, duration) ->
+      app.marlboroadvance.mpvex.ui.browser.sheets.MultiSelectionInfoSheet(count = count, totalBytes = bytes, totalDurationMs = duration, onDismiss = { multiSelectionInfo = null })
     }
   }
 }

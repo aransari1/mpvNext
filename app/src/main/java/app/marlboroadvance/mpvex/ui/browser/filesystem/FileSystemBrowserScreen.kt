@@ -2,6 +2,7 @@ package app.marlboroadvance.mpvex.ui.browser.filesystem
 
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.util.Log
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -250,6 +251,8 @@ fun FileSystemBrowserScreen(path: String? = null) {
   val isFabExpanded = remember { mutableStateOf(false) }
   
   // Search state
+  var mediaInfoUri by remember { mutableStateOf<Uri?>(null) }
+  var multiSelectionInfo by remember { mutableStateOf<Triple<Int, Long, Long>?>(null) }
   var searchQuery by rememberSaveable { mutableStateOf("") }
   var isSearching by rememberSaveable { mutableStateOf(false) }
   var searchResults by remember { mutableStateOf<List<FileSystemItem>>(emptyList()) }
@@ -640,13 +643,15 @@ fun FileSystemBrowserScreen(path: String? = null) {
             isSingleSelection = videoSelectionManager.isSingleSelection && !isMixedSelection,
             onInfoClick = if (videoSelectionManager.isInSelectionMode && !folderSelectionManager.isInSelectionMode) {
               {
-                val video = videoSelectionManager.getSelectedItems().firstOrNull()
-                if (video != null) {
-                  val intent = Intent(context, app.marlboroadvance.mpvex.ui.mediainfo.MediaInfoActivity::class.java)
-                  intent.action = Intent.ACTION_VIEW
-                  intent.data = video.uri
-                  context.startActivity(intent)
-                  videoSelectionManager.clear()
+                val selected = videoSelectionManager.getSelectedItems()
+                if (videoSelectionManager.isSingleSelection) {
+                  mediaInfoUri = selected.firstOrNull()?.uri
+                } else {
+                  multiSelectionInfo = Triple(
+                    selected.size,
+                    selected.sumOf { it.size },
+                    selected.sumOf { it.duration },
+                  )
                 }
               }
             } else {
@@ -1076,6 +1081,13 @@ fun FileSystemBrowserScreen(path: String? = null) {
         viewModel.refresh()
       },
     )
+
+    mediaInfoUri?.let { uri ->
+      app.marlboroadvance.mpvex.ui.browser.sheets.MediaInfoSheet(uri = uri, onDismiss = { mediaInfoUri = null })
+    }
+    multiSelectionInfo?.let { (count, bytes, duration) ->
+      app.marlboroadvance.mpvex.ui.browser.sheets.MultiSelectionInfoSheet(count = count, totalBytes = bytes, totalDurationMs = duration, onDismiss = { multiSelectionInfo = null })
+    }
   }
 }
 

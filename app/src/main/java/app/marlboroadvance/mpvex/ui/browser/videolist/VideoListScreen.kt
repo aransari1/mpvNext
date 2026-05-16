@@ -1,6 +1,7 @@
 package app.marlboroadvance.mpvex.ui.browser.videolist
 
 import android.content.Intent
+import android.net.Uri
 import android.os.Environment
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -96,6 +97,8 @@ import app.marlboroadvance.mpvex.ui.browser.dialogs.GridColumnSelector
 import app.marlboroadvance.mpvex.ui.browser.dialogs.LoadingDialog
 import app.marlboroadvance.mpvex.ui.browser.dialogs.RenameDialog
 import app.marlboroadvance.mpvex.ui.browser.dialogs.SortDialog
+import app.marlboroadvance.mpvex.ui.browser.sheets.MediaInfoSheet
+import app.marlboroadvance.mpvex.ui.browser.sheets.MultiSelectionInfoSheet
 import app.marlboroadvance.mpvex.ui.browser.dialogs.ViewModeSelector
 import app.marlboroadvance.mpvex.ui.browser.dialogs.MultiViewModeSelector
 import app.marlboroadvance.mpvex.ui.browser.dialogs.ViewModeOption
@@ -220,6 +223,8 @@ data class VideoListScreen(
     val privateSpaceMovedCount = remember { mutableIntStateOf(0) }
 
     val displayFolderName = videos.firstOrNull()?.bucketDisplayName ?: folderName
+    var mediaInfoUri by remember { mutableStateOf<Uri?>(null) }
+    var multiSelectionInfo by remember { mutableStateOf<Triple<Int, Long, Long>?>(null) }
 
     // FAB visibility state
     val isFabVisible = remember { mutableStateOf(true) }
@@ -279,15 +284,15 @@ data class VideoListScreen(
           },
           isSingleSelection = selectionManager.isSingleSelection,
           onInfoClick = {
+            val selected = selectionManager.getSelectedItems()
             if (selectionManager.isSingleSelection) {
-              val video = selectionManager.getSelectedItems().firstOrNull()
-              if (video != null) {
-                val intent = Intent(context, app.marlboroadvance.mpvex.ui.mediainfo.MediaInfoActivity::class.java)
-                intent.action = Intent.ACTION_VIEW
-                intent.data = video.uri
-                context.startActivity(intent)
-                selectionManager.clear()
-              }
+              mediaInfoUri = selected.firstOrNull()?.uri
+            } else {
+              multiSelectionInfo = Triple(
+                selected.size,
+                selected.sumOf { it.size },
+                selected.sumOf { it.duration },
+              )
             }
           },
           onShareClick = { selectionManager.shareSelected() },
@@ -542,6 +547,13 @@ data class VideoListScreen(
           viewModel.refresh()
         },
       )
+
+      mediaInfoUri?.let { uri ->
+        MediaInfoSheet(uri = uri, onDismiss = { mediaInfoUri = null })
+      }
+      multiSelectionInfo?.let { (count, bytes, duration) ->
+        MultiSelectionInfoSheet(count = count, totalBytes = bytes, totalDurationMs = duration, onDismiss = { multiSelectionInfo = null })
+      }
     }
   }
 }

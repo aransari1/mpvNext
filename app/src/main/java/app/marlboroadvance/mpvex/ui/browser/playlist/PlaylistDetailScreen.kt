@@ -125,6 +125,9 @@ data class PlaylistDetailScreen(val playlistId: Int) : Screen {
     val uiSettings by viewModel.uiSettings.collectAsState()
     val isRefreshing = remember { mutableStateOf(false) }
 
+    var mediaInfoUri by remember { mutableStateOf<Uri?>(null) }
+    var multiSelectionInfo by remember { mutableStateOf<Triple<Int, Long, Long>?>(null) }
+
     // Search state
     var searchQuery by rememberSaveable { mutableStateOf("") }
     var isSearching by rememberSaveable { mutableStateOf(false) }
@@ -249,29 +252,26 @@ data class PlaylistDetailScreen(val playlistId: Int) : Screen {
             onCancelSelection = { selectionManager.clear() },
             isSingleSelection = selectionManager.isSingleSelection,
             useRemoveIcon = true, // Show remove icon instead of delete for playlist
-            onInfoClick =
+            onInfoClick = {
+              val selected = selectionManager.getSelectedItems()
               if (selectionManager.isSingleSelection) {
-                {
-                  val item = selectionManager.getSelectedItems().firstOrNull()
-                  if (item != null) {
-                    if (playlist?.isM3uPlaylist == true) {
-                      // For M3U playlists, show URL dialog
-                      urlDialogContent = item.video.path
-                      showUrlDialog = true
-                      selectionManager.clear()
-                    } else {
-                      // For regular playlists, show MediaInfo activity
-                      val intent = Intent(context, app.marlboroadvance.mpvex.ui.mediainfo.MediaInfoActivity::class.java)
-                      intent.action = Intent.ACTION_VIEW
-                      intent.data = item.video.uri
-                      context.startActivity(intent)
-                      selectionManager.clear()
-                    }
+                val item = selected.firstOrNull()
+                if (item != null) {
+                  if (playlist?.isM3uPlaylist == true) {
+                    urlDialogContent = item.video.path
+                    showUrlDialog = true
+                  } else {
+                    mediaInfoUri = item.video.uri
                   }
                 }
               } else {
-                null
-              },
+                multiSelectionInfo = Triple(
+                  selected.size,
+                  selected.sumOf { it.video.size },
+                  selected.sumOf { it.video.duration },
+                )
+              }
+            },
             onShareClick = if (playlist?.isM3uPlaylist != true) {
               // Hide share button for M3U playlists
               {
@@ -531,6 +531,13 @@ data class PlaylistDetailScreen(val playlistId: Int) : Screen {
             android.widget.Toast.makeText(context, "URL copied to clipboard", android.widget.Toast.LENGTH_SHORT).show()
           }
         )
+      }
+
+      mediaInfoUri?.let { uri ->
+        app.marlboroadvance.mpvex.ui.browser.sheets.MediaInfoSheet(uri = uri, onDismiss = { mediaInfoUri = null })
+      }
+      multiSelectionInfo?.let { (count, bytes, duration) ->
+        app.marlboroadvance.mpvex.ui.browser.sheets.MultiSelectionInfoSheet(count = count, totalBytes = bytes, totalDurationMs = duration, onDismiss = { multiSelectionInfo = null })
       }
     }
   }

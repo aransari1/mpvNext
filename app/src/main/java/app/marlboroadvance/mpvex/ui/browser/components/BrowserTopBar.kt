@@ -429,19 +429,13 @@ private fun SelectionTopBar(
       if (onInfo != null) {
         IconButton(
           onClick = onInfo,
-          enabled = isSingleSelection,
           modifier = Modifier.padding(horizontal = 2.dp),
         ) {
           Icon(
             Icons.Filled.Info,
             contentDescription = stringResource(R.string.info),
             modifier = Modifier.size(24.dp),
-            tint =
-              if (isSingleSelection) {
-                MaterialTheme.colorScheme.secondary
-              } else {
-                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
-              },
+            tint = MaterialTheme.colorScheme.secondary,
           )
         }
       }
