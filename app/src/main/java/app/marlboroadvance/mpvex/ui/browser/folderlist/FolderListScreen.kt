@@ -548,7 +548,7 @@ object FolderListScreen : Screen {
       },
       floatingActionButton = {
         FloatingActionButtonMenu(
-          modifier = Modifier.padding(bottom = 88.dp),
+          modifier = Modifier.padding(bottom = navigationBarHeight + 8.dp),
           expanded = isFabExpanded.value,
           button = {
             TooltipBox(
