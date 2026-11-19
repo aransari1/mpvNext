@@ -1,3 +1,5 @@
+@file:OptIn(androidx.compose.material3.ExperimentalMaterial3ExpressiveApi::class)
+
 package xyz.mpv.rex.presentation.components
 
 import android.view.MotionEvent
@@ -14,6 +16,7 @@ import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInteropFilter
 import kotlinx.coroutines.delay
+import xyz.mpv.rex.ui.controls.iconButtonShapes
 
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
@@ -45,6 +48,7 @@ fun RepeatingIconButton(
     onClick = {},
     enabled = enabled,
     interactionSource = interactionSource,
+    shapes = iconButtonShapes(),
     content = content,
   )
 

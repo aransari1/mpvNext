@@ -148,7 +148,7 @@ fun PermissionDeniedState(
           colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceContainer,
           ),
-          shape = RoundedCornerShape(20.dp),
+          shape = MaterialTheme.shapes.extraLarge,
         ) {
           Column(
             modifier = Modifier.padding(20.dp),

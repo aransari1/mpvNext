@@ -1,12 +1,22 @@
 package xyz.mpv.rex.ui.player.controls.components.sheets
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Surface
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -30,7 +40,6 @@ import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
@@ -68,9 +77,11 @@ import kotlin.math.roundToInt
 fun PlaybackSpeedSheet(
   speed: Float,
   speedPresets: List<Float>,
+  speedCyclePresets: List<Float> = emptyList(),
   onSpeedChange: (Float) -> Unit,
   onAddSpeedPreset: (Float) -> Unit,
   onRemoveSpeedPreset: (Float) -> Unit,
+  onToggleSpeedCyclePreset: (Float) -> Unit = {},
   onResetPresets: () -> Unit,
   onMakeDefault: (Float) -> Unit,
   onResetDefault: () -> Unit,
@@ -177,9 +188,7 @@ fun PlaybackSpeedSheet(
           verticalAlignment = Alignment.CenterVertically,
           horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.small)
       ) {
-          val defaultPresets = remember {
-            listOf(0.25f, 0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f, 2.5f, 3.0f, 3.5f, 4.0f)
-          }
+          val haptics = LocalHapticFeedback.current
 
           LazyRow(
             modifier = Modifier.weight(1f),
@@ -187,22 +196,60 @@ fun PlaybackSpeedSheet(
             horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.small),
           ) {
             items(speedPresets.sorted()) { presetSpeed ->
-              val isDefault = defaultPresets.any { kotlin.math.abs(it - presetSpeed) < 0.001f }
-              
-              FilterChip(
-                selected = kotlin.math.abs(presetSpeed - speed) < 0.01f,
-                onClick = { onSpeedChange(presetSpeed) },
-                label = { Text("${presetSpeed.toFixed(2)}") },
-                leadingIcon = null,
-                colors = if (!isDefault) {
-                    androidx.compose.material3.FilterChipDefaults.filterChipColors(
-                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                        labelColor = MaterialTheme.colorScheme.onSecondaryContainer
+              val isInCycle = speedCyclePresets.any { kotlin.math.abs(it - presetSpeed) < 0.01f }
+              val isCurrentSpeed = kotlin.math.abs(presetSpeed - speed) < 0.01f
+
+              val containerColor = when {
+                isInCycle -> MaterialTheme.colorScheme.primaryContainer
+                else -> MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.6f)
+              }
+              val contentColor = when {
+                isInCycle -> MaterialTheme.colorScheme.onPrimaryContainer
+                else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+              }
+              val border = when {
+                isCurrentSpeed -> BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
+                isInCycle -> BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.4f))
+                else -> BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+              }
+
+              @OptIn(ExperimentalFoundationApi::class)
+              Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = containerColor,
+                contentColor = contentColor,
+                border = border,
+                modifier = Modifier
+                  .height(32.dp)
+                  .clip(RoundedCornerShape(8.dp))
+                  .combinedClickable(
+                    onClick = { onSpeedChange(presetSpeed) },
+                    onLongClick = {
+                      haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                      onToggleSpeedCyclePreset(presetSpeed)
+                    }
+                  )
+              ) {
+                Row(
+                  verticalAlignment = Alignment.CenterVertically,
+                  modifier = Modifier.padding(horizontal = 10.dp),
+                  horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                  if (isInCycle) {
+                    Box(
+                      modifier = Modifier
+                        .size(5.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.primary)
                     )
-                } else {
-                    androidx.compose.material3.FilterChipDefaults.filterChipColors()
+                  }
+                  Text(
+                    text = "${presetSpeed.toFixed(2)}x",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = if (isCurrentSpeed) FontWeight.Bold else FontWeight.Medium
+                  )
                 }
-              )
+              }
             }
           }
 
@@ -211,11 +258,10 @@ fun PlaybackSpeedSheet(
                 .height(32.dp)
                 .width(110.dp)
             
-            val isCurrentSpeedSaved = speedPresets.any { kotlin.math.abs(it - speed) < 0.001f }
-            val isDefaultPreset = defaultPresets.any { kotlin.math.abs(it - speed) < 0.001f }
+            val isCurrentSpeedSaved = speedPresets.any { kotlin.math.abs(it - speed) < 0.01f }
 
             if (isCurrentSpeedSaved) {
-                if (!isDefaultPreset) {
+                if (speedPresets.size > 1) {
                      Button(
                         onClick = { onRemoveSpeedPreset(speed) },
                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),

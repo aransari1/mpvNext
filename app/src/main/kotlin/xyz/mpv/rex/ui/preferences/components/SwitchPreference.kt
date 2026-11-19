@@ -18,7 +18,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ProvideTextStyle
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.TextStyle
@@ -32,6 +34,7 @@ fun SwitchPreference(
     summary: @Composable (() -> Unit)? = null,
     icon: @Composable (() -> Unit)? = null,
     enabled: Boolean = true,
+    onDisabledClick: (() -> Unit)? = null,
     titleStyle: TextStyle = MaterialTheme.typography.bodyLarge,
     summaryStyle: TextStyle = MaterialTheme.typography.bodyMedium,
     switchModifier: Modifier = Modifier,
@@ -40,7 +43,13 @@ fun SwitchPreference(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(enabled = enabled) { onValueChange(!value) }
+            .clickable(enabled = enabled || onDisabledClick != null) {
+                if (enabled) {
+                    onValueChange(!value)
+                } else {
+                    onDisabledClick?.invoke()
+                }
+            }
             .padding(contentPadding),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -68,34 +77,47 @@ fun SwitchPreference(
             }
         }
 
-        Switch(
-            checked = value,
-            onCheckedChange = onValueChange,
-            enabled = enabled,
-            modifier = switchModifier,
-            thumbContent = {
-                Crossfade(
-                    targetState = value,
-                    animationSpec = tween(durationMillis = 200),
-                    label = "SwitchIconAnimation"
-                ) { isChecked ->
-                    if (isChecked) {
-                        Icon(
-                            imageVector = Icons.Filled.Check,
-                            contentDescription = null,
-                            modifier = Modifier.size(SwitchDefaults.IconSize),
-                            tint = MaterialTheme.colorScheme.onPrimaryContainer
-                        )
-                    } else {
-                        Icon(
-                            imageVector = Icons.Filled.Close,
-                            contentDescription = null,
-                            modifier = Modifier.size(SwitchDefaults.IconSize),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+        Box {
+            Switch(
+                checked = value,
+                onCheckedChange = onValueChange,
+                enabled = enabled,
+                modifier = switchModifier,
+                thumbContent = {
+                    Crossfade(
+                        targetState = value,
+                        animationSpec = tween(durationMillis = 200),
+                        label = "SwitchIconAnimation"
+                    ) { isChecked ->
+                        if (isChecked) {
+                            Icon(
+                                imageVector = Icons.Filled.Check,
+                                contentDescription = null,
+                                modifier = Modifier.size(SwitchDefaults.IconSize),
+                                tint = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        } else {
+                            Icon(
+                                imageVector = Icons.Filled.Close,
+                                contentDescription = null,
+                                modifier = Modifier.size(SwitchDefaults.IconSize),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 }
+            )
+            if (!enabled && onDisabledClick != null) {
+                Box(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            onClick = { onDisabledClick() }
+                        )
+                )
             }
-        )
+        }
     }
 }

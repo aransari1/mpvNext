@@ -127,28 +127,25 @@ fun AspectRatioSheet(
             .padding(top = MaterialTheme.spacing.small),
       )
 
-      LazyRow(
+      androidx.compose.foundation.layout.FlowRow(
         modifier = Modifier.padding(horizontal = MaterialTheme.spacing.medium),
-        horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.extraSmall),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
       ) {
-        items(presetRatios, key = { it.label }) { ratio ->
+        presetRatios.forEach { ratio ->
           InputChip(
             selected = currentRatio?.let { abs(it - ratio.ratio) < 0.01 } ?: (ratio.ratio == -1.0),
             onClick = { onSelectRatio(ratio.ratio) },
             label = { Text(ratio.label) },
-            modifier = Modifier.animateItem(),
             leadingIcon = null,
           )
         }
-        item {
-          InputChip(
-            selected = showCustomInput,
-            onClick = { showCustomInput = !showCustomInput },
-            label = { Text(stringResource(R.string.player_sheets_aspect_ratio_custom_toggle)) },
-            modifier = Modifier.animateItem(),
-            leadingIcon = null,
-          )
-        }
+        InputChip(
+          selected = showCustomInput,
+          onClick = { showCustomInput = !showCustomInput },
+          label = { Text(stringResource(R.string.player_sheets_aspect_ratio_custom_toggle)) },
+          leadingIcon = null,
+        )
       }
 
       // Custom ratios
@@ -162,11 +159,12 @@ fun AspectRatioSheet(
               .padding(top = MaterialTheme.spacing.medium),
         )
 
-        LazyRow(
+        androidx.compose.foundation.layout.FlowRow(
           modifier = Modifier.padding(horizontal = MaterialTheme.spacing.medium),
-          horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.extraSmall),
+          horizontalArrangement = Arrangement.spacedBy(8.dp),
+          verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-          items(customRatios, key = { it.label }) { ratio ->
+          customRatios.forEach { ratio ->
             InputChip(
               selected = currentRatio?.let { abs(it - ratio.ratio) < 0.01 } ?: false,
               onClick = { onSelectRatio(ratio.ratio) },
@@ -179,7 +177,6 @@ fun AspectRatioSheet(
                   modifier = Modifier.clickable { onDeleteCustomRatio(ratio) },
                 )
               },
-              modifier = Modifier.animateItem(),
             )
           }
         }

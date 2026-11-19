@@ -20,10 +20,21 @@ object SubtitleOps : KoinComponent {
   private const val TAG = "SubtitleOps"
   private val networkRepository: NetworkRepository by inject()
   private val subtitlesPreferences: SubtitlesPreferences by inject()
+  private val context: android.content.Context by inject()
 
   private fun shouldSkipNetworkSubtitleAutoload(videoFilePath: String, videoFileName: String): Boolean {
     val p = videoFilePath.lowercase(Locale.getDefault())
     val n = videoFileName.lowercase(Locale.getDefault())
+
+    // Web streaming URLs (YouTube, Twitch, Vimeo, direct CDN URLs) should never autoload sidecar subtitles
+    if (p.startsWith("http://") || p.startsWith("https://")) {
+      if (p.contains("youtube.com") || p.contains("youtu.be") || p.contains("googlevideo.com") ||
+          p.contains("twitch.tv") || p.contains("vimeo.com") || p.contains("dailymotion.com") ||
+          p.contains("facebook.com") || p.contains("tiktok.com") || p.contains("instagram.com") ||
+          p.contains("twitter.com") || p.contains("x.com") || !HttpUtils.isDirectMediaUrl(android.net.Uri.parse(p))) {
+        return true
+      }
+    }
 
     val looksLikePlaylist =
       p.endsWith(".m3u") || p.endsWith(".m3u8") ||
@@ -129,6 +140,10 @@ object SubtitleOps : KoinComponent {
 
       // Load subtitles via proxy
       val proxy = NetworkStreamingProxy.getInstance()
+      if (proxy == null) {
+        Log.w(TAG, "Local proxy unavailable, skipping network subtitle autoload")
+        return
+      }
       
       // Keep mpv calls off the main thread for network-backed subtitle sources to avoid ANRs.
       subtitles.forEachIndexed { index, subtitle ->
@@ -207,8 +222,14 @@ object SubtitleOps : KoinComponent {
           // Use "select" for the first autoloaded subtitle unless disabled by default
           val disableByDefault = subtitlesPreferences.disableSubtitlesByDefault.get()
           val flag = if (index == 0 && !disableByDefault) "select" else "auto"
-          MPVLib.command("sub-add", subtitle.absolutePath, flag, subtitle.name)
-          Log.d(TAG, "Loaded local subtitle: ${subtitle.name} (flag=$flag)")
+          val preferredEncoding = subtitlesPreferences.subtitleEncoding.get()
+          val normalizedPath = SubtitleEncodingUtils.normalizeLocalSubtitleFile(
+            context,
+            subtitle,
+            preferredEncoding
+          )
+          MPVLib.command("sub-add", normalizedPath, flag, subtitle.name)
+          Log.d(TAG, "Loaded local subtitle: ${subtitle.name} (flag=$flag, path=$normalizedPath)")
         }
       }
     }

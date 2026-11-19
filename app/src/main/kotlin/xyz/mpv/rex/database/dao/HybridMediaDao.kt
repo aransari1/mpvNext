@@ -133,6 +133,17 @@ interface HybridMediaDao {
 
   @Query(
     """
+    SELECT * FROM hybrid_media_index
+    WHERE location = :path
+       OR identity = :path
+       OR identity = 'file:' || :path
+    LIMIT 1
+    """,
+  )
+  suspend fun getMediaByLocation(path: String): HybridMediaEntity?
+
+  @Query(
+    """
     DELETE FROM hybrid_media_index
     WHERE location = :path
        OR location LIKE :prefixPattern ESCAPE '\'

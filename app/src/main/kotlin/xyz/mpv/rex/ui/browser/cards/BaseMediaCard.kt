@@ -1,28 +1,51 @@
 package xyz.mpv.rex.ui.browser.cards
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import xyz.mpv.rex.ui.motion.RexPress
+import xyz.mpv.rex.ui.theme.pillShape
+import xyz.mpv.rex.R
 
 /**
  * Common Metadata Chip for media cards
@@ -30,19 +53,44 @@ import androidx.compose.ui.unit.dp
 @Composable
 fun MediaMetadataChip(
     text: String,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    color: Color = MaterialTheme.colorScheme.surfaceContainerHighest,
+    contentColor: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+    shape: Shape = RoundedCornerShape(8.dp),
 ) {
-    Text(
-        text = text,
-        style = MaterialTheme.typography.labelSmall,
-        modifier = modifier
-            .background(
-                MaterialTheme.colorScheme.surfaceContainerHigh,
-                RoundedCornerShape(8.dp),
-            )
-            .padding(horizontal = 8.dp, vertical = 4.dp),
-        color = MaterialTheme.colorScheme.onSurface,
-    )
+    Surface(
+        modifier = modifier,
+        shape = shape,
+        color = color,
+        contentColor = contentColor,
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+        )
+    }
+}
+
+/**
+ * Small "pinned" badge shown on the thumbnail of pinned folders/files (issue #466).
+ */
+@Composable
+fun PinBadge(modifier: Modifier = Modifier) {
+    Surface(
+        modifier = modifier,
+        shape = CircleShape,
+        color = MaterialTheme.colorScheme.primaryContainer,
+        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+        shadowElevation = 2.dp,
+    ) {
+        Icon(
+            imageVector = Icons.Filled.PushPin,
+            contentDescription = stringResource(R.string.pinned_badge),
+            modifier = Modifier.padding(4.dp).size(14.dp),
+        )
+    }
 }
 
 /**
@@ -60,7 +108,6 @@ fun BaseMediaCard(
     onThumbClick: (() -> Unit)? = null,
     isSelected: Boolean = false,
     isRecentlyPlayed: Boolean = false,
-    isNeverPlayed: Boolean = false,
     isWatched: Boolean = false,
     isGridMode: Boolean = false,
     gridColumns: Int = 1,
@@ -74,28 +121,78 @@ fun BaseMediaCard(
     infoContent: @Composable (RowScope.() -> Unit)? = null,
     chipsContent: @Composable (FlowRowScope.() -> Unit)? = null,
     overlayContent: @Composable (BoxScope.() -> Unit)? = null,
+    shape: Shape? = null,
 ) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val cardScale by animateFloatAsState(
+        targetValue = when {
+            isPressed -> if (shape != null) 1f else RexPress.SCALE
+            isSelected -> if (shape != null) 1f else RexPress.SCALE
+            else -> 1f
+        },
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMediumLow),
+        label = "cardScale"
+    )
+    val cardBackground by animateColorAsState(
+        // Fully opaque tint so the selection reads clearly against the
+        // near-white content surface instead of blending into it.
+        targetValue = if (isSelected) MaterialTheme.colorScheme.primaryContainer
+                      else Color.Transparent,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "cardBackground"
+    )
+    val animatedCornerRadius by animateDpAsState(
+        // Constant when an explicit shape is supplied; avoids animating an
+        // unused value on every selection change.
+        targetValue = when {
+            shape != null -> 0.dp
+            isSelected -> 22.dp
+            isGridMode -> 20.dp
+            else -> 16.dp
+        },
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessMediumLow
+        ),
+        label = "cardCornerRadius"
+    )
+    val cardShape = shape ?: RoundedCornerShape(animatedCornerRadius)
+    val thumbnailShape = RoundedCornerShape(14.dp)
+
     Card(
         modifier = modifier
             .fillMaxWidth()
-            .then(if (isGridMode && gridColumns > 1) Modifier else Modifier.padding(horizontal = 6.dp, vertical = 0.dp))
-            .clip(RoundedCornerShape(12.dp))
-            .background(
-                if (isSelected) MaterialTheme.colorScheme.primaryContainer
-                else Color.Transparent
-            )
             .then(
-                if (isSelected) Modifier.border(
-                    width = 2.dp,
-                    color = MaterialTheme.colorScheme.primary,
-                    shape = RoundedCornerShape(12.dp)
-                ) else Modifier
+                if (isGridMode && gridColumns > 1) Modifier
+                else if (shape != null) Modifier
+                else Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
             )
+            .graphicsLayer {
+                scaleX = cardScale
+                scaleY = cardScale
+            }
+            .clip(cardShape)
             .combinedClickable(
+                interactionSource = interactionSource,
+                indication = ripple(),
                 onClick = onClick,
                 onLongClick = onLongClick,
             ),
-        colors = CardDefaults.cardColors(containerColor = Color.Transparent),
+        shape = cardShape,
+        colors = CardDefaults.cardColors(
+            // The selection tint is composited into the container colour rather
+            // than painted as a separate .background() layer, so it is clipped
+            // by the card's own rounded surface and cannot bleed past its edge.
+            containerColor = cardBackground.compositeOver(
+                if (shape != null) {
+                    if (MaterialTheme.colorScheme.background == Color.Black) Color.Black
+                    else MaterialTheme.colorScheme.surface
+                } else {
+                    Color.Transparent
+                }
+            ),
+        ),
     ) {
         if (isGridMode) {
             // GRID LAYOUT
@@ -111,7 +208,7 @@ fun BaseMediaCard(
                         Modifier
                             .fillMaxWidth()
                             .aspectRatio(thumbnailAspectRatio)
-                            .clip(RoundedCornerShape(12.dp))
+                            .clip(thumbnailShape)
                             .background(MaterialTheme.colorScheme.surfaceContainerHigh)
                             .then(
                                 if (onThumbClick != null) {
@@ -154,24 +251,50 @@ fun BaseMediaCard(
                     }
                     
                     // Progress Bar
-                    if (progressPercentage != null) {
+                    if (progressPercentage != null && !isWatched) {
                         LinearProgressIndicator(
                             progress = { progressPercentage },
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(4.dp)
-                                .align(Alignment.BottomCenter),
+                                .align(Alignment.BottomCenter)
+                                .clip(RoundedCornerShape(bottomStart = 14.dp, bottomEnd = 14.dp)),
                             color = MaterialTheme.colorScheme.primary,
-                            trackColor = Color.Black.copy(alpha = 0.3f),
+                            trackColor = Color.Black.copy(alpha = 0.35f),
                         )
                     }
                     
+                    androidx.compose.animation.AnimatedVisibility(
+                        visible = isSelected,
+                        enter = scaleIn(spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMediumLow)) + fadeIn(),
+                        exit = scaleOut(spring(stiffness = Spring.StiffnessMedium)) + fadeOut(),
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .zIndex(1f),
+                    ) {
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier
+                                .padding(6.dp)
+                                .size(22.dp),
+                            shadowElevation = 3.dp,
+                        ) {
+                            Icon(
+                                Icons.Filled.Check,
+                                contentDescription = "Selected",
+                                tint = MaterialTheme.colorScheme.onPrimary,
+                                modifier = Modifier.padding(3.dp),
+                            )
+                        }
+                    }
+
                     overlayContent?.invoke(this)
                 }
 
                 Spacer(modifier = Modifier.height(4.dp))
 
-                val shouldHighlight = isRecentlyPlayed && !(isWatched && isNeverPlayed)
+                val shouldHighlight = isRecentlyPlayed && !isWatched
                 // Title
                 Text(
                     text = title,
@@ -217,7 +340,10 @@ fun BaseMediaCard(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 6.dp, horizontal = 8.dp),
+                    .padding(
+                        vertical = if (shape != null) 8.dp else 6.dp,
+                        horizontal = if (shape != null) 12.dp else 8.dp
+                    ),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
         // Thumbnail Box
@@ -226,7 +352,7 @@ fun BaseMediaCard(
             Modifier
               .width(thumbnailSize)
               .aspectRatio(thumbnailAspectRatio)
-              .clip(RoundedCornerShape(12.dp))
+              .clip(thumbnailShape)
               .background(MaterialTheme.colorScheme.surfaceContainerHigh)
               .then(
                   if (onThumbClick != null) {
@@ -269,25 +395,51 @@ fun BaseMediaCard(
                     }
 
                     // Progress Bar
-                    if (progressPercentage != null) {
+                    if (progressPercentage != null && !isWatched) {
                         LinearProgressIndicator(
                             progress = { progressPercentage },
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(3.dp)
-                                .align(Alignment.BottomCenter),
+                                .align(Alignment.BottomCenter)
+                                .clip(RoundedCornerShape(bottomStart = 14.dp, bottomEnd = 14.dp)),
                             color = MaterialTheme.colorScheme.primary,
-                            trackColor = Color.Black.copy(alpha = 0.3f),
+                            trackColor = Color.Black.copy(alpha = 0.35f),
                         )
                     }
-                    
+
+                    androidx.compose.animation.AnimatedVisibility(
+                        visible = isSelected,
+                        enter = scaleIn(spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMediumLow)) + fadeIn(),
+                        exit = scaleOut(spring(stiffness = Spring.StiffnessMedium)) + fadeOut(),
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .zIndex(1f),
+                    ) {
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier
+                                .padding(4.dp)
+                                .size(20.dp),
+                            shadowElevation = 3.dp,
+                        ) {
+                            Icon(
+                                Icons.Filled.Check,
+                                contentDescription = "Selected",
+                                tint = MaterialTheme.colorScheme.onPrimary,
+                                modifier = Modifier.padding(2.5.dp),
+                            )
+                        }
+                    }
+
                     overlayContent?.invoke(this)
                 }
 
                 Spacer(modifier = Modifier.width(16.dp))
 
                 Column(modifier = Modifier.weight(1f)) {
-                    val shouldHighlight = isRecentlyPlayed && !(isWatched && isNeverPlayed)
+                    val shouldHighlight = isRecentlyPlayed && !isWatched
                     Text(
                         text = title,
                         style = listTitleStyle ?: MaterialTheme.typography.titleMedium,

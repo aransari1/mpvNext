@@ -19,6 +19,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -118,6 +119,24 @@ private fun ZoomVideoSheet(
         .padding(vertical = MaterialTheme.spacing.medium),
     verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.small),
   ) {
+    // Zoom Label and Value
+    Column(
+      modifier = Modifier
+        .fillMaxWidth()
+        .padding(horizontal = MaterialTheme.spacing.medium),
+      horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+      Text(
+        text = stringResource(id = R.string.player_sheets_zoom_slider_label),
+        style = MaterialTheme.typography.bodyMedium,
+      )
+      Text(
+        text = "%.2fx".format(zoom),
+        style = MaterialTheme.typography.headlineMedium,
+        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+      )
+    }
+
     // Zoom slider with +/- buttons
     Row(
       modifier =
@@ -137,13 +156,10 @@ private fun ZoomVideoSheet(
         Icon(Icons.Default.Remove, contentDescription = stringResource(R.string.player_sheets_zoom_decrease), modifier = Modifier.size(18.dp))
       }
 
-      SliderItem(
-        label = stringResource(id = R.string.player_sheets_zoom_slider_label),
+      Slider(
         value = zoom,
-        valueText = "%.2fx".format(zoom),
-        onChange = onZoomChange,
-        max = 3f,
-        min = -1f,
+        onValueChange = onZoomChange,
+        valueRange = -1f..3f,
         modifier = Modifier.weight(1f),
       )
 

@@ -69,7 +69,7 @@ fun SubtitlesSheet(
             Icon(Icons.Default.Search, null)
           }
           IconButton(onClick = onOpenSubtitleSettings) {
-            Icon(Icons.Default.Palette, null)
+            Icon(Icons.Default.Settings, null)
           }
           IconButton(onClick = onOpenSubtitleDelay) {
             Icon(Icons.Default.MoreTime, null)
@@ -82,7 +82,7 @@ fun SubtitlesSheet(
         is SubtitleItem.Track -> {
           val track = item.node
           SubtitleTrackRow(
-            title = getTrackTitle(track),
+            track = track,
             isSelected = isSubtitleSelected(track.id),
             isPrimary = track.id == primarySubtitleId,
             isExternal = track.external == true,
@@ -121,6 +121,105 @@ fun SubtitlesSheet(
   )
 }
 
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+fun SubtitleTrackRow(
+  track: TrackNode,
+  isSelected: Boolean,
+  isPrimary: Boolean = false,
+  isExternal: Boolean,
+  onToggle: () -> Unit,
+  onRemove: () -> Unit,
+  modifier: Modifier = Modifier,
+) {
+  val title = getTrackTitle(track)
+  val containerColor = if (isSelected) {
+    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+  } else {
+    MaterialTheme.colorScheme.surfaceContainerHigh
+  }
+  val borderColor = if (isSelected) {
+    MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
+  } else androidx.compose.ui.graphics.Color.Transparent
+
+  Surface(
+    modifier = modifier.fillMaxWidth(),
+    shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp),
+    color = containerColor,
+    border = if (isSelected) androidx.compose.foundation.BorderStroke(1.dp, borderColor) else null,
+    onClick = onToggle,
+  ) {
+    Row(
+      modifier = Modifier
+        .fillMaxWidth()
+        .padding(horizontal = 12.dp, vertical = 10.dp),
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+      Checkbox(
+        checked = isSelected,
+        onCheckedChange = { onToggle() },
+      )
+      Column(
+        modifier = Modifier.weight(1f),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+      ) {
+        Text(
+          text = title,
+          style = MaterialTheme.typography.bodyMedium,
+          fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+          color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
+        )
+        val badges = remember(track, isPrimary) {
+          buildList {
+            if (isPrimary) add("Primary")
+            track.lang?.takeIf { it.isNotBlank() }?.let { add(it.uppercase()) }
+            track.codec?.takeIf { it.isNotBlank() }?.let { add(it.uppercase()) }
+            if (track.default == true) add("Default")
+            if (track.forced == true) add("Forced")
+            if (track.hearingImpaired == true) add("SDH")
+            if (isExternal) add("External")
+          }
+        }
+        if (badges.isNotEmpty()) {
+          androidx.compose.foundation.layout.FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+          ) {
+            for (badge in badges) {
+              Surface(
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp),
+                color = if (badge == "Primary") MaterialTheme.colorScheme.primary
+                        else if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                        else MaterialTheme.colorScheme.surfaceContainerHighest,
+              ) {
+                Text(
+                  text = badge,
+                  style = MaterialTheme.typography.labelSmall,
+                  fontWeight = FontWeight.SemiBold,
+                  color = if (badge == "Primary") MaterialTheme.colorScheme.onPrimary
+                          else if (isSelected) MaterialTheme.colorScheme.primary
+                          else MaterialTheme.colorScheme.onSurfaceVariant,
+                  modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                )
+              }
+            }
+          }
+        }
+      }
+      if (isExternal) {
+        IconButton(onClick = onRemove) {
+          Icon(
+            Icons.Default.Delete,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.error,
+          )
+        }
+      }
+    }
+  }
+}
+
 @Composable
 fun SubtitleTrackRow(
   title: String,
@@ -131,22 +230,49 @@ fun SubtitleTrackRow(
   onRemove: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
-  Row(
-    modifier = modifier.fillMaxWidth().clickable(onClick = onToggle).padding(horizontal = MaterialTheme.spacing.medium, vertical = MaterialTheme.spacing.extraSmall),
-    verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.smaller),
+  val containerColor = if (isSelected) {
+    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+  } else {
+    MaterialTheme.colorScheme.surfaceContainerHigh
+  }
+  val borderColor = if (isSelected) {
+    MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
+  } else androidx.compose.ui.graphics.Color.Transparent
+
+  Surface(
+    modifier = modifier.fillMaxWidth(),
+    shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp),
+    color = containerColor,
+    border = if (isSelected) androidx.compose.foundation.BorderStroke(1.dp, borderColor) else null,
+    onClick = onToggle,
   ) {
-    Checkbox(
-      checked = isSelected,
-      onCheckedChange = { onToggle() },
-    )
-    Text(
-      text = if (isPrimary) "$title [primary]" else title,
-      fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-      modifier = Modifier.weight(1f),
-    )
-    if (isExternal) {
-      IconButton(onClick = onRemove) { Icon(Icons.Default.Delete, contentDescription = null) }
+    Row(
+      modifier = Modifier
+        .fillMaxWidth()
+        .padding(horizontal = 12.dp, vertical = 10.dp),
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+      Checkbox(
+        checked = isSelected,
+        onCheckedChange = { onToggle() },
+      )
+      Text(
+        text = if (isPrimary) "$title [primary]" else title,
+        style = MaterialTheme.typography.bodyMedium,
+        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+        color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
+        modifier = Modifier.weight(1f),
+      )
+      if (isExternal) {
+        IconButton(onClick = onRemove) {
+          Icon(
+            Icons.Default.Delete,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.error,
+          )
+        }
+      }
     }
   }
 }

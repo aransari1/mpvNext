@@ -44,12 +44,20 @@ import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material.icons.filled.ViewModule
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
+import androidx.compose.material3.FloatingActionButtonMenu
+import androidx.compose.material3.FloatingActionButtonMenuItem
+import androidx.compose.material3.ToggleFloatingActionButton
+import androidx.compose.material3.ToggleFloatingActionButtonDefaults.animateIcon
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.PlainTooltip
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberTopAppBarState
+import androidx.compose.material3.TopAppBarState
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.material3.TooltipAnchorPosition
 import androidx.compose.material3.TooltipBox
 import androidx.compose.material3.TooltipDefaults
@@ -69,16 +77,22 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.layout.Box
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import android.widget.Toast
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.VideoLibrary
 import xyz.mpv.rex.R
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -101,6 +115,7 @@ import xyz.mpv.rex.BuildConfig
 import xyz.mpv.rex.ui.browser.cards.VideoCard
 import xyz.mpv.rex.ui.browser.components.BrowserBottomBar
 import xyz.mpv.rex.ui.browser.components.BrowserTopBar
+import xyz.mpv.rex.ui.browser.components.ContentSurfaceContainer
 import xyz.mpv.rex.ui.browser.components.UnifiedExplorerContent
 import xyz.mpv.rex.ui.browser.components.SelectionOverflowAction
 import xyz.mpv.rex.ui.browser.dialogs.AddToPlaylistDialog
@@ -117,11 +132,13 @@ import xyz.mpv.rex.ui.browser.selection.SelectionManager
 import xyz.mpv.rex.ui.browser.selection.rememberSelectionManager
 import xyz.mpv.rex.ui.browser.states.EmptyState
 import xyz.mpv.rex.ui.utils.LocalBackStack
+import xyz.mpv.rex.ui.utils.navigateBack
 import xyz.mpv.rex.ui.browser.sheets.MarkAsBottomSheet
 import xyz.mpv.rex.utils.history.MarkAsState
 import xyz.mpv.rex.utils.history.RecentlyPlayedOps
 import xyz.mpv.rex.utils.media.CopyPasteOps
 import xyz.mpv.rex.utils.media.MediaUtils
+import xyz.mpv.rex.utils.sort.PinnedSortUtils
 import xyz.mpv.rex.utils.sort.SortUtils
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
@@ -129,6 +146,7 @@ import kotlinx.serialization.Serializable
 import org.koin.compose.koinInject
 import java.io.File
 import kotlin.math.roundToInt
+import xyz.mpv.rex.ui.motion.RexMotion
 
 
 @Serializable
@@ -136,6 +154,7 @@ data class VideoListScreen(
   private val bucketId: String,
   private val folderName: String,
 ) : Screen {
+
   @OptIn(ExperimentalMaterial3ExpressiveApi::class)
   @Composable
   override fun Content() {
@@ -157,6 +176,7 @@ data class VideoListScreen(
     val videos by viewModel.videos.collectAsState()
     val videosWithPlaybackInfo by viewModel.videosWithPlaybackInfo.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
+    val hasLoaded by viewModel.hasLoaded.collectAsState()
     val uiSettings by viewModel.uiSettings.collectAsState()
     val recentlyPlayedFilePath by viewModel.recentlyPlayedFilePath.collectAsState()
     val recentlyPlayedPaths by viewModel.recentlyPlayedPaths.collectAsState()
@@ -168,14 +188,23 @@ data class VideoListScreen(
     // Sorting
     val videoSortType by browserPreferences.videoSortType.collectAsState()
     val videoSortOrder by browserPreferences.videoSortOrder.collectAsState()
+
+    // Media pins are shared across tree / video list / media library views.
+    val pinnedItemRepository = koinInject<xyz.mpv.rex.domain.pinned.PinnedItemRepository>()
+    val mediaPins by
+      pinnedItemRepository.pinnedPaths(xyz.mpv.rex.domain.pinned.PinScope.MEDIA)
+        .collectAsState(initial = pinnedItemRepository.getPinnedPaths(xyz.mpv.rex.domain.pinned.PinScope.MEDIA))
+
     val sortedVideosWithInfo =
-      remember(videosWithPlaybackInfo, videoSortType, videoSortOrder) {
+      remember(videosWithPlaybackInfo, videoSortType, videoSortOrder, mediaPins) {
         val infoById = videosWithPlaybackInfo.associateBy { it.video.id }
         val sortedVideos = SortUtils.sortVideos(videosWithPlaybackInfo.map { it.video }, videoSortType, videoSortOrder)
         // Maintain the playback info mapping — O(1) lookup per item
-        sortedVideos.map { video ->
+        val mapped = sortedVideos.map { video ->
           infoById[video.id] ?: VideoWithPlaybackInfo(video)
         }
+        // Pinned media first, in pin order, then the regular sort.
+        PinnedSortUtils.sortPinnedFirst(mapped, mediaPins) { it.video.path.ifBlank { it.video.uri.toString() } }
       }
 
     // Selection manager
@@ -240,9 +269,18 @@ data class VideoListScreen(
 
     // FAB visibility state
     val isFabVisible = remember { mutableStateOf(true) }
+    val isFabExpanded = remember { mutableStateOf(false) }
+    val isMiniPlayerActive = xyz.mpv.rex.ui.browser.LocalMiniPlayerActive.current
+    LaunchedEffect(isMiniPlayerActive) {
+      if (isMiniPlayerActive) {
+        isFabExpanded.value = false
+      }
+    }
 
     val autoScrollToLastPlayed by browserPreferences.autoScrollToLastPlayed.collectAsState()
     val mediaLayoutMode by browserPreferences.mediaLayoutMode.collectAsState()
+    val appearancePreferences = koinInject<xyz.mpv.rex.preferences.AppearancePreferences>()
+    val hidePlayFabShowInHeader by appearancePreferences.hidePlayFabShowInHeader.collectAsState()
 
     // UI state - use standalone states to avoid scroll issues with predictive back gesture
     val rememberedListIndex = rememberSaveable { mutableIntStateOf(0) }
@@ -362,10 +400,25 @@ data class VideoListScreen(
       }
     }
 
+    val topAppBarState = rememberTopAppBarState()
+    val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior(topAppBarState)
+
     Scaffold(
+      modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
+      // Pushed screens render in MainActivity's root Box, outside
+      // MainScreen's Scaffold, so they must set the screen tone themselves.
+      // surfaceContainer is what shows through the 3.dp card gaps and around
+      // the content surface's 24.dp corners; the default `background` is too
+      // close to the cards' `surface` fill for either to be visible.
+      containerColor = if (MaterialTheme.colorScheme.background == androidx.compose.ui.graphics.Color.Black) {
+        androidx.compose.ui.graphics.Color.Black
+      } else {
+        MaterialTheme.colorScheme.surfaceContainer
+      },
       topBar = {
         BrowserTopBar(
           title = displayFolderName,
+          scrollBehavior = scrollBehavior,
           isInSelectionMode = selectionManager.isInSelectionMode,
           selectedCount = selectionManager.selectedCount,
           totalCount = sortedVideosWithInfo.size,
@@ -373,7 +426,7 @@ data class VideoListScreen(
             if (selectionManager.isInSelectionMode) {
               selectionManager.clear()
             } else {
-              backstack.removeLastOrNull()
+              backstack.navigateBack()
             }
           },
           onCancelSelection = { selectionManager.clear() },
@@ -389,6 +442,22 @@ data class VideoListScreen(
           onSettingsClick = {
             backstack.add(xyz.mpv.rex.ui.preferences.PreferencesScreen)
           },
+          normalPlayClick = if (hidePlayFabShowInHeader && sortedVideosWithInfo.isNotEmpty()) {
+            {
+              coroutineScope.launch {
+                val folderPath = sortedVideosWithInfo.firstOrNull()?.video?.path?.let { File(it).parent } ?: ""
+                val recentlyPlayedVideos = RecentlyPlayedOps.getRecentlyPlayed(limit = 100)
+                val lastPlayedInFolder = recentlyPlayedVideos.firstOrNull {
+                  File(it.filePath).parent == folderPath
+                }
+                if (lastPlayedInFolder != null) {
+                  MediaUtils.playFile(lastPlayedInFolder.filePath, context, "recently_played_button")
+                } else {
+                  MediaUtils.playFile(sortedVideosWithInfo.first().video, context, "first_video_button")
+                }
+              }
+            }
+          } else null,
           isSingleSelection = selectionManager.isSingleSelection,
           onInfoClick = {
             val selected = selectionManager.getSelectedItems()
@@ -421,7 +490,7 @@ data class VideoListScreen(
             add(
               SelectionOverflowAction(
                 icon = Icons.Filled.Share,
-                label = "Web Share",
+                label = stringResource(R.string.web_share_title),
                 onClick = { showWebShareSheet = true },
               )
             )
@@ -439,6 +508,27 @@ data class VideoListScreen(
                 )
               )
             }
+            // Pin / unpin selected media (shared across tree, folder and library views).
+            val pinPaths = selectedVideos.map { it.path.ifBlank { it.uri.toString() } }.filter { it.isNotBlank() }
+            if (pinPaths.isNotEmpty()) {
+              val allPinned = pinPaths.all { it in mediaPins.toSet() }
+              add(
+                SelectionOverflowAction(
+                  icon = Icons.Filled.PushPin,
+                  label = stringResource(if (allPinned) R.string.unpin_from_top else R.string.pin_to_top),
+                  onClick = {
+                    coroutineScope.launch {
+                      if (allPinned) {
+                        pinnedItemRepository.unpinAll(xyz.mpv.rex.domain.pinned.PinScope.MEDIA, pinPaths)
+                      } else {
+                        pinnedItemRepository.pinAll(xyz.mpv.rex.domain.pinned.PinScope.MEDIA, pinPaths)
+                      }
+                      selectionManager.clear()
+                    }
+                  },
+                )
+              )
+            }
           },
 
           onSelectAll = { selectionManager.selectAll() },
@@ -448,37 +538,82 @@ data class VideoListScreen(
       },
       floatingActionButton = {
         val navigationBarHeight = xyz.mpv.rex.ui.browser.LocalNavigationBarHeight.current
-        if (sortedVideosWithInfo.isNotEmpty()) {
+        if (!hidePlayFabShowInHeader && sortedVideosWithInfo.isNotEmpty() && !isMiniPlayerActive) {
           TooltipBox(
             positionProvider = TooltipDefaults.rememberTooltipPositionProvider(TooltipAnchorPosition.Above),
             tooltip = { PlainTooltip { Text(stringResource(R.string.play_recently_played_or_first)) } },
             state = rememberTooltipState(),
           ) {
-            FloatingActionButton(
-              modifier = Modifier
-                .windowInsetsPadding(WindowInsets.systemBars)
-                .padding(bottom = navigationBarHeight)
-                .animateFloatingActionButton(
-                  visible = !selectionManager.isInSelectionMode && isFabVisible.value,
-                  alignment = Alignment.BottomEnd,
-                ),
-              onClick = {
-                coroutineScope.launch {
-                  val folderPath = sortedVideosWithInfo.firstOrNull()?.video?.path?.let { File(it).parent } ?: ""
-                  val recentlyPlayedVideos = RecentlyPlayedOps.getRecentlyPlayed(limit = 100)
-                  val lastPlayedInFolder = recentlyPlayedVideos.firstOrNull {
-                    File(it.filePath).parent == folderPath
-                  }
-
-                  if (lastPlayedInFolder != null) {
-                    MediaUtils.playFile(lastPlayedInFolder.filePath, context, "recently_played_button")
-                  } else {
-                    MediaUtils.playFile(sortedVideosWithInfo.first().video, context, "first_video_button")
+            FloatingActionButtonMenu(
+              modifier = Modifier.padding(bottom = (navigationBarHeight - 4.dp).coerceAtLeast(0.dp)),
+              expanded = isFabExpanded.value,
+              button = {
+                TooltipBox(
+                  positionProvider = TooltipDefaults.rememberTooltipPositionProvider(
+                    if (isFabExpanded.value) TooltipAnchorPosition.Start else TooltipAnchorPosition.Above
+                  ),
+                  tooltip = { PlainTooltip { Text(stringResource(R.string.play_recently_played_or_first)) } },
+                  state = rememberTooltipState(),
+                ) {
+                  Box(
+                    modifier = Modifier.animateFloatingActionButton(
+                      visible = !selectionManager.isInSelectionMode && isFabVisible.value,
+                      alignment = Alignment.BottomEnd,
+                    )
+                  ) {
+                    ToggleFloatingActionButton(
+                      checked = isFabExpanded.value,
+                      onCheckedChange = { /* handled by overlay */ },
+                    ) {
+                      val imageVector by remember {
+                        derivedStateOf {
+                          if (checkedProgress > 0.5f) Icons.Filled.Close else Icons.Filled.PlayArrow
+                        }
+                      }
+                      Icon(
+                        painter = rememberVectorPainter(imageVector),
+                        contentDescription = null,
+                        modifier = Modifier.animateIcon({ checkedProgress }),
+                      )
+                    }
+                    Box(
+                      modifier = Modifier
+                        .matchParentSize()
+                        .pointerInput(Unit) {
+                          detectTapGestures(
+                            onTap = {
+                              if (isFabExpanded.value) {
+                                isFabExpanded.value = false
+                              } else {
+                                coroutineScope.launch {
+                                  val folderPath = sortedVideosWithInfo.firstOrNull()?.video?.path?.let { File(it).parent } ?: ""
+                                  val recentlyPlayedVideos = RecentlyPlayedOps.getRecentlyPlayed(limit = 100)
+                                  val lastPlayedInFolder = recentlyPlayedVideos.firstOrNull {
+                                    File(it.filePath).parent == folderPath
+                                  }
+                                  if (lastPlayedInFolder != null) {
+                                    MediaUtils.playFile(lastPlayedInFolder.filePath, context, "recently_played_button")
+                                  } else {
+                                    MediaUtils.playFile(sortedVideosWithInfo.first().video, context, "first_video_button")
+                                  }
+                                }
+                              }
+                            },
+                            onLongPress = {
+                              if (!isFabExpanded.value) isFabExpanded.value = true
+                            }
+                          )
+                        }
+                    )
                   }
                 }
               },
             ) {
-              Icon(Icons.Filled.PlayArrow, contentDescription = stringResource(R.string.play_recently_played_or_first))
+              FloatingActionButtonMenuItem(
+                onClick = { isFabExpanded.value = false },
+                icon = { Icon(Icons.Filled.PlayArrow, contentDescription = null) },
+                text = { Text(text = stringResource(R.string.play_recently_played_or_first)) },
+              )
             }
           }
         }
@@ -490,7 +625,8 @@ data class VideoListScreen(
         VideoListContent(
           folderId = bucketId,
           videosWithInfo = sortedVideosWithInfo,
-          isLoading = isLoading && videos.isEmpty(),
+          isLoading = isLoading,
+          hasLoaded = hasLoaded,
           uiSettings = uiSettings,
           isRefreshing = isRefreshing,
           recentlyPlayedFilePath = lastPlayedInFolderPath ?: recentlyPlayedFilePath,
@@ -512,26 +648,23 @@ data class VideoListScreen(
           },
           onVideoLongClick = { video -> selectionManager.handleLongClick(video) },
           isFabVisible = isFabVisible,
-          modifier = Modifier.padding(padding),
+          // Top inset only: the content surface owns its own bottom inset.
+          modifier = Modifier.padding(top = padding.calculateTopPadding()),
           showFloatingBottomBar = showFloatingBottomBar,
           sortType = videoSortType,
           sortOrder = videoSortOrder,
           listState = listState,
           gridState = gridState,
+          pinnedPaths = mediaPins,
+          headerScrollState = topAppBarState,
         )
         
         // Floating Material 3 Button Group overlay with animation
         // Play Store gating is intentionally bypassed here.
         AnimatedVisibility(
           visible = showFloatingBottomBar,
-          enter = slideInVertically(
-            animationSpec = tween(durationMillis = animationDuration),
-            initialOffsetY = { fullHeight -> fullHeight }
-          ),
-          exit = slideOutVertically(
-            animationSpec = tween(durationMillis = animationDuration),
-            targetOffsetY = { fullHeight -> fullHeight }
-          ),
+          enter = RexMotion.dockEnter(LocalContext.current),
+          exit = RexMotion.dockExit(LocalContext.current),
           modifier = Modifier.align(Alignment.BottomCenter)
         ) {
           BrowserBottomBar(
@@ -738,6 +871,7 @@ fun VideoListContent(
   folderId: String,
   videosWithInfo: List<VideoWithPlaybackInfo>,
   isLoading: Boolean,
+  hasLoaded: Boolean = !isLoading || videosWithInfo.isNotEmpty(),
   uiSettings: UiSettings,
   isRefreshing: androidx.compose.runtime.MutableState<Boolean>,
   recentlyPlayedFilePath: String?,
@@ -757,6 +891,8 @@ fun VideoListContent(
   searchQuery: String? = null,
   listState: LazyListState = rememberLazyListState(),
   gridState: LazyGridState = rememberLazyGridState(),
+  pinnedPaths: List<String> = emptyList(),
+  headerScrollState: TopAppBarState? = null,
 ) {
   val thumbnailRepository = koinInject<ThumbnailRepository>()
   val browserPreferences = koinInject<BrowserPreferences>()
@@ -779,36 +915,44 @@ fun VideoListContent(
     }
   }
 
-  UnifiedExplorerContent(
-    items = videosWithInfo,
-    isLoading = isLoading,
-    uiSettings = uiSettings,
-    isSelected = { selectionManager.isSelected(it.video) },
-    onClick = { onVideoClick(it.video) },
-    onLongClick = { onVideoLongClick(it.video) },
-    onToggleSelection = { selectionManager.toggle(it.video) },
+  ContentSurfaceContainer(
+    navigationBarHeight = xyz.mpv.rex.ui.browser.LocalNavigationBarHeight.current,
     modifier = modifier,
-    emptyTitle = if (searchQuery != null) {
-      if (searchQuery.isBlank()) stringResource(R.string.search_empty_title) else stringResource(R.string.search_no_results_title)
-    } else {
-      stringResource(R.string.no_videos_in_folder)
-    },
-    emptyMessage = if (searchQuery != null) {
-      if (searchQuery.isBlank()) stringResource(R.string.search_empty_message) else stringResource(R.string.search_no_results_message)
-    } else {
-      stringResource(R.string.no_videos_in_folder_desc)
-    },
-    emptyIcon = if (searchQuery != null) Icons.Filled.Search else Icons.Filled.VideoLibrary,
-    isRefreshing = isRefreshing,
-    onRefresh = onRefresh,
-    isInSelectionMode = selectionManager.isInSelectionMode,
-    recentlyPlayedFilePath = recentlyPlayedFilePath,
-    recentlyPlayedFilePaths = recentlyPlayedFilePaths,
-    recentlyPlayedPaths = recentlyPlayedPaths,
-    autoScrollToLastPlayed = autoScrollToLastPlayed,
-    scrollTriggerKey = "${sortType.name}:${sortOrder.name}",
-    listState = listState,
-    gridState = gridState,
-  )
+  ) {
+    UnifiedExplorerContent(
+      items = videosWithInfo,
+      isLoading = isLoading,
+      hasLoaded = hasLoaded,
+      uiSettings = uiSettings,
+      isSelected = { selectionManager.isSelected(it.video) },
+      onClick = { onVideoClick(it.video) },
+      onLongClick = { onVideoLongClick(it.video) },
+      onToggleSelection = { selectionManager.toggle(it.video) },
+      emptyTitle = if (searchQuery != null) {
+        if (searchQuery.isBlank()) stringResource(R.string.search_empty_title) else stringResource(R.string.search_no_results_title)
+      } else {
+        stringResource(R.string.no_videos_in_folder)
+      },
+      emptyMessage = if (searchQuery != null) {
+        if (searchQuery.isBlank()) stringResource(R.string.search_empty_message) else stringResource(R.string.search_no_results_message)
+      } else {
+        stringResource(R.string.no_videos_in_folder_desc)
+      },
+      emptyIcon = if (searchQuery != null) Icons.Filled.Search else Icons.Filled.VideoLibrary,
+      isRefreshing = isRefreshing,
+      onRefresh = onRefresh,
+      headerScrollState = headerScrollState,
+      isInSelectionMode = selectionManager.isInSelectionMode,
+      recentlyPlayedFilePath = recentlyPlayedFilePath,
+      recentlyPlayedFilePaths = recentlyPlayedFilePaths,
+      recentlyPlayedPaths = recentlyPlayedPaths,
+      autoScrollToLastPlayed = autoScrollToLastPlayed,
+      scrollTriggerKey = "${sortType.name}:${sortOrder.name}",
+      listState = listState,
+      gridState = gridState,
+      pinnedPaths = pinnedPaths,
+      useContentSurface = true,
+    )
+  }
 }
 

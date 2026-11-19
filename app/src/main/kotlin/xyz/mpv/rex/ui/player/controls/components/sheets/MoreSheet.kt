@@ -3,6 +3,7 @@ package xyz.mpv.rex.ui.player.controls.components.sheets
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.tween
 import android.text.format.DateUtils
+import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -101,6 +102,7 @@ import xyz.mpv.rex.ui.player.Sheets
 import xyz.mpv.rex.ui.player.controls.RenderPlayerButton
 import xyz.mpv.rex.ui.theme.spacing
 import xyz.mpv.rex.ui.player.PlayerOrientation
+import xyz.mpv.rex.ui.player.PlaybackControlsPosition
 import `is`.xyz.mpv.*
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.Dispatchers
@@ -120,17 +122,6 @@ fun MoreSheet(
   onShowSheet: (Sheets) -> Unit,
   modifier: Modifier = Modifier,
 ) {
-  val lastTab by viewModel.lastMoreSheetTab.collectAsState()
-  val pagerState = rememberPagerState(initialPage = lastTab.coerceIn(0, 4)) { 5 }
-  val scope = rememberCoroutineScope()
-
-  // Persist tab change
-  LaunchedEffect(pagerState) {
-    snapshotFlow { pagerState.currentPage }.collect {
-      viewModel.lastMoreSheetTab.value = it
-    }
-  }
-
   val tabs = listOf(
     stringResource(R.string.player_sheets_tab_controls),
     stringResource(R.string.player_sheets_tab_aesthetics),
@@ -138,6 +129,19 @@ fun MoreSheet(
     stringResource(R.string.player_sheets_tab_settings),
     stringResource(R.string.player_sheets_tab_interaction),
   )
+
+  val initialTab = remember { viewModel.lastMoreSheetTab.get().coerceIn(0, tabs.lastIndex) }
+  val pagerState = rememberPagerState(initialPage = initialTab) { tabs.size }
+  val scope = rememberCoroutineScope()
+
+  // Persist tab change
+  LaunchedEffect(pagerState) {
+    snapshotFlow { pagerState.currentPage }.collect {
+      if (viewModel.lastMoreSheetTab.get() != it) {
+        viewModel.lastMoreSheetTab.set(it)
+      }
+    }
+  }
 
   PlayerSheet(
     onDismissRequest,
@@ -473,7 +477,9 @@ fun ControlsTab(
   // Data needed for visibility checks
   val chapters by viewModel.chapters.collectAsState(persistentListOf())
   val playlist by viewModel.playlistManager.playlist.collectAsState(emptyList())
+  val availableVideoQualities by viewModel.availableVideoQualities.collectAsState()
   val hasPlaylistSupport = playlist.size > 1
+  val hasMultipleQualities = availableVideoQualities.size > 1
 
   // 1. Determine what's on screen (to hide from sheet)
   val visibleOnScreen = remember(
@@ -483,25 +489,39 @@ fun ControlsTab(
       bottomLeftControlsPref,
       portraitBottomControlsPref,
       chapters,
-      hasPlaylistSupport
+      hasPlaylistSupport,
+      hasMultipleQualities,
   ) {
       val visible = mutableSetOf<PlayerButton>()
       if (isPortrait) {
           val allPortrait = appearancePreferences.parseButtons(portraitBottomControlsPref, mutableSetOf())
           val visibleInRow = allPortrait.filter { button ->
               when (button) {
-                  PlayerButton.BOOKMARKS_CHAPTERS -> chapters.isNotEmpty()
+                  PlayerButton.BOOKMARKS_CHAPTERS -> true
                   PlayerButton.SHUFFLE -> hasPlaylistSupport
                   PlayerButton.CURRENT_CHAPTER -> false
+                  PlayerButton.VIDEO_QUALITY -> hasMultipleQualities
                   PlayerButton.NONE -> false
                   else -> true
               }
           }
           visible.addAll(visibleInRow)
       } else {
-          visible.addAll(appearancePreferences.parseButtons(topRightControlsPref, mutableSetOf()))
-          visible.addAll(appearancePreferences.parseButtons(bottomRightControlsPref, mutableSetOf()))
-          visible.addAll(appearancePreferences.parseButtons(bottomLeftControlsPref, mutableSetOf()))
+          val allLandscape = mutableSetOf<PlayerButton>()
+          allLandscape.addAll(appearancePreferences.parseButtons(topRightControlsPref, mutableSetOf()))
+          allLandscape.addAll(appearancePreferences.parseButtons(bottomRightControlsPref, mutableSetOf()))
+          allLandscape.addAll(appearancePreferences.parseButtons(bottomLeftControlsPref, mutableSetOf()))
+          val visibleInLandscape = allLandscape.filter { button ->
+              when (button) {
+                  PlayerButton.BOOKMARKS_CHAPTERS -> true
+                  PlayerButton.SHUFFLE -> hasPlaylistSupport
+                  PlayerButton.CURRENT_CHAPTER -> true
+                  PlayerButton.VIDEO_QUALITY -> hasMultipleQualities
+                  PlayerButton.NONE -> false
+                  else -> true
+              }
+          }
+          visible.addAll(visibleInLandscape)
       }
       // Always exclude these from the dynamic sheet calculations as they are static or special
       visible.add(PlayerButton.BACK_ARROW)
@@ -511,7 +531,7 @@ fun ControlsTab(
   }
 
   // 2. Calculate the dynamic list of buttons for the sheet
-  val buttons = remember(moreSheetControlsPref, visibleOnScreen, chapters, hasPlaylistSupport) {
+  val buttons = remember(moreSheetControlsPref, visibleOnScreen, chapters, hasPlaylistSupport, hasMultipleQualities) {
       // Start with buttons the user explicitly wants in the More Sheet (respect order)
       val userOrderedMoreButtons = appearancePreferences.parseButtons(moreSheetControlsPref, mutableSetOf())
 
@@ -527,9 +547,10 @@ fun ControlsTab(
           // Functional filters (don't show buttons that can't work)
           when (button) {
               PlayerButton.SHUFFLE -> hasPlaylistSupport
-              PlayerButton.BOOKMARKS_CHAPTERS -> chapters.isNotEmpty()
-              PlayerButton.CURRENT_CHAPTER -> chapters.isNotEmpty()
+              PlayerButton.BOOKMARKS_CHAPTERS -> true
+              PlayerButton.CURRENT_CHAPTER -> true
               PlayerButton.AB_LOOP -> true // Always show in more sheet if missing from UI
+              PlayerButton.VIDEO_QUALITY -> hasMultipleQualities
               else -> true
           }
       }
@@ -631,11 +652,16 @@ fun ControlsTab(
       Spacer(modifier = Modifier.height(MaterialTheme.spacing.smaller))
 
       PlayerTimeToDisappearPreferenceItem()
+
+      Spacer(modifier = Modifier.height(MaterialTheme.spacing.smaller))
+
+      PlaybackControlsPositionPreferenceItem()
   }
 }
 
 @Composable
 fun AestheticsTab() {
+  val context = LocalContext.current
   val appearancePreferences = koinInject<AppearancePreferences>()
   val playerPreferences = koinInject<PlayerPreferences>()
 
@@ -706,8 +732,16 @@ fun AestheticsTab() {
     InteractionSwitch(
       label = stringResource(R.string.pref_appearance_player_always_dark_mode_title),
       description = stringResource(R.string.pref_appearance_player_always_dark_mode_summary),
-      checked = playerAlwaysDarkMode,
-      onCheckedChange = { appearancePreferences.playerAlwaysDarkMode.set(it) }
+      checked = if (enableGlass) true else playerAlwaysDarkMode,
+      onCheckedChange = { appearancePreferences.playerAlwaysDarkMode.set(it) },
+      enabled = !enableGlass,
+      onDisabledClick = {
+        Toast.makeText(
+          context,
+          context.getString(R.string.pref_appearance_player_always_dark_mode_disabled_toast),
+          Toast.LENGTH_SHORT
+        ).show()
+      }
     )
   }
 }
@@ -727,6 +761,7 @@ fun GesturesTab() {
   val reverseDoubleTap by gesturePreferences.reverseDoubleTap.collectAsState()
   val swipeToSubtitleSeek by playerPreferences.swipeToSubtitleSeek.collectAsState()
   val moveSubtitleByDragging by playerPreferences.moveSubtitleByDragging.collectAsState()
+  val pinchToResizeSubtitle by playerPreferences.pinchToResizeSubtitle.collectAsState()
   val panAndZoomEnabled by playerPreferences.panAndZoomEnabled.collectAsState()
 
   Column(
@@ -816,6 +851,13 @@ fun GesturesTab() {
     )
 
     InteractionSwitch(
+      label = stringResource(R.string.pref_player_gestures_pinch_to_resize_subtitle_title),
+      description = stringResource(R.string.pref_player_gestures_pinch_to_resize_subtitle_summary),
+      checked = pinchToResizeSubtitle,
+      onCheckedChange = { playerPreferences.pinchToResizeSubtitle.set(it) }
+    )
+
+    InteractionSwitch(
       label = stringResource(R.string.pref_player_gestures_pan_and_zoom),
       description = stringResource(R.string.pref_player_gestures_pan_and_zoom_summary),
       checked = panAndZoomEnabled,
@@ -829,7 +871,6 @@ fun InteractionTab() {
   val playerPreferences = koinInject<PlayerPreferences>()
 
   val playlistMode by playerPreferences.playlistMode.collectAsState()
-  val autoplayNextVideo by playerPreferences.autoplayNextVideo.collectAsState()
   val showSeekBarWhenSeeking by playerPreferences.showSeekBarWhenSeeking.collectAsState()
   val showDoubleTapOvals by playerPreferences.showDoubleTapOvals.collectAsState()
   val showCircularDoubleTapSeek by playerPreferences.showCircularDoubleTapSeek.collectAsState()
@@ -837,7 +878,8 @@ fun InteractionTab() {
   val usePreciseSeeking by playerPreferences.usePreciseSeeking.collectAsState()
   val hideOsdText by playerPreferences.hideOsdText.collectAsState()
   val keepScreenOnWhenPaused by playerPreferences.keepScreenOnWhenPaused.collectAsState()
-  val savePositionOnQuit by playerPreferences.savePositionOnQuit.collectAsState()
+  val resumePlaybackMode by playerPreferences.resumePlaybackMode.collectAsState()
+  val autoResumeOnAsk by playerPreferences.autoResumeOnAsk.collectAsState()
   val autoPiPOnNavigation by playerPreferences.autoPiPOnNavigation.collectAsState()
 
   Column(
@@ -858,13 +900,6 @@ fun InteractionTab() {
       description = stringResource(R.string.pref_autoplay_summary),
       checked = playlistMode,
       onCheckedChange = { playerPreferences.playlistMode.set(it) }
-    )
-
-    InteractionSwitch(
-      label = stringResource(R.string.pref_player_autoplay_next_video),
-      description = stringResource(if (autoplayNextVideo) R.string.pref_player_autoplay_next_video_summary_on else R.string.pref_player_autoplay_next_video_summary_off),
-      checked = autoplayNextVideo,
-      onCheckedChange = { playerPreferences.autoplayNextVideo.set(it) }
     )
 
     InteractionSwitch(
@@ -916,14 +951,22 @@ fun InteractionTab() {
       onCheckedChange = { playerPreferences.keepScreenOnWhenPaused.set(it) }
     )
 
-    InteractionSwitch(
-      label = stringResource(R.string.pref_player_save_position_on_quit),
-      description = stringResource(R.string.pref_player_save_position_on_quit_summary),
-      checked = savePositionOnQuit,
-      onCheckedChange = { playerPreferences.savePositionOnQuit.set(it) }
-    )
-
     ResumePlaybackModePreferenceItem()
+
+    if (resumePlaybackMode == ResumePlaybackMode.Ask) {
+      InteractionSwitch(
+        label = stringResource(R.string.pref_player_auto_resume_on_ask_title),
+        description = stringResource(
+          if (autoResumeOnAsk) {
+            R.string.pref_player_auto_resume_on_ask_summary_on
+          } else {
+            R.string.pref_player_auto_resume_on_ask_summary_off
+          }
+        ),
+        checked = autoResumeOnAsk,
+        onCheckedChange = { playerPreferences.autoResumeOnAsk.set(it) }
+      )
+    }
 
     InteractionSwitch(
       label = stringResource(R.string.pref_auto_pip_title),
@@ -941,6 +984,7 @@ private fun InteractionSwitch(
   checked: Boolean,
   onCheckedChange: (Boolean) -> Unit,
   enabled: Boolean = true,
+  onDisabledClick: (() -> Unit)? = null,
 ) {
   val alpha = if (enabled) 1.0f else 0.5f
   Surface(
@@ -952,6 +996,7 @@ private fun InteractionSwitch(
       value = checked,
       onValueChange = onCheckedChange,
       enabled = enabled,
+      onDisabledClick = onDisabledClick,
       title = { Text(label, style = MaterialTheme.typography.bodyLarge) },
       summary = { 
         Text(
@@ -1282,6 +1327,87 @@ private fun PlayerTimeToDisappearPreferenceItem() {
       },
       dismissButton = {
         TextButton(onClick = { showCustomDialog = false }) {
+          Text(stringResource(R.string.generic_cancel))
+        }
+      }
+    )
+  }
+}
+
+@Composable
+private fun PlaybackControlsPositionPreferenceItem() {
+  val playerPreferences = koinInject<PlayerPreferences>()
+  val playbackControlsPosition by playerPreferences.playbackControlsPosition.collectAsState()
+  var showDialog by remember { mutableStateOf(false) }
+
+  Surface(
+    shape = MaterialTheme.shapes.medium,
+    color = MaterialTheme.colorScheme.surfaceContainerLow,
+    modifier = Modifier.fillMaxWidth()
+  ) {
+    ListItem(
+      modifier = Modifier
+        .fillMaxWidth()
+        .clickable { showDialog = true },
+      headlineContent = {
+        Text(
+          text = stringResource(R.string.pref_playback_controls_position_title),
+          style = MaterialTheme.typography.bodyLarge
+        )
+      },
+      supportingContent = {
+        Text(
+          text = stringResource(playbackControlsPosition.titleRes),
+          style = MaterialTheme.typography.bodySmall,
+          color = MaterialTheme.colorScheme.outline
+        )
+      },
+      trailingContent = {
+        Icon(
+          imageVector = Icons.Default.Tune,
+          contentDescription = null,
+          tint = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+      }
+    )
+  }
+
+  if (showDialog) {
+    AlertDialog(
+      onDismissRequest = { showDialog = false },
+      title = { Text(stringResource(R.string.pref_playback_controls_position_title)) },
+      text = {
+        Column(
+          modifier = Modifier
+            .fillMaxWidth()
+            .verticalScroll(rememberScrollState())
+        ) {
+          PlaybackControlsPosition.entries.forEach { position ->
+            Row(
+              modifier = Modifier
+                .fillMaxWidth()
+                .clickable {
+                  playerPreferences.playbackControlsPosition.set(position)
+                  showDialog = false
+                }
+                .padding(vertical = 12.dp, horizontal = 8.dp),
+              verticalAlignment = Alignment.CenterVertically
+            ) {
+              RadioButton(
+                selected = playbackControlsPosition == position,
+                onClick = null
+              )
+              Spacer(modifier = Modifier.width(12.dp))
+              Text(
+                text = stringResource(position.titleRes),
+                style = MaterialTheme.typography.bodyLarge
+              )
+            }
+          }
+        }
+      },
+      confirmButton = {
+        TextButton(onClick = { showDialog = false }) {
           Text(stringResource(R.string.generic_cancel))
         }
       }

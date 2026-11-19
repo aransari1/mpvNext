@@ -20,6 +20,7 @@ import java.io.File
  */
 object MediaThumbnailUtils : KoinComponent {
   private val thumbnailRepository: ThumbnailRepository by inject()
+  private val hybridMediaIndexRepository: xyz.mpv.rex.database.repository.HybridMediaIndexRepository by inject()
 
   /**
    * Extracts album cover art or video frame thumbnail for a given [uri].
@@ -64,6 +65,33 @@ object MediaThumbnailUtils : KoinComponent {
     null
   }
 
+  /**
+   * Reads an already-generated thumbnail from ThumbnailRepository without starting extraction.
+   * Looking up the queue path first preserves the same Video identity/cache key used by browser.
+   */
+  suspend fun getCachedThumbnailForPath(
+    context: Context,
+    path: String,
+    uri: Uri,
+  ): Bitmap? = withContext(Dispatchers.IO) {
+    runCatching {
+      val candidates = buildList {
+        if (path.isNotBlank()) add(path)
+        if (path.startsWith("/")) {
+          runCatching { File(path).canonicalPath }.getOrNull()?.let(::add)
+        }
+        add(uri.toString())
+      }.distinct()
+
+      val indexedVideo = candidates.firstNotNullOfOrNull { candidate ->
+        runCatching {
+          hybridMediaIndexRepository.getVideoByLocation(candidate)
+        }.getOrNull()
+      } ?: createVideoForUri(context, uri)
+
+      thumbnailRepository.getCachedThumbnail(indexedVideo, 256, 256)
+    }.getOrNull()
+  }
   suspend fun createVideoForUri(context: Context, uri: Uri): Video = withContext(Dispatchers.IO) {
     val path = when (uri.scheme) {
       "file" -> uri.path ?: uri.toString()
@@ -81,9 +109,22 @@ object MediaThumbnailUtils : KoinComponent {
       else -> uri.toString()
     }
 
+    // 1. First check if HybridMediaIndexRepository already has the indexed Video from the folder browser
+    val indexedVideo = listOf(uri.toString(), path)
+      .distinct()
+      .firstNotNullOfOrNull { candidate ->
+        runCatching {
+          hybridMediaIndexRepository.getVideoByLocation(candidate)
+        }.getOrNull()
+      }
+    if (indexedVideo != null) {
+      return@withContext indexedVideo
+    }
+
     val file = if (path.startsWith("/")) File(path) else null
     val size = file?.length() ?: 0L
-    val dateModified = file?.lastModified() ?: 0L
+    val rawModified = file?.lastModified() ?: 0L
+    val dateModified = if (rawModified > 100_000_000_000L) rawModified / 1000L else rawModified
     val isAudio = FileTypeUtils.isAudioFile(file ?: File(path))
     val name = if (uri.scheme == "file") File(path).name else (uri.lastPathSegment ?: "Media")
     val parentFolder = file?.parentFile
@@ -99,7 +140,7 @@ object MediaThumbnailUtils : KoinComponent {
       size = size,
       sizeFormatted = "",
       dateModified = dateModified,
-      dateAdded = 0L,
+      dateAdded = dateModified,
       mimeType = if (isAudio) "audio/*" else "video/*",
       bucketId = parentFolder?.absolutePath?.replace("\\", "/") ?: "",
       bucketDisplayName = parentFolder?.name ?: "",

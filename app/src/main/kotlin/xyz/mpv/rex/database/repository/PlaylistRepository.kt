@@ -117,6 +117,19 @@ class PlaylistRepository(private val playlistDao: PlaylistDao) {
   suspend fun getPlaylistItemCount(playlistId: Int): Int =
     playlistDao.getPlaylistItemCount(playlistId)
 
+  suspend fun getFirstPlaylistItemPath(playlistId: Int): String? =
+    playlistDao.getFirstPlaylistItemPath(playlistId)
+
+  suspend fun setPlaylistCustomThumbnail(playlistId: Int, path: String?) {
+    playlistDao.updateCustomThumbnailPath(playlistId, path)
+    getPlaylistById(playlistId)?.let { playlist ->
+      updatePlaylist(playlist)
+    }
+  }
+
+  suspend fun getEffectiveThumbnailPath(playlistId: Int): String? =
+    playlistDao.getEffectiveThumbnailPath(playlistId)
+
   suspend fun reorderPlaylistItems(playlistId: Int, newOrder: List<Int>) {
     playlistDao.reorderPlaylistItems(playlistId, newOrder)
     getPlaylistById(playlistId)?.let { playlist ->

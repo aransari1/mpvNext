@@ -19,6 +19,7 @@ import xyz.mpv.rex.repository.MediaFileRepository
 import xyz.mpv.rex.utils.history.RecentlyPlayedOps
 import xyz.mpv.rex.utils.media.MediaLibraryEvents
 import xyz.mpv.rex.utils.media.MetadataRetrieval
+import xyz.mpv.rex.utils.media.PlaybackStateIndex
 import xyz.mpv.rex.utils.permission.PermissionUtils.StorageOps
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -161,7 +162,7 @@ class SearchViewModel(
         if (targetPath == null) {
           val folders = MediaFileRepository.getAllVideoFolders(getApplication())
           folders.filter { it.name.contains(query, ignoreCase = true) || it.path.contains(query, ignoreCase = true) }
-            .filter { it.path !in blacklist }
+            .filter { it.path !in blacklist && it.activeCount(isAudioEnabled) > 0 }
             .forEach { folder ->
               results.add(
                 FileSystemItem.Folder(
@@ -172,6 +173,10 @@ class SearchViewModel(
                   audioCount = folder.audioCount,
                   totalSize = folder.totalSize,
                   totalDuration = folder.totalDuration,
+                  videoSize = folder.videoSize,
+                  audioSize = folder.audioSize,
+                  videoDuration = folder.videoDuration,
+                  audioDuration = folder.audioDuration,
                   hasSubfolders = false,
                   newCount = folder.newCount,
                   unwatchedVideoCount = folder.unwatchedVideoCount,
@@ -180,14 +185,21 @@ class SearchViewModel(
             }
         }
 
+        val uniqueResults = results.distinctBy {
+          when (it) {
+            is FileSystemItem.VideoFile -> "video_${it.path.ifBlank { it.video.uri.toString() }}"
+            is FileSystemItem.Folder -> "folder_${it.path}"
+          }
+        }
+
         // Update playback and watched state
-        updatePlaybackStates(results)
-        _searchResults.value = results
+        updatePlaybackStates(uniqueResults)
+        _searchResults.value = uniqueResults
         _isSearchLoading.value = false
 
         // Background enrich any videos with missing durations or chips
         val isMetadataNeeded = MetadataRetrieval.isVideoMetadataNeeded(browserPreferences)
-        val videoItems = results.filterIsInstance<FileSystemItem.VideoFile>()
+        val videoItems = uniqueResults.filterIsInstance<FileSystemItem.VideoFile>()
         val uncached = videoItems.map { it.video }.filter { it.duration <= 0L || (isMetadataNeeded && (it.fps == 0f || it.subtitleCodec.isEmpty())) }
         if (uncached.isNotEmpty()) {
           val enrichedVideos = MetadataRetrieval.enrichVideosIfNeeded(
@@ -197,7 +209,7 @@ class SearchViewModel(
             metadataCache = metadataCache,
           )
           val enrichedMap = enrichedVideos.associateBy { it.id }
-          val finalResults = results.map { item ->
+          val finalResults = uniqueResults.map { item ->
             if (item is FileSystemItem.VideoFile) {
               val enriched = enrichedMap[item.video.id] ?: item.video
               item.copy(video = enriched)
@@ -220,6 +232,7 @@ class SearchViewModel(
 
   private suspend fun updatePlaybackStates(items: List<FileSystemItem>) {
     val playbackStates = playbackStateRepository.getAllPlaybackStates()
+    val playbackIndex = PlaybackStateIndex.of(playbackStates)
     val playbackMap = mutableMapOf<Long, Float>()
     val newIds = mutableSetOf<Long>()
     val watchedIds = mutableSetOf<Long>()
@@ -230,21 +243,22 @@ class SearchViewModel(
 
     items.filterIsInstance<FileSystemItem.VideoFile>().forEach { item ->
       val video = item.video
-      val state = playbackStates.find { it.mediaTitle == video.path || it.mediaTitle == video.displayName }
+      val state = playbackIndex.forVideoPathOrName(video.path, video.displayName)
       if (state != null) {
-        if (state.hasBeenWatched) {
-          watchedIds.add(video.id)
-        }
+        var isWatched = state.hasBeenWatched
         if (video.duration > 0 && state.timeRemaining != -1) {
           val durationSeconds = video.duration / 1000
           val watched = durationSeconds - state.timeRemaining.toLong()
           val progressValue = (watched.toFloat() / durationSeconds.toFloat()).coerceIn(0f, 1f)
           if (progressValue >= (watchedThreshold / 100f)) {
-            watchedIds.add(video.id)
+            isWatched = true
           }
-          if (progressValue in 0.01f..0.99f) {
+          if (progressValue >= 0.01f && !isWatched) {
             playbackMap[video.id] = progressValue
           }
+        }
+        if (isWatched) {
+          watchedIds.add(video.id)
         }
         if (state.timeRemaining == -1) {
           newIds.add(video.id)

@@ -15,6 +15,7 @@ import xyz.mpv.rex.preferences.FoldersPreferences
 import xyz.mpv.rex.ui.browser.base.BaseBrowserViewModel
 import xyz.mpv.rex.utils.media.MediaLibraryEvents
 import xyz.mpv.rex.utils.media.MetadataRetrieval
+import xyz.mpv.rex.utils.storage.FileFilterUtils
 import xyz.mpv.rex.utils.storage.FileTypeUtils
 import java.io.File
 import kotlinx.coroutines.CancellationException
@@ -66,8 +67,7 @@ class FolderListViewModel(
   val foldersWithNewCount: StateFlow<List<FolderWithNewCount>> = _foldersWithNewCount.asStateFlow()
 
   // Track if initial load has completed to prevent empty state flicker
-  private val _hasCompletedInitialLoad = MutableStateFlow(false)
-  val hasCompletedInitialLoad: StateFlow<Boolean> = _hasCompletedInitialLoad.asStateFlow()
+  val hasCompletedInitialLoad: StateFlow<Boolean> = hasLoaded
 
   // Track if folders were deleted leaving list empty
   private val _foldersWereDeleted = MutableStateFlow(false)
@@ -98,7 +98,7 @@ class FolderListViewModel(
 
     if (hasCachedData) {
       // If we have cached data, show it immediately and refresh silently in background
-      _hasCompletedInitialLoad.value = true
+      _hasLoaded.value = true
       _isLoading.value = false
       viewModelScope.launch(Dispatchers.IO) {
         loadData() 
@@ -115,10 +115,13 @@ class FolderListViewModel(
       combine(
         _allVideoFolders, 
         foldersPreferences.blacklistedFolders.changes(),
-        browserPreferences.showAudioFiles.changes()
-      ) { folders, blacklist, showAudio ->
+        browserPreferences.showAudioFiles.changes(),
+        browserPreferences.includeNoMediaContent.changes(),
+      ) { folders, blacklist, showAudio, includeNoMedia ->
         folders.filter { folder -> 
-          folder.path !in blacklist && (showAudio || folder.videoCount > 0)
+          folder.path !in blacklist &&
+          folder.activeCount(showAudio) > 0 &&
+          (includeNoMedia || !FileFilterUtils.isWithinNoMediaBoundary(File(folder.path)))
         }
       }.collectLatest { filteredFolders ->
         // Check if folders became empty after having folders
@@ -182,7 +185,7 @@ class FolderListViewModel(
   private fun serializeFoldersToJson(folders: List<VideoFolder>): String {
     // For now using a simple approach since we only cache basic info
     return folders.joinToString("|") { folder ->
-      "${folder.bucketId};${folder.name};${folder.path};${folder.videoCount};${folder.audioCount};${folder.totalSize};${folder.totalDuration};${folder.lastModified};${folder.newCount}"
+      "${folder.bucketId};${folder.name};${folder.path};${folder.videoCount};${folder.audioCount};${folder.totalSize};${folder.totalDuration};${folder.lastModified};${folder.newCount};${folder.videoSize};${folder.audioSize};${folder.videoDuration};${folder.audioDuration}"
     }
   }
 
@@ -191,16 +194,30 @@ class FolderListViewModel(
     return json.split("|").mapNotNull { line ->
       try {
         val parts = line.split(";")
+        val videoCount = parts[3].toInt()
+        val audioCount = parts[4].toInt()
+        val totalSize = parts[5].toLong()
+        val totalDuration = parts[6].toLong()
+        val lastModified = parts[7].toLong()
+        val newCount = if (parts.size > 8) parts[8].toInt() else 0
+        val videoSize = if (parts.size > 9) parts[9].toLong() else 0L
+        val audioSize = if (parts.size > 10) parts[10].toLong() else 0L
+        val videoDuration = if (parts.size > 11) parts[11].toLong() else 0L
+        val audioDuration = if (parts.size > 12) parts[12].toLong() else 0L
         VideoFolder(
           bucketId = parts[0],
           name = parts[1],
           path = parts[2],
-          videoCount = parts[3].toInt(),
-          audioCount = parts[4].toInt(),
-          totalSize = parts[5].toLong(),
-          totalDuration = parts[6].toLong(),
-          lastModified = parts[7].toLong(),
-          newCount = if (parts.size > 8) parts[8].toInt() else 0
+          videoCount = videoCount,
+          audioCount = audioCount,
+          totalSize = totalSize,
+          totalDuration = totalDuration,
+          videoSize = videoSize,
+          audioSize = audioSize,
+          videoDuration = videoDuration,
+          audioDuration = audioDuration,
+          lastModified = lastModified,
+          newCount = newCount,
         )
       } catch (e: Exception) {
         null
@@ -257,8 +274,11 @@ class FolderListViewModel(
 
         val blacklist = foldersPreferences.blacklistedFolders.get()
         val showAudio = browserPreferences.showAudioFiles.get()
+        val includeNoMedia = browserPreferences.includeNoMediaContent.get()
         val filteredFolders = folders.filter { folder -> 
-          folder.path !in blacklist && (showAudio || folder.videoCount > 0)
+          folder.path !in blacklist &&
+          folder.activeCount(showAudio) > 0 &&
+          (includeNoMedia || !FileFilterUtils.isWithinNoMediaBoundary(File(folder.path)))
         }
         _videoFolders.value = filteredFolders
         _foldersWithNewCount.value = filteredFolders.map { 
@@ -275,7 +295,7 @@ class FolderListViewModel(
       } finally {
         if (coroutineContext.isActive) {
           _isLoading.value = false
-          _hasCompletedInitialLoad.value = true
+          _hasLoaded.value = true
         }
       }
     }

@@ -1,6 +1,7 @@
 package xyz.mpv.rex.ui.browser.filesystem
 
 import android.app.Application
+import android.os.Environment
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -8,14 +9,20 @@ import androidx.lifecycle.viewModelScope
 import xyz.mpv.rex.domain.browser.FileSystemItem
 import xyz.mpv.rex.domain.browser.PathComponent
 import xyz.mpv.rex.domain.media.model.Video
+import xyz.mpv.rex.domain.pinned.PinScope
 import xyz.mpv.rex.domain.playbackstate.repository.PlaybackStateRepository
 import xyz.mpv.rex.preferences.BrowserPreferences
 import xyz.mpv.rex.repository.MediaFileRepository
 import xyz.mpv.rex.ui.browser.base.BaseBrowserViewModel
 import xyz.mpv.rex.utils.media.MediaLibraryEvents
 import xyz.mpv.rex.utils.media.MetadataRetrieval
+import xyz.mpv.rex.utils.media.PlaybackStateIndex
 import xyz.mpv.rex.utils.sort.SortUtils
 import xyz.mpv.rex.utils.storage.FileTypeUtils
+import xyz.mpv.rex.utils.storage.MediaTreeStore
+import xyz.mpv.rex.utils.storage.folderKey
+import xyz.mpv.rex.utils.storage.isPathExcluded
+import xyz.mpv.rex.utils.storage.normalizedExcludedPaths
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -27,6 +34,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.koin.core.component.KoinComponent
@@ -39,22 +47,36 @@ import java.io.File
  */
 class FileSystemBrowserViewModel(
   application: Application,
-  initialPath: String? = null,
+  private val initialPath: String? = null,
 ) : BaseBrowserViewModel<FileSystemItem>(application),
   KoinComponent {
   private val foldersPreferences: xyz.mpv.rex.preferences.FoldersPreferences by inject()
   private val appearancePreferences: xyz.mpv.rex.preferences.AppearancePreferences by inject()
+  private val pinnedItemRepository: xyz.mpv.rex.domain.pinned.PinnedItemRepository by inject()
+  private val treeStore: MediaTreeStore by inject()
 
   // Special marker for "show storage volumes" mode
-  private val STORAGE_ROOTS_MARKER = "__STORAGE_ROOTS__"
 
-  private var homeDirectory: String? = null
   private var isRootResolved = false
 
   private val _currentPath = MutableStateFlow(initialPath ?: STORAGE_ROOTS_MARKER)
   val currentPath: StateFlow<String> = _currentPath.asStateFlow()
 
   private val _unsortedItems = MutableStateFlow<List<FileSystemItem>>(emptyList())
+
+  // Folder pins (scoped to the tree view) merged with media pins (always shared
+  // across tree/folder/library views), so a pinned video shows its badge here too.
+  val pinnedPathList: StateFlow<List<String>> =
+    combine(
+      pinnedItemRepository.pinnedPaths(PinScope.TREE),
+      pinnedItemRepository.pinnedPaths(PinScope.MEDIA),
+    ) { folderPins, mediaPins -> (folderPins + mediaPins).distinct() }
+      .stateIn(
+        viewModelScope,
+        kotlinx.coroutines.flow.SharingStarted.Eagerly,
+        (pinnedItemRepository.getPinnedPaths(PinScope.TREE) +
+          pinnedItemRepository.getPinnedPaths(PinScope.MEDIA)).distinct(),
+      )
 
   // Video playback progress map
   private val _videoFilesWithPlayback = MutableStateFlow<Map<Long, Float>>(emptyMap())
@@ -74,14 +96,7 @@ class FileSystemBrowserViewModel(
   private val _breadcrumbs = MutableStateFlow<List<PathComponent>>(emptyList())
   val breadcrumbs: StateFlow<List<PathComponent>> = _breadcrumbs.asStateFlow()
 
-  val isAtRoot: StateFlow<Boolean> =
-    MutableStateFlow(initialPath == null).apply {
-      viewModelScope.launch {
-        _currentPath.collect { path ->
-          value = path == STORAGE_ROOTS_MARKER || path == homeDirectory
-        }
-      }
-    }
+  val isAtRoot: StateFlow<Boolean> = MutableStateFlow(initialPath == null).asStateFlow()
 
   private val _itemsWereDeletedOrMoved = MutableStateFlow(false)
   val itemsWereDeletedOrMoved: StateFlow<Boolean> = _itemsWereDeletedOrMoved.asStateFlow()
@@ -91,6 +106,7 @@ class FileSystemBrowserViewModel(
 
   companion object {
     private const val TAG = "FileSystemBrowserVM"
+    const val STORAGE_ROOTS_MARKER = "__STORAGE_ROOTS__"
 
     fun factory(
       application: Application,
@@ -103,23 +119,30 @@ class FileSystemBrowserViewModel(
   }
 
   init {
+    val defaultTarget = initialPath ?: runCatching { Environment.getExternalStorageDirectory()?.absolutePath }.getOrNull() ?: "/storage/emulated/0"
+    _currentPath.value = defaultTarget
+    _breadcrumbs.value = if (initialPath == null) emptyList() else MediaFileRepository.getPathComponents(defaultTarget)
+
+    // Cache-first immediate render: load persisted snapshot directly from Room (0 ms spinner)
+    viewModelScope.launch(Dispatchers.IO) {
+      loadCachedSnapshot(defaultTarget)
+    }
+
     if (initialPath == null) {
       viewModelScope.launch(Dispatchers.IO) {
         val roots = MediaFileRepository.getStorageRoots(getApplication())
         if (roots.size == 1) {
           val singleRoot = roots.first()
-          homeDirectory = singleRoot.path
           _currentPath.value = singleRoot.path
         } else {
-          homeDirectory = null
+          _currentPath.value = STORAGE_ROOTS_MARKER
         }
         isRootResolved = true
-        loadData()
+        loadCurrentDirectory(silent = _unsortedItems.value.isNotEmpty())
       }
     } else {
-      homeDirectory = initialPath
       isRootResolved = true
-      loadData()
+      loadCurrentDirectory(silent = _unsortedItems.value.isNotEmpty())
     }
 
     // Note: BaseBrowserViewModel handles reactive updates for media library and playback changes.
@@ -127,25 +150,59 @@ class FileSystemBrowserViewModel(
     viewModelScope.launch {
       combine(
         _unsortedItems,
+        _currentPath,
         browserPreferences.folderSortType.changes(),
         browserPreferences.folderSortOrder.changes(),
-      ) { items, sortType, sortOrder ->
-        SortUtils.sortFileSystemItems(items, sortType, sortOrder)
+        browserPreferences.showAudioFiles.changes(),
+      ) { items, currentPath, sortType, sortOrder, showAudioFiles ->
+        val visibleItems = items.filterNot { item ->
+          (item is FileSystemItem.VideoFile && !showAudioFiles && item.video.isAudio) ||
+          (currentPath != STORAGE_ROOTS_MARKER && item is FileSystemItem.Folder && item.activeCount(showAudioFiles) == 0)
+        }
+        SortUtils.sortFileSystemItems(visibleItems, sortType, sortOrder, showAudioFiles)
       }.collectLatest { sortedItems ->
         _items.value = sortedItems
       }
     }
 
+
     // Refresh when blacklist changes
     viewModelScope.launch {
-      foldersPreferences.blacklistedFolders.changes().drop(1).collectLatest {
+      foldersPreferences.blacklistedFolders.changes().drop(1).collectLatest { blacklist ->
+        // Hide the blacklisted folders (and their subtrees) from the list right away, then let
+        // the full refresh reconcile counts in the background.
+        val excludedPaths = normalizedExcludedPaths(blacklist)
+        if (excludedPaths.isNotEmpty()) {
+          _unsortedItems.value = _unsortedItems.value.filterNot { item ->
+            isPathExcluded(item.path, excludedPaths)
+          }
+        }
         refresh(silent = true)
       }
     }
+
+    // Refresh when audio visibility changes
+    viewModelScope.launch {
+      browserPreferences.showAudioFiles.changes().drop(1).collectLatest {
+        refresh(silent = true)
+      }
+    }
+
+    // Refresh when folder flattening changes
+    viewModelScope.launch {
+      browserPreferences.flattenFolders.changes().drop(1).collectLatest {
+        refresh(silent = true)
+      }
+    }
+
   }
 
   override fun loadData() {
-    loadCurrentDirectory()
+    loadCurrentDirectory(silent = false)
+  }
+
+  fun loadData(silent: Boolean) {
+    loadCurrentDirectory(silent = silent)
   }
 
   override fun refresh(silent: Boolean) {
@@ -171,6 +228,27 @@ class FileSystemBrowserViewModel(
       folders.forEach { currentBlacklist.add(it.path) }
       foldersPreferences.blacklistedFolders.set(currentBlacklist)
       // BaseBrowserViewModel or init block should handle the refresh via flow observation
+    }
+  }
+
+  /**
+   * Pins (or unpins) the given items. Folders go to the tree view's pin set,
+   * videos/audio go to the shared media pin set.
+   */
+  fun setPinned(
+    folderPaths: List<String>,
+    mediaPaths: List<String>,
+    pinned: Boolean,
+  ) {
+    if (folderPaths.isEmpty() && mediaPaths.isEmpty()) return
+    viewModelScope.launch {
+      if (pinned) {
+        if (folderPaths.isNotEmpty()) pinnedItemRepository.pinAll(PinScope.TREE, folderPaths)
+        if (mediaPaths.isNotEmpty()) pinnedItemRepository.pinAll(PinScope.MEDIA, mediaPaths)
+      } else {
+        if (folderPaths.isNotEmpty()) pinnedItemRepository.unpinAll(PinScope.TREE, folderPaths)
+        if (mediaPaths.isNotEmpty()) pinnedItemRepository.unpinAll(PinScope.MEDIA, mediaPaths)
+      }
     }
   }
 
@@ -222,6 +300,9 @@ class FileSystemBrowserViewModel(
       _items.value = _items.value.filterNot { it is FileSystemItem.Folder && it.path in deletedFolderPaths }
       _unsortedItems.value = _unsortedItems.value.filterNot { it is FileSystemItem.Folder && it.path in deletedFolderPaths }
       _itemsWereDeletedOrMoved.value = true
+      deletedFolderPaths.forEach { deletedPath ->
+        pinnedItemRepository.removePinsUnder(deletedPath)
+      }
       MediaLibraryEvents.notifyChanged()
     }
     Pair(successCount, failureCount)
@@ -234,12 +315,25 @@ class FileSystemBrowserViewModel(
     val result = super.deleteVideos(videos)
     if (result.first > 0) {
       _itemsWereDeletedOrMoved.value = true
+      pinnedItemRepository.unpinAll(PinScope.TREE, deletedPaths)
+      pinnedItemRepository.unpinAll(PinScope.MEDIA, deletedPaths)
     }
     return result
   }
 
   override suspend fun renameVideo(video: Video, newDisplayName: String): Result<Unit> {
-    return super.renameVideo(video, newDisplayName)
+    val oldPath = video.path.ifBlank { video.uri.toString() }
+    val result = super.renameVideo(video, newDisplayName)
+    if (result.isSuccess) {
+      // BaseBrowserViewModel performs the rename on disk; re-read the parent to
+      // find the file's new path so an existing pin follows it.
+      val parentDir = File(oldPath).parent
+      if (parentDir != null) {
+        val newPath = File(parentDir, newDisplayName).absolutePath
+        pinnedItemRepository.renamePin(oldPath, newPath)
+      }
+    }
+    return result
   }
 
   suspend fun renameFolder(folder: FileSystemItem.Folder, newName: String): Boolean {
@@ -248,34 +342,83 @@ class FileSystemBrowserViewModel(
     if (dst.exists()) return false
     val ok = src.renameTo(dst)
     if (ok) {
+      pinnedItemRepository.renamePin(folder.path, dst.absolutePath)
       android.media.MediaScannerConnection.scanFile(getApplication(), arrayOf(dst.absolutePath), null, null)
       setItemsWereDeletedOrMoved()
     }
     return ok
   }
 
-  private fun loadCurrentDirectory() {
+  private suspend fun loadCachedSnapshot(path: String) {
+    try {
+      if (path == STORAGE_ROOTS_MARKER) return
+      val snapshot = treeStore.snapshot(
+        context = getApplication(),
+        flattenFolders = browserPreferences.flattenFolders.get(),
+        showAudioFiles = browserPreferences.showAudioFiles.get(),
+        blacklistedFolders = foldersPreferences.blacklistedFolders.get(),
+      )
+      val cachedFolders = snapshot
+        .effectiveChildren(folderKey(path))
+        .filter { node ->
+          if (browserPreferences.showAudioFiles.get()) {
+            node.recursiveVideoCount > 0 || node.recursiveAudioCount > 0
+          } else {
+            node.recursiveVideoCount > 0
+          }
+        }
+        .map { node ->
+          val folderData = snapshot.toMediaFolder(node, recursive = true)
+          FileSystemItem.Folder(
+            name = folderData.name,
+            path = folderData.path,
+            lastModified = folderData.lastModified,
+            videoCount = folderData.videoCount,
+            audioCount = folderData.audioCount,
+            totalSize = folderData.totalSize,
+            totalDuration = folderData.totalDuration,
+            videoSize = folderData.videoSize,
+            audioSize = folderData.audioSize,
+            videoDuration = folderData.videoDuration,
+            audioDuration = folderData.audioDuration,
+            hasSubfolders = folderData.hasSubfolders,
+            newCount = folderData.newCount,
+            unwatchedVideoCount = folderData.unwatchedVideoCount,
+          )
+        }
+      if (cachedFolders.isNotEmpty() && _unsortedItems.value.isEmpty()) {
+        _unsortedItems.value = cachedFolders
+        _isLoading.value = false
+        _hasLoaded.value = true
+      }
+    } catch (e: Exception) {
+      Log.d(TAG, "Cache-first snapshot load skipped", e)
+    }
+  }
+
+  private fun loadCurrentDirectory(silent: Boolean = false) {
     if (!isRootResolved) return
     directoryLoadJob?.cancel()
     directoryLoadJob = viewModelScope.launch(Dispatchers.IO) {
-      _isLoading.value = true
+      if (!silent && _unsortedItems.value.isEmpty()) {
+        _isLoading.value = true
+      }
       _error.value = null
 
       try {
         val path = _currentPath.value
-        if (path == STORAGE_ROOTS_MARKER) {
-          _breadcrumbs.value = emptyList()
-          val roots = MediaFileRepository.getStorageRoots(getApplication())
-          val sortedRoots = SortUtils.sortFileSystemItems(
-            roots,
-            browserPreferences.folderSortType.get(),
-            browserPreferences.folderSortOrder.get()
-          )
-          _unsortedItems.value = roots
-          _items.value = sortedRoots
-          _isLoading.value = false
+        _breadcrumbs.value = if (path == STORAGE_ROOTS_MARKER || initialPath == null) {
+          emptyList()
         } else {
-          _breadcrumbs.value = MediaFileRepository.getPathComponents(path)
+          MediaFileRepository.getPathComponents(path)
+        }
+
+        if (path == STORAGE_ROOTS_MARKER) {
+          val roots = MediaFileRepository.getStorageRoots(getApplication())
+          _unsortedItems.value = roots
+          _isLoading.value = false
+          _hasLoaded.value = true
+        } else {
           MediaFileRepository
             .scanDirectory(getApplication(), path, showAllFileTypes = false)
             .onSuccess { items ->
@@ -287,175 +430,100 @@ class FileSystemBrowserViewModel(
               }
               itemCountByPath[path] = items.size
 
-              val filteredItems = if (!browserPreferences.showAudioFiles.get()) {
-                items.filterNot { 
-                  (it is FileSystemItem.VideoFile && it.video.isAudio) ||
-                  (it is FileSystemItem.Folder && it.videoCount == 0)
+              val showAudio = browserPreferences.showAudioFiles.get()
+              val filteredItems = items.filterNot { item ->
+                (item is FileSystemItem.VideoFile && !showAudio && item.video.isAudio) ||
+                (path != STORAGE_ROOTS_MARKER && item is FileSystemItem.Folder && item.activeCount(showAudio) == 0)
+              }
+
+              // Everything below is decided once, with one clock reading, so the list that is
+              // published is the only list the UI ever sees for this load.
+              val now = System.currentTimeMillis()
+              val thresholdMillis = appearancePreferences.unplayedOldVideoDays.get() * 24L * 60L * 60L * 1000L
+              val watchedThreshold = browserPreferences.watchedThreshold.get()
+              val playbackIndex = PlaybackStateIndex.of(playbackStateRepository.getAllPlaybackStates())
+
+              val videoFiles = filteredItems.filterIsInstance<FileSystemItem.VideoFile>()
+
+              // Cached metadata (duration, resolution, subtitles) never affects watched/progress/new,
+              // so it is applied to the file metadata but not replayed through the badge pass.
+              val preEnrichedItems = if (videoFiles.isNotEmpty()) {
+                val cachedVideos = MetadataRetrieval.applyCachedMetadata(
+                  videos = videoFiles.map { it.video },
+                  browserPreferences = browserPreferences,
+                  metadataCache = metadataCache,
+                )
+                val cachedVideoMap = cachedVideos.associateBy { it.id }
+                filteredItems.map { item ->
+                  if (item is FileSystemItem.VideoFile) {
+                    val cached = cachedVideoMap[item.video.id]
+                    if (cached != null) item.copy(video = cached) else item
+                  } else {
+                    item
+                  }
                 }
               } else {
-                items
+                filteredItems
               }
 
-              // 1. Map playback info on basic items immediately (fast, local DB query)
-              val basicPlaybackStates = playbackStateRepository.getAllPlaybackStates()
-              val basicPlaybackMap = mutableMapOf<Long, Float>()
-              val basicNewIds = mutableSetOf<Long>()
-              val basicWatchedIds = mutableSetOf<Long>()
-              val basicCurrentTime = System.currentTimeMillis()
-              val basicThresholdDays = appearancePreferences.unplayedOldVideoDays.get()
-              val basicThresholdMillis = basicThresholdDays * 24 * 60 * 60 * 1000L
-              val basicWatchedThreshold = browserPreferences.watchedThreshold.get()
+              // One badge computation, reused for both the cached and the enriched list.
+              val badges = FolderBadges()
+              val decorated = badges.decorate(preEnrichedItems, playbackIndex, now, thresholdMillis, watchedThreshold)
 
-              val preEnrichedItems = run {
-                val videoFiles = filteredItems.filterIsInstance<FileSystemItem.VideoFile>()
-                if (videoFiles.isNotEmpty()) {
-                  val cachedVideos = MetadataRetrieval.applyCachedMetadata(
-                    videos = videoFiles.map { it.video },
-                    browserPreferences = browserPreferences,
-                    metadataCache = metadataCache
-                  )
-                  val cachedVideoMap = cachedVideos.associateBy { it.id }
-                  filteredItems.map { item ->
-                    if (item is FileSystemItem.VideoFile) {
-                      val cached = cachedVideoMap[item.video.id]
-                      if (cached != null) item.copy(video = cached) else item
-                    } else item
-                  }
-                } else filteredItems
-              }
-
-              val basicEnrichedItems = preEnrichedItems.map { item ->
-                if (item is FileSystemItem.VideoFile) {
-                  val video = item.video
-                  val state = basicPlaybackStates.find { it.mediaTitle == video.path || it.mediaTitle == video.displayName }
-                  
-                  var updatedVideo = video
-                  if (state != null) {
-                    if (state.savedOrientation != null) {
-                      updatedVideo = updatedVideo.copy(savedOrientation = state.savedOrientation)
-                    }
-                    if (state.hasBeenWatched) {
-                      basicWatchedIds.add(video.id)
-                    }
-                    if (video.duration > 0 && state.timeRemaining != -1) {
-                      val durationSeconds = video.duration / 1000
-                      val watched = durationSeconds - state.timeRemaining.toLong()
-                      val progressValue = (watched.toFloat() / durationSeconds.toFloat()).coerceIn(0f, 1f)
-                      
-                      if (progressValue >= (basicWatchedThreshold / 100f)) {
-                        basicWatchedIds.add(video.id)
-                      }
-                      
-                      if (progressValue in 0.01f..0.99f) {
-                        basicPlaybackMap[video.id] = progressValue
-                      }
-                    }
-                    if (state.timeRemaining == -1) {
-                      basicNewIds.add(video.id)
-                    }
-                  } else {
-                    val videoAge = basicCurrentTime - (video.dateModified * 1000)
-                    if (videoAge <= basicThresholdMillis) {
-                      basicNewIds.add(video.id)
-                    }
-                  }
-                  item.copy(video = updatedVideo)
-                } else {
-                  item
-                }
-              }
-
-              // Instantly publish the pre-enriched items so the UI displays immediately with cached metadata
-              val sortedBasicItems = SortUtils.sortFileSystemItems(
-                basicEnrichedItems,
-                browserPreferences.folderSortType.get(),
-                browserPreferences.folderSortOrder.get()
-              )
-              _videoFilesWithPlayback.value = basicPlaybackMap
-              _newVideoIds.value = basicNewIds
-              _watchedVideoIds.value = basicWatchedIds
-              _unsortedItems.value = basicEnrichedItems
-              _items.value = sortedBasicItems
+              // Instant render: list with badges and cached metadata is published immediately (<50ms)
+              _videoFilesWithPlayback.value = badges.progress
+              _newVideoIds.value = badges.newIds
+              _watchedVideoIds.value = badges.watchedIds
+              _unsortedItems.value = decorated
               _isLoading.value = false
+              _hasLoaded.value = true
 
-              // 2. Fetch detailed video metadata (MediaInfo) asynchronously in the background for uncached videos or missing durations
-              val videoFiles = preEnrichedItems.filterIsInstance<FileSystemItem.VideoFile>()
-              val isMetadataNeeded = MetadataRetrieval.isVideoMetadataNeeded(browserPreferences)
-              val uncachedVideos = videoFiles.map { it.video }.filter { it.duration <= 0L || (isMetadataNeeded && (it.fps == 0f || it.subtitleCodec.isEmpty())) }
-              if (uncachedVideos.isNotEmpty()) {
-                val videos = videoFiles.map { it.video }
-                val enrichedVideos = MetadataRetrieval.enrichVideosIfNeeded(
-                  context = getApplication(),
-                  videos = videos,
-                  browserPreferences = browserPreferences,
-                  metadataCache = metadataCache
-                )
-                  
-                  val enrichedVideoMap = enrichedVideos.associateBy { it.id }
-                  
-                  // Re-apply playback states to the enriched videos
-                  val finalPlaybackStates = playbackStateRepository.getAllPlaybackStates()
-                  val finalPlaybackMap = mutableMapOf<Long, Float>()
-                  val finalNewIds = mutableSetOf<Long>()
-                  val finalWatchedIds = mutableSetOf<Long>()
-                  val finalCurrentTime = System.currentTimeMillis()
-                  val finalThresholdDays = appearancePreferences.unplayedOldVideoDays.get()
-                  val finalThresholdMillis = finalThresholdDays * 24 * 60 * 60 * 1000L
-                  val finalWatchedThreshold = browserPreferences.watchedThreshold.get()
+              // Decide whether enrichment is needed from the metadata we already have.
+              val videosNeedingEnrichment = videoFiles.filter { file ->
+                MetadataRetrieval.needsMetadata(file.video, browserPreferences)
+              }
 
-                  val finalEnrichedItems = filteredItems.map { item ->
-                    when (item) {
-                      is FileSystemItem.VideoFile -> {
-                        var video = enrichedVideoMap[item.video.id] ?: item.video
-                        val state = finalPlaybackStates.find { it.mediaTitle == video.path || it.mediaTitle == video.displayName }
-                        
-                        if (state != null) {
-                          if (state.savedOrientation != null) {
-                            video = video.copy(savedOrientation = state.savedOrientation)
-                          }
-                          if (state.hasBeenWatched) {
-                            finalWatchedIds.add(video.id)
-                          }
-                          if (video.duration > 0 && state.timeRemaining != -1) {
-                            val durationSeconds = video.duration / 1000
-                            val watched = durationSeconds - state.timeRemaining.toLong()
-                            val progressValue = (watched.toFloat() / durationSeconds.toFloat()).coerceIn(0f, 1f)
-                            
-                            if (progressValue >= (finalWatchedThreshold / 100f)) {
-                              finalWatchedIds.add(video.id)
-                            }
-                            
-                            if (progressValue in 0.01f..0.99f) {
-                              finalPlaybackMap[video.id] = progressValue
-                            }
-                          }
-                          if (state.timeRemaining == -1) {
-                            finalNewIds.add(video.id)
-                          }
-                        } else {
-                          val videoAge = finalCurrentTime - (video.dateModified * 1000)
-                          if (videoAge <= finalThresholdMillis) {
-                            finalNewIds.add(video.id)
-                          }
-                        }
-                        item.copy(video = video)
-                      }
-                      else -> item
+              // Background progressive enrichment: process uncached videos in responsive batches of 32
+              if (videosNeedingEnrichment.isNotEmpty()) {
+                videosNeedingEnrichment.chunked(32).forEach { chunk ->
+                  if (!coroutineContext.isActive) return@launch
+                  val enrichedChunk = MetadataRetrieval.enrichVideosIfNeeded(
+                    context = getApplication(),
+                    videos = chunk.map { it.video },
+                    browserPreferences = browserPreferences,
+                    metadataCache = metadataCache,
+                  )
+                  if (!coroutineContext.isActive) return@launch
+                  val enrichedMap = enrichedChunk.associateBy { it.id }
+                  _unsortedItems.value = _unsortedItems.value.map { item ->
+                    if (item is FileSystemItem.VideoFile) {
+                      val enriched = enrichedMap[item.video.id]
+                      if (enriched != null) item.copy(video = enriched) else item
+                    } else {
+                      item
                     }
                   }
 
-                  val sortedFinalItems = SortUtils.sortFileSystemItems(
-                    finalEnrichedItems,
-                    browserPreferences.folderSortType.get(),
-                    browserPreferences.folderSortOrder.get()
-                  )
-                  // Publish the final fully-enriched list
-                  _videoFilesWithPlayback.value = finalPlaybackMap
-                  _newVideoIds.value = finalNewIds
-                  _watchedVideoIds.value = finalWatchedIds
-                  _unsortedItems.value = finalEnrichedItems
-                  _items.value = sortedFinalItems
+                  // If any video in this chunk had duration <= 0 originally and now has duration,
+                  // update progress / watched state for that video.
+                  for (enriched in enrichedChunk) {
+                    val originalVideo = chunk.firstOrNull { it.video.id == enriched.id }?.video
+                    if (originalVideo != null && originalVideo.duration <= 0L && enriched.duration > 0L) {
+                      val state = playbackIndex.forVideoPathOrName(enriched.path, enriched.displayName)
+                      if (state != null && state.timeRemaining != -1) {
+                        val durationSec = enriched.duration / 1000
+                        val watched = durationSec - state.timeRemaining.toLong()
+                        val progress = (watched.toFloat() / durationSec.toFloat()).coerceIn(0f, 1f)
+                        if (progress >= (watchedThreshold / 100f)) {
+                          _watchedVideoIds.value = _watchedVideoIds.value + enriched.id
+                        } else if (progress >= 0.01f) {
+                          _videoFilesWithPlayback.value = _videoFilesWithPlayback.value + (enriched.id to progress)
+                        }
+                      }
+                    }
+                  }
                 }
+              }
             }.onFailure { error ->
               _error.value = error.message
               _unsortedItems.value = emptyList()
@@ -471,6 +539,7 @@ class FileSystemBrowserViewModel(
       } finally {
         if (coroutineContext.isActive) {
           _isLoading.value = false
+          _hasLoaded.value = true
         }
       }
     }

@@ -8,7 +8,10 @@ import android.media.MediaMuxer
 import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Environment
+import android.os.ParcelFileDescriptor
 import android.util.Log
+import `is`.xyz.mpv.FastClipper
+import `is`.xyz.mpv.FastClipper.ClipMode
 import `is`.xyz.mpv.MPVLib
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -24,63 +27,102 @@ object VideoClipper {
         inputPath: String,
         outputFile: File,
         startMs: Long,
-        endMs: Long
+        endMs: Long,
+        mode: ClipMode = ClipMode.FAST_COPY
     ): Result<File> = withContext(Dispatchers.IO) {
+        val startSec = startMs / 1000.0
+        val endSec = endMs / 1000.0
         val startUs = startMs * 1000L
         val endUs = endMs * 1000L
 
         outputFile.parentFile?.mkdirs()
 
-        val isMkv = inputPath.endsWith(".mkv", ignoreCase = true) || outputFile.name.endsWith(".mkv", ignoreCase = true)
+        // 1. Primary Strategy: Native FFmpeg Fast Copy or Frame-Accurate Hardware Transcoding
+        val ffmpegResult = runCatching {
+            cutWithNativeFFmpeg(context, inputPath, outputFile, startSec, endSec, mode)
+        }
 
-        // If file is MKV, try mpv dump-cache first since libmpv natively supports Matroska muxer
-        if (isMkv) {
+        if (ffmpegResult.isSuccess && outputFile.exists() && outputFile.length() > 0) {
+            Log.d(TAG, "Clip cut successfully via Native FFmpeg ($mode): ${outputFile.absolutePath}")
+            scanFile(context, outputFile)
+            return@withContext Result.success(outputFile)
+        }
+
+        Log.w(TAG, "Native FFmpeg cut failed or unavailable, falling back...", ffmpegResult.exceptionOrNull())
+
+        // 2. Fallback for MKV: mpv dump-cache if output container is MKV (only in fast copy mode)
+        val isMkv = inputPath.endsWith(".mkv", ignoreCase = true) || outputFile.name.endsWith(".mkv", ignoreCase = true)
+        if (isMkv && mode == ClipMode.FAST_COPY) {
             val dumpResult = tryDumpCache(startMs, endMs, outputFile)
             if (dumpResult.isSuccess && outputFile.exists() && outputFile.length() > 100 * 1024) {
-                Log.d(TAG, "Clip dumped via mpv dump-cache: ${outputFile.absolutePath}")
+                Log.d(TAG, "Clip dumped via mpv dump-cache fallback: ${outputFile.absolutePath}")
                 scanFile(context, outputFile)
                 return@withContext Result.success(outputFile)
             }
-            Log.w(TAG, "mpv dump-cache skipped/failed for MKV, falling back to MediaMuxer MP4...")
         }
 
-        // Output file for MediaMuxer MUST have .mp4 or .webm extension because MediaMuxer creates MP4/WebM containers
-        val finalOutputFile = if (isMkv && outputFile.name.endsWith(".mkv", ignoreCase = true)) {
+        // 3. Fallback for MP4 / WebM: Android native MediaExtractor + MediaMuxer
+        val mediaMuxerOutputFile = if (isMkv && outputFile.name.endsWith(".mkv", ignoreCase = true)) {
             File(outputFile.parentFile, outputFile.name.removeSuffix(".mkv") + ".mp4")
         } else {
             outputFile
         }
 
-        // Try Android native MediaExtractor + MediaMuxer stream copy with unified keyframe timestamp offset
-        val nativeResult = runCatching {
-            cutWithMediaMuxer(context, inputPath, finalOutputFile, startUs, endUs)
+        val muxerResult = runCatching {
+            cutWithMediaMuxer(context, inputPath, mediaMuxerOutputFile, startUs, endUs)
         }
 
-        if (nativeResult.isSuccess && finalOutputFile.exists() && finalOutputFile.length() > 0) {
-            Log.d(TAG, "Clip cut successfully via MediaMuxer: ${finalOutputFile.absolutePath}")
-            scanFile(context, finalOutputFile)
-            return@withContext Result.success(finalOutputFile)
+        if (muxerResult.isSuccess && mediaMuxerOutputFile.exists() && mediaMuxerOutputFile.length() > 0) {
+            Log.d(TAG, "Clip cut successfully via MediaMuxer fallback: ${mediaMuxerOutputFile.absolutePath}")
+            scanFile(context, mediaMuxerOutputFile)
+            return@withContext Result.success(mediaMuxerOutputFile)
         }
 
-        Log.w(TAG, "MediaMuxer stream copy failed, trying mpv dump-cache fallback...", nativeResult.exceptionOrNull())
-
-        // Secondary fallback to mpv dump-cache
-        val dumpResult = tryDumpCache(startMs, endMs, finalOutputFile)
-        if (dumpResult.isSuccess && finalOutputFile.exists() && finalOutputFile.length() > 0) {
-            Log.d(TAG, "Clip dumped via mpv dump-cache fallback: ${finalOutputFile.absolutePath}")
-            scanFile(context, finalOutputFile)
-            return@withContext Result.success(finalOutputFile)
-        }
-
-        val error = nativeResult.exceptionOrNull()
-            ?: dumpResult.exceptionOrNull()
+        val finalError = ffmpegResult.exceptionOrNull()
+            ?: muxerResult.exceptionOrNull()
             ?: Exception("Failed to generate clip file")
 
-        if (finalOutputFile.exists() && finalOutputFile.length() == 0L) {
-            finalOutputFile.delete()
+        if (outputFile.exists() && outputFile.length() == 0L) {
+            outputFile.delete()
+        }
+        if (mediaMuxerOutputFile.exists() && mediaMuxerOutputFile.length() == 0L) {
+            mediaMuxerOutputFile.delete()
         }
 
-        Result.failure(error)
+        Result.failure(finalError)
+    }
+
+    private fun cutWithNativeFFmpeg(
+        context: Context,
+        inputPath: String,
+        outputFile: File,
+        startSec: Double,
+        endSec: Double,
+        mode: ClipMode
+    ) {
+        var pfd: ParcelFileDescriptor? = null
+        val resolvedPath = if (inputPath.startsWith("content://")) {
+            try {
+                pfd = context.contentResolver.openFileDescriptor(Uri.parse(inputPath), "r")
+                pfd?.fd?.let { fd -> "/proc/self/fd/$fd" } ?: inputPath
+            } catch (e: Exception) {
+                Log.w(TAG, "Unable to get file descriptor for $inputPath", e)
+                inputPath
+            }
+        } else {
+            inputPath
+        }
+
+        try {
+            val result = FastClipper.cutClip(resolvedPath, outputFile.absolutePath, startSec, endSec, mode)
+            if (result.isFailure) {
+                throw result.exceptionOrNull() ?: IllegalStateException("Native FFmpeg clipping failed")
+            }
+        } finally {
+            try {
+                pfd?.close()
+            } catch (ignored: Exception) {}
+        }
     }
 
     private fun tryDumpCache(startMs: Long, endMs: Long, outputFile: File): Result<Unit> {
@@ -203,7 +245,12 @@ object VideoClipper {
         }
     }
 
-    fun getOutputClipFile(inputPath: String, startMs: Long, endMs: Long): File {
+    fun getOutputClipFile(
+        inputPath: String,
+        startMs: Long,
+        endMs: Long,
+        mode: ClipMode = ClipMode.FAST_COPY
+    ): File {
         val moviesDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES)
         val clipsDir = File(moviesDir, "REX Player")
         if (!clipsDir.exists()) {
@@ -216,15 +263,28 @@ object VideoClipper {
             ?.takeIf { it.isNotBlank() } ?: "video"
 
         val extension = when {
+            mode == ClipMode.FRAME_ACCURATE -> "mp4"
             inputPath.endsWith(".webm", ignoreCase = true) -> "webm"
             inputPath.endsWith(".mkv", ignoreCase = true) -> "mkv"
+            inputPath.endsWith(".ts", ignoreCase = true) -> "ts"
+            inputPath.endsWith(".mov", ignoreCase = true) -> "mov"
+            inputPath.endsWith(".flv", ignoreCase = true) -> "mkv"
+            inputPath.endsWith(".avi", ignoreCase = true) -> "mkv"
             else -> "mp4"
         }
 
         val startSec = startMs / 1000
         val endSec = endMs / 1000
-        val fileName = "${originalName}_clip_${startSec}s-${endSec}s.$extension"
+        val modeSuffix = if (mode == ClipMode.FRAME_ACCURATE) "_exact" else ""
+        val baseFileName = "${originalName}_clip_${startSec}s-${endSec}s$modeSuffix"
 
-        return File(clipsDir, fileName)
+        var candidate = File(clipsDir, "$baseFileName.$extension")
+        var counter = 1
+        while (candidate.exists()) {
+            candidate = File(clipsDir, "${baseFileName}_$counter.$extension")
+            counter++
+        }
+
+        return candidate
     }
 }

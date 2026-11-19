@@ -1,5 +1,6 @@
 package xyz.mpv.rex.ui.player.controls
 
+import xyz.mpv.rex.utils.storage.FileTypeUtils
 import androidx.activity.compose.LocalActivity
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -58,6 +59,7 @@ import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.FastRewind
+import xyz.mpv.rex.ui.player.controls.components.ControlsGroup
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.layout.offset
@@ -78,6 +80,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
@@ -111,6 +114,7 @@ import xyz.mpv.rex.preferences.preference.plusAssign
 import xyz.mpv.rex.preferences.preference.minusAssign
 import xyz.mpv.rex.ui.player.Decoder.Companion.getDecoderFromValue
 import xyz.mpv.rex.ui.player.Panels
+import xyz.mpv.rex.ui.player.PlaybackControlsPosition
 import xyz.mpv.rex.ui.player.PlayerActivity
 import xyz.mpv.rex.ui.player.PlayerUpdates
 import xyz.mpv.rex.ui.player.PlayerViewModel
@@ -123,15 +127,19 @@ import xyz.mpv.rex.ui.player.controls.components.CompactSpeedIndicator
 import xyz.mpv.rex.ui.player.controls.components.ControlsButton
 import xyz.mpv.rex.ui.player.controls.components.LockHint
 import xyz.mpv.rex.ui.player.controls.components.MultipleSpeedPlayerUpdate
+import xyz.mpv.rex.ui.player.controls.components.PromptResumePlayerUpdate
 import xyz.mpv.rex.ui.player.controls.components.ResumePlaybackPromptDialog
 import xyz.mpv.rex.ui.player.controls.components.ResumedFromPlayerUpdate
 import xyz.mpv.rex.ui.player.controls.components.SeekPlayerUpdate
+import xyz.mpv.rex.ui.player.controls.components.PlayerLoadingIndicator
+import xyz.mpv.rex.ui.player.controls.components.rememberPlayerLoadingState
 import xyz.mpv.rex.ui.player.controls.components.SeekbarWithTimers
 import xyz.mpv.rex.ui.player.controls.components.SlideToUnlock
 import xyz.mpv.rex.ui.player.controls.components.SpeedControlSlider
 import xyz.mpv.rex.ui.player.controls.components.TextPlayerUpdate
 import xyz.mpv.rex.ui.player.controls.components.VolumeSlider
 import xyz.mpv.rex.ui.player.controls.components.sheets.toFixed
+import xyz.mpv.rex.ui.player.controls.components.sheets.toSegment
 import xyz.mpv.rex.ui.theme.controlColor
 import xyz.mpv.rex.ui.theme.playerRippleConfiguration
 import xyz.mpv.rex.ui.theme.spacing
@@ -176,6 +184,7 @@ fun PlayerControls(
   val spacing = MaterialTheme.spacing
   val appearancePreferences = koinInject<AppearancePreferences>()
   val hideBackground by appearancePreferences.hidePlayerButtonsBackground.collectAsState()
+  val showNextPreviousButtons by appearancePreferences.showNextPreviousButtons.collectAsState()
   val playerPreferences = koinInject<PlayerPreferences>()
   val audioPreferences = koinInject<AudioPreferences>()
   val gesturePreferences = koinInject<GesturePreferences>()
@@ -189,6 +198,7 @@ fun PlayerControls(
   val areControlsLocked by viewModel.areControlsLocked.collectAsState()
   val seekBarShown by viewModel.seekBarShown.collectAsState()
   val pausedForCache by MPVLib.propBoolean["paused-for-cache"].collectAsState()
+  val seeking by MPVLib.propBoolean["seeking"].collectAsState()
   val paused by MPVLib.propBoolean["pause"].collectAsState()
   val duration by MPVLib.propInt["duration"].collectAsState()
   val position by MPVLib.propInt["time-pos"].collectAsState()
@@ -205,11 +215,40 @@ fun PlayerControls(
   val showSeekTime by playerPreferences.showSeekTimeWhileSeeking.collectAsState()
   val showSpeedIndicatorOverlay by playerPreferences.showSpeedIndicatorOverlay.collectAsState()
   val hideOsdText by playerPreferences.hideOsdText.collectAsState()
+  val isLoadingFile by viewModel.isLoadingFile.collectAsState()
+  val isLoadingUrl by viewModel.isLoadingUrl.collectAsState()
+  val isNetworkStream by viewModel.isNetworkStream.collectAsState()
+  val showLoadingCircle by playerPreferences.showLoadingCircle.collectAsState()
+  val loadingState = rememberPlayerLoadingState(
+    isNetworkStream = isNetworkStream,
+    isLoadingUrl = isLoadingUrl,
+    enabled = showLoadingCircle,
+  )
+  val mediaTitle by viewModel.mediaTitle.collectAsState()
+  val mediaIdentifier by viewModel.mediaIdentifier.collectAsState()
+  val playlistItems by viewModel.playlistManager.playlist.collectAsState()
+  val playlistIndex by viewModel.playlistManager.currentIndex.collectAsState()
   var isSeeking by remember { mutableStateOf(false) }
+  // Fixed zone (seconds) at the very start of the file (00:00:00) where release-to-cancel
+  // is suppressed so seeking to the beginning always starts playback from the start.
+  val EDGE_EPSILON_SECONDS = 2f
   var dragStartValue by remember { mutableStateOf(-1f) }
   var isCloseToStart by remember { mutableStateOf(false) }
   var changeCount by remember { mutableStateOf(0) }
   var resetControlsTimestamp by remember { mutableStateOf(0L) }
+  var wasPlayingBeforeSeek by remember { mutableStateOf(false) }
+  val isPlaybackPaused = if (isSeeking && wasPlayingBeforeSeek) false else (paused ?: false)
+
+  LaunchedEffect(playlistIndex, mediaIdentifier.ifBlank { mediaTitle }) {
+    if (wasPlayingBeforeSeek) {
+      runCatching { MPVLib.setPropertyBoolean("pause", false) }
+    }
+    isSeeking = false
+    dragStartValue = -1f
+    isCloseToStart = false
+    changeCount = 0
+    wasPlayingBeforeSeek = false
+  }
   val seekText by viewModel.seekText.collectAsState()
   val currentChapter by MPVLib.propInt["chapter"].collectAsState()
   val mpvDecoder by MPVLib.propString["hwdec-current"].collectAsState()
@@ -219,6 +258,7 @@ fun PlayerControls(
   }
   val playerTimeToDisappear by playerPreferences.playerTimeToDisappear.collectAsState()
   val chapters by viewModel.chapters.collectAsState(persistentListOf())
+  val bookmarks by viewModel.bookmarks.collectAsState(persistentListOf())
   val playlist by viewModel.playlistManager.playlist.collectAsState()
   val playlistMode by playerPreferences.playlistMode.collectAsState()
   val haptic = LocalHapticFeedback.current
@@ -296,9 +336,10 @@ fun PlayerControls(
   val portraitVisibleButtons = remember(portraitBottomButtonsRaw, chapters, playlist, viewModel) {
     portraitBottomButtonsRaw.filter { button ->
       when (button) {
-        xyz.mpv.rex.preferences.PlayerButton.BOOKMARKS_CHAPTERS -> chapters.isNotEmpty()
+        xyz.mpv.rex.preferences.PlayerButton.BOOKMARKS_CHAPTERS -> true
         xyz.mpv.rex.preferences.PlayerButton.SHUFFLE -> viewModel.hasPlaylistSupport()
         xyz.mpv.rex.preferences.PlayerButton.CURRENT_CHAPTER -> false
+        xyz.mpv.rex.preferences.PlayerButton.MORE_OPTIONS -> false
         xyz.mpv.rex.preferences.PlayerButton.NONE -> false
         else -> true
       }
@@ -375,6 +416,7 @@ fun PlayerControls(
         val unlockControlsButton = createRef()
         val (bottomRightControls, bottomLeftControls) = createRefs()
         val playerPauseButton = createRef()
+        val playerLoadingRef = createRef()
         val seekbar = createRef()
         val (playerUpdates, playerLockHint) = createRefs()
         val (customLeftButtonsRef, customRightButtonsRef) = createRefs()
@@ -383,6 +425,8 @@ fun PlayerControls(
         val floatingFrameNav = createRef()
 
         val bottomControlsBelowSeekbar by playerPreferences.bottomControlsBelowSeekbar.collectAsState()
+        val playbackControlsPosition by playerPreferences.playbackControlsPosition.collectAsState()
+        val isPlaybackControlsAtBottom = playbackControlsPosition == PlaybackControlsPosition.Bottom
 
         val isBrightnessSliderShown by viewModel.isBrightnessSliderShown.collectAsState()
         val isVolumeSliderShown by viewModel.isVolumeSliderShown.collectAsState()
@@ -400,15 +444,27 @@ fun PlayerControls(
         val mediaTitle by remember(rawMediaTitle, activity) {
           derivedStateOf {
             val title = activity.getTitleForControls()
-            if (title.startsWith("http://") || title.startsWith("https://") || title.contains(".m3u8") || title.contains(".m3u")) {
-              val raw = rawMediaTitle
-              if (raw != null && raw.isNotBlank() && !raw.startsWith("http://") && !raw.startsWith("https://") && !raw.contains(".m3u8") && !raw.contains(".m3u")) {
-                raw
+            val resolvedTitle =
+              if (title.startsWith("http://") || title.startsWith("https://") ||
+                  title.contains(".m3u8") || title.contains(".m3u")) {
+                val raw = rawMediaTitle
+                if (raw != null && raw.isNotBlank() &&
+                    !raw.startsWith("http://") && !raw.startsWith("https://") &&
+                    !raw.contains(".m3u8") && !raw.contains(".m3u")) {
+                  raw
+                } else {
+                  title
+                }
               } else {
                 title
               }
+
+            val extension = resolvedTitle.substringAfterLast('.', "").lowercase()
+            if (extension in FileTypeUtils.VIDEO_EXTENSIONS ||
+                extension in FileTypeUtils.AUDIO_EXTENSIONS) {
+              resolvedTitle.substringBeforeLast('.')
             } else {
-              title
+              resolvedTitle
             }
           }
         }
@@ -454,11 +510,28 @@ fun PlayerControls(
           label = "frameNavYOffset"
         )
 
+        val currentPlayerUpdate by viewModel.playerUpdate.collectAsState()
+        val isSpeedLocked by viewModel.isSpeedLocked.collectAsState()
         val osdTopMargin by animateDpAsState(
-          targetValue = if (areButtonsVisible) {
+          targetValue = if (
+            areButtonsVisible ||
+              (controlsShown && !areControlsLocked &&
+                doubleTapSeekAmount == 0 &&
+                (currentPlayerUpdate !is PlayerUpdates.None ||
+                  (isSpeedLocked && abs((playbackSpeed ?: 1f) - 1f) > 0.01f)))
+          ) {
             if (isPortrait) 104.dp else 68.dp
           } else {
             if (isPortrait) 64.dp else 32.dp
+          },
+          animationSpec = if (
+            doubleTapSeekAmount == 0 ||
+              currentPlayerUpdate is PlayerUpdates.ResumedFrom ||
+              currentPlayerUpdate is PlayerUpdates.PromptResume
+          ) {
+            tween(durationMillis = 300, easing = androidx.compose.animation.core.EaseInOut)
+          } else {
+            androidx.compose.animation.core.spring()
           },
           label = "osdTopMargin"
         )
@@ -537,7 +610,6 @@ fun PlayerControls(
         }
 
         val holdForMultipleSpeed by playerPreferences.holdForMultipleSpeed.collectAsState()
-        val currentPlayerUpdate by viewModel.playerUpdate.collectAsState()
         val aspectRatio by viewModel.videoAspect.collectAsState()
         val currentAspectRatio by viewModel.currentAspectRatio.collectAsState()
         val videoZoom by viewModel.videoZoom.collectAsState()
@@ -549,12 +621,11 @@ fun PlayerControls(
           ) {
             return@LaunchedEffect
           }
-          val dismissDelay = if (currentPlayerUpdate is PlayerUpdates.ResumedFrom) 4000L else 2000L
+          val dismissDelay = if (currentPlayerUpdate is PlayerUpdates.ResumedFrom || currentPlayerUpdate is PlayerUpdates.PromptResume) 4000L else 2000L
           delay(dismissDelay)
           viewModel.playerUpdate.update { PlayerUpdates.None }
         }
 
-        val isSpeedLocked by viewModel.isSpeedLocked.collectAsState()
         val isSpeedUpdate = currentPlayerUpdate is PlayerUpdates.MultipleSpeed ||
           currentPlayerUpdate is PlayerUpdates.DynamicSpeedControl ||
           (currentPlayerUpdate is PlayerUpdates.SpeedLockHint && !(currentPlayerUpdate as PlayerUpdates.SpeedLockHint).isLocked)
@@ -745,6 +816,18 @@ fun PlayerControls(
               )
             }
 
+            is PlayerUpdates.PromptResume -> {
+              val promptUpdate = currentPlayerUpdate as PlayerUpdates.PromptResume
+              PromptResumePlayerUpdate(
+                position = promptUpdate.position,
+                onResume = {
+                  viewModel.playerUpdate.value = PlayerUpdates.None
+                  viewModel.seekTo(promptUpdate.position)
+                },
+                modifier = Modifier,
+              )
+            }
+
             else -> {}
           }
         }
@@ -781,13 +864,14 @@ fun PlayerControls(
             ) {
                 customButtons.filter { it.isLeft }.forEach { button ->
                     val buttonInteractionSource = remember { MutableInteractionSource() }
+                    val customButtonShape = RoundedCornerShape(14.dp)
                     Surface(
-                        shape = CircleShape,
+                        shape = customButtonShape,
                         color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.85f),
                         contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)),
                         modifier = Modifier
-                            .clip(CircleShape)
+                            .clip(customButtonShape)
                             .combinedClickable(
                                 interactionSource = buttonInteractionSource,
                                 indication = ripple(),
@@ -847,13 +931,14 @@ fun PlayerControls(
             ) {
                 customButtons.filter { !it.isLeft }.forEach { button ->
                     val buttonInteractionSource = remember { MutableInteractionSource() }
+                    val customButtonShape = RoundedCornerShape(14.dp)
                     Surface(
-                        shape = CircleShape,
+                        shape = customButtonShape,
                         color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.85f),
                         contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)),
                         modifier = Modifier
-                            .clip(CircleShape)
+                            .clip(customButtonShape)
                             .combinedClickable(
                                 interactionSource = buttonInteractionSource,
                                 indication = ripple(),
@@ -912,13 +997,14 @@ fun PlayerControls(
             ) {
                 customButtons.forEach { button ->
                     val buttonInteractionSource = remember { MutableInteractionSource() }
+                    val customButtonShape = RoundedCornerShape(14.dp)
                     Surface(
-                        shape = CircleShape,
+                        shape = customButtonShape,
                         color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.85f),
                         contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)),
                         modifier = Modifier
-                            .clip(CircleShape)
+                            .clip(customButtonShape)
                             .combinedClickable(
                                 interactionSource = buttonInteractionSource,
                                 indication = ripple(),
@@ -965,13 +1051,10 @@ fun PlayerControls(
           )
         }
 
-        AnimatedVisibility(
-          visible =
-            ((controlsShown && !areSlidersShown) && !areControlsLocked) || pausedForCache == true,
-          enter = fadeIn(playerControlsEnterAnimationSpec()),
-          exit = fadeOut(playerControlsExitAnimationSpec()),
+        PlayerLoadingIndicator(
+          loadingState = loadingState,
           modifier =
-            Modifier.constrainAs(playerPauseButton) {
+            Modifier.constrainAs(playerLoadingRef) {
               end.linkTo(parent.absoluteRight)
               start.linkTo(parent.absoluteLeft)
               if (isPortrait) {
@@ -983,29 +1066,71 @@ fun PlayerControls(
                 bottom.linkTo(parent.bottom)
               }
             },
+        )
+
+        AnimatedVisibility(
+          visible =
+            ((controlsShown && !areSlidersShown) && !areControlsLocked) && !loadingState.visible && playbackControlsPosition != PlaybackControlsPosition.Hide,
+          enter = fadeIn(playerControlsEnterAnimationSpec()),
+          exit = fadeOut(playerControlsExitAnimationSpec()),
+          modifier =
+            Modifier
+              .then(
+                if (isPlaybackControlsAtBottom && showSystemNavigationBar && bottomControlsBelowSeekbar) {
+                  val navBarPadding = WindowInsets.navigationBars.asPaddingValues()
+                  Modifier.padding(
+                    bottom = navBarPadding.calculateBottomPadding()
+                  )
+                } else {
+                  Modifier
+                }
+              )
+              .constrainAs(playerPauseButton) {
+                if (isPlaybackControlsAtBottom) {
+                  start.linkTo(parent.start)
+                  end.linkTo(parent.end)
+                  if (isPortrait) {
+                    if (bottomControlsBelowSeekbar) {
+                      bottom.linkTo(parent.bottom, spacing.large)
+                    } else {
+                      bottom.linkTo(seekbar.top, spacing.smaller)
+                    }
+                  } else {
+                    if (bottomControlsBelowSeekbar) {
+                      bottom.linkTo(parent.bottom, spacing.medium)
+                    } else {
+                      bottom.linkTo(seekbar.top, spacing.small)
+                    }
+                  }
+                } else {
+                  end.linkTo(parent.absoluteRight)
+                  start.linkTo(parent.absoluteLeft)
+                  if (isPortrait) {
+                    top.linkTo(parent.top)
+                    bottom.linkTo(parent.bottom)
+                    verticalBias = 0.5f
+                  } else {
+                    top.linkTo(parent.top)
+                    bottom.linkTo(parent.bottom)
+                  }
+                }
+              },
         ) {
-          val showLoadingCircle by playerPreferences.showLoadingCircle.collectAsState()
           val icon = AnimatedImageVector.animatedVectorResource(R.drawable.anim_play_to_pause)
           val interaction = remember { MutableInteractionSource() }
 
-          when {
-            pausedForCache == true && showLoadingCircle -> {
-              LoadingIndicator(
-                modifier = Modifier.size(96.dp),
-              )
-            }
-
-            controlsShown && !areControlsLocked -> {
-              val buttonShadow =
+          val buttonShadow =
                 Brush.radialGradient(
                   0.0f to Color.Black.copy(alpha = 0.3f),
                   0.7f to Color.Transparent,
                   1.0f to Color.Transparent,
                 )
 
+              val enableGlass by appearancePreferences.enableGlassPlayerControls.collectAsState()
               val matchTheme by appearancePreferences.matchPlayerControlsToTheme.collectAsState()
               val surfaceColor = when {
                 hideBackground -> Color.Transparent
+                enableGlass -> Color.Transparent
                 matchTheme -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f)
                 else -> MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.55f)
               }
@@ -1016,136 +1141,242 @@ fun PlayerControls(
                 }
                 else -> if (hideBackground) controlColor else MaterialTheme.colorScheme.onSurface
               }
-              val borderColor = if (hideBackground) null else BorderStroke(
+              val borderColor = if (hideBackground || enableGlass) null else BorderStroke(
                 1.dp,
                 if (matchTheme) MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
                 else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
               )
 
-              if (viewModel.hasPlaylistSupport()) {
-                androidx.compose.foundation.layout.Row(
-                  horizontalArrangement = Arrangement.spacedBy(24.dp),
-                  verticalAlignment = Alignment.CenterVertically,
-                ) {
+              val hasPlaylist = playlistItems.isNotEmpty() && playlistIndex >= 0 && viewModel.hasPlaylistSupport()
+              val showPrevNext = showNextPreviousButtons && (hasPlaylist || isPlaybackControlsAtBottom)
+
+              if (showPrevNext) {
+                val canGoPrevious = if (hasPlaylist) viewModel.hasPrevious() else false
+                val canGoNext = if (hasPlaylist) viewModel.hasNext() else false
+                if (!hideBackground) {
+                  val centerDockShape = if (isPlaybackControlsAtBottom) RoundedCornerShape(16.dp) else RoundedCornerShape(22.dp)
+                  val centerGlassModifier = if (enableGlass) {
+                    Modifier.glassSurface(
+                      shape = centerDockShape,
+                      backgroundColor = Color.White.copy(alpha = 0.05f),
+                      borderColor = Color.White.copy(alpha = 0.15f),
+                      borderWidth = 1.dp,
+                      outerShadowColor = Color.Black.copy(alpha = 0.00f),
+                      outerShadowBlur = 0.dp,
+                      outerShadowOffsetX = 0.dp,
+                      outerShadowOffsetY = 0.dp,
+                      innerHighlightColor = Color.White.copy(alpha = 0.35f),
+                      innerHighlightBlur = 5.dp,
+                      innerHighlightOffsetX = (-2).dp,
+                      innerHighlightOffsetY = (-2).dp,
+                      innerShadowColor = Color.Black.copy(alpha = 0.35f),
+                      innerShadowBlur = 5.dp,
+                      innerShadowOffsetX = 2.dp,
+                      innerShadowOffsetY = 2.dp
+                    )
+                  } else {
+                    Modifier
+                  }
                   Surface(
-                    modifier =
-                      Modifier
-                        .size(48.dp)
+                    modifier = Modifier.height(if (isPlaybackControlsAtBottom) 42.dp else 60.dp).then(centerGlassModifier),
+                    shape = centerDockShape,
+                    color = surfaceColor,
+                    contentColor = contentColor,
+                    tonalElevation = 0.dp,
+                    shadowElevation = 0.dp,
+                    border = borderColor,
+                  ) {
+                    Row(
+                      modifier = Modifier.padding(
+                        horizontal = if (isPlaybackControlsAtBottom) 4.dp else 6.dp,
+                        vertical = if (isPlaybackControlsAtBottom) 2.dp else 4.dp
+                      ),
+                      horizontalArrangement = Arrangement.spacedBy(if (isPlaybackControlsAtBottom) 4.dp else 8.dp),
+                      verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                      Box(
+                        modifier = Modifier
+                          .size(if (isPlaybackControlsAtBottom) 36.dp else 44.dp)
+                          .clip(RoundedCornerShape(if (isPlaybackControlsAtBottom) 12.dp else 14.dp))
+                          .clickable(
+                            enabled = canGoPrevious,
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = ripple(bounded = true),
+                            onClick = {
+                              resetControlsTimestamp = System.currentTimeMillis()
+                              viewModel.handleMediaPrevious()
+                            },
+                          ),
+                        contentAlignment = Alignment.Center,
+                      ) {
+                        Icon(
+                          imageVector = Icons.Default.SkipPrevious,
+                          contentDescription = "Previous",
+                          tint = if (canGoPrevious) contentColor.copy(alpha = 0.85f) else contentColor.copy(alpha = 0.35f),
+                          modifier = Modifier.size(if (isPlaybackControlsAtBottom) 22.dp else 28.dp),
+                        )
+                      }
+
+                      Box(
+                        modifier = Modifier
+                          .size(if (isPlaybackControlsAtBottom) 38.dp else 52.dp)
+                          .clip(RoundedCornerShape(if (isPlaybackControlsAtBottom) 12.dp else 16.dp))
+                          .background(
+                            if (matchTheme) MaterialTheme.colorScheme.primary.copy(alpha = 0.22f)
+                            else if (enableGlass) Color.White.copy(alpha = 0.12f)
+                            else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)
+                          )
+                          .clickable(
+                            interactionSource = interaction,
+                            indication = ripple(bounded = true),
+                            onClick = {
+                              resetControlsTimestamp = System.currentTimeMillis()
+                              viewModel.handleMediaPlayPause()
+                            },
+                          ),
+                        contentAlignment = Alignment.Center,
+                      ) {
+                        Image(
+                          painter = rememberAnimatedVectorPainter(icon, !isPlaybackPaused),
+                          modifier = Modifier
+                            .fillMaxSize()
+                            .padding(if (isPlaybackControlsAtBottom) 6.dp else MaterialTheme.spacing.small),
+                          contentDescription = null,
+                          colorFilter = ColorFilter.tint(contentColor),
+                        )
+                      }
+
+                      Box(
+                        modifier = Modifier
+                          .size(if (isPlaybackControlsAtBottom) 36.dp else 44.dp)
+                          .clip(RoundedCornerShape(if (isPlaybackControlsAtBottom) 12.dp else 14.dp))
+                          .clickable(
+                            enabled = canGoNext,
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = ripple(bounded = true),
+                            onClick = {
+                              resetControlsTimestamp = System.currentTimeMillis()
+                              viewModel.handleMediaNext()
+                            },
+                          ),
+                        contentAlignment = Alignment.Center,
+                      ) {
+                        Icon(
+                          imageVector = Icons.Default.SkipNext,
+                          contentDescription = "Next",
+                          tint = if (canGoNext) contentColor.copy(alpha = 0.85f) else contentColor.copy(alpha = 0.35f),
+                          modifier = Modifier.size(if (isPlaybackControlsAtBottom) 22.dp else 28.dp),
+                        )
+                      }
+                    }
+                  }
+                } else {
+                  Row(
+                    horizontalArrangement = Arrangement.spacedBy(if (isPlaybackControlsAtBottom) 16.dp else 28.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                  ) {
+                    Box(
+                      modifier = Modifier
+                        .size(if (isPlaybackControlsAtBottom) 36.dp else 44.dp)
                         .clip(CircleShape)
                         .clickable(
+                          enabled = canGoPrevious,
+                          interactionSource = remember { MutableInteractionSource() },
+                          indication = ripple(bounded = false),
                           onClick = {
                             resetControlsTimestamp = System.currentTimeMillis()
                             viewModel.handleMediaPrevious()
                           },
-                        )
-                        .then(
-                          if (hideBackground) {
-                            Modifier.background(brush = buttonShadow, shape = CircleShape)
-                          } else {
-                            Modifier
-                          },
                         ),
-                    shape = CircleShape,
-                    color = surfaceColor,
-                    contentColor = contentColor,
-                    tonalElevation = 0.dp,
-                    shadowElevation = 0.dp,
-                    border = borderColor,
-                  ) {
-                    Icon(
-                      imageVector = Icons.Default.SkipPrevious,
-                      contentDescription = "Previous",
-                      tint =
-                        if (viewModel.hasPrevious()) {
-                          contentColor
-                        } else {
-                          contentColor.copy(alpha = 0.38f)
-                        },
-                      modifier = Modifier
-                        .fillMaxSize()
-                        .padding(MaterialTheme.spacing.smaller),
-                    )
-                  }
+                      contentAlignment = Alignment.Center,
+                    ) {
+                      Icon(
+                        imageVector = Icons.Default.SkipPrevious,
+                        contentDescription = "Previous",
+                        tint = if (canGoPrevious) contentColor.copy(alpha = 0.85f) else contentColor.copy(alpha = 0.35f),
+                        modifier = Modifier.size(if (isPlaybackControlsAtBottom) 24.dp else 32.dp),
+                      )
+                    }
 
-                  Surface(
-                    modifier =
-                      Modifier
-                        .size(56.dp)
+                    Box(
+                      modifier = Modifier
+                        .size(if (isPlaybackControlsAtBottom) 42.dp else 60.dp)
                         .clip(CircleShape)
-                        .clickable(interaction, ripple(), onClick = {
-                          resetControlsTimestamp = System.currentTimeMillis()
-                          viewModel.handleMediaPlayPause()
-                        })
-                        .then(
-                          if (hideBackground) {
-                            Modifier.background(brush = buttonShadow, shape = CircleShape)
-                          } else {
-                            Modifier
+                        .background(brush = buttonShadow, shape = CircleShape)
+                        .clickable(
+                          interactionSource = interaction,
+                          indication = ripple(bounded = true),
+                          onClick = {
+                            resetControlsTimestamp = System.currentTimeMillis()
+                            viewModel.handleMediaPlayPause()
                           },
                         ),
-                    shape = CircleShape,
-                    color = surfaceColor,
-                    contentColor = contentColor,
-                    tonalElevation = 0.dp,
-                    shadowElevation = 0.dp,
-                    border = borderColor,
-                  ) {
-                    Image(
-                      painter = rememberAnimatedVectorPainter(icon, paused == false),
-                      modifier = Modifier
-                        .fillMaxSize()
-                        .padding(MaterialTheme.spacing.small),
-                      contentDescription = null,
-                      colorFilter = ColorFilter.tint(contentColor),
-                    )
-                  }
+                      contentAlignment = Alignment.Center,
+                    ) {
+                      Image(
+                        painter = rememberAnimatedVectorPainter(icon, !isPlaybackPaused),
+                        modifier = Modifier
+                          .fillMaxSize()
+                          .padding(if (isPlaybackControlsAtBottom) 6.dp else MaterialTheme.spacing.small),
+                        contentDescription = null,
+                        colorFilter = ColorFilter.tint(contentColor),
+                      )
+                    }
 
-                  Surface(
-                    modifier =
-                      Modifier
-                        .size(48.dp)
+                    Box(
+                      modifier = Modifier
+                        .size(if (isPlaybackControlsAtBottom) 36.dp else 44.dp)
                         .clip(CircleShape)
                         .clickable(
+                          enabled = canGoNext,
+                          interactionSource = remember { MutableInteractionSource() },
+                          indication = ripple(bounded = false),
                           onClick = {
                             resetControlsTimestamp = System.currentTimeMillis()
                             viewModel.handleMediaNext()
                           },
-                        )
-                        .then(
-                          if (hideBackground) {
-                            Modifier.background(brush = buttonShadow, shape = CircleShape)
-                          } else {
-                            Modifier
-                          },
                         ),
-                    shape = CircleShape,
-                    color = surfaceColor,
-                    contentColor = contentColor,
-                    tonalElevation = 0.dp,
-                    shadowElevation = 0.dp,
-                    border = borderColor,
-                  ) {
-                    Icon(
-                      imageVector = Icons.Default.SkipNext,
-                      contentDescription = "Next",
-                      tint =
-                        if (viewModel.hasNext()) {
-                          contentColor
-                        } else {
-                          contentColor.copy(alpha = 0.38f)
-                        },
-                      modifier = Modifier
-                        .fillMaxSize()
-                        .padding(MaterialTheme.spacing.smaller),
-                    )
+                      contentAlignment = Alignment.Center,
+                    ) {
+                      Icon(
+                        imageVector = Icons.Default.SkipNext,
+                        contentDescription = "Next",
+                        tint = if (canGoNext) contentColor.copy(alpha = 0.85f) else contentColor.copy(alpha = 0.35f),
+                        modifier = Modifier.size(if (isPlaybackControlsAtBottom) 24.dp else 32.dp),
+                      )
+                    }
                   }
                 }
               } else {
+                val heroShape = if (hideBackground) CircleShape else RoundedCornerShape(if (isPlaybackControlsAtBottom) 14.dp else 18.dp)
+                val heroGlassModifier = if (enableGlass && !hideBackground) {
+                  Modifier.glassSurface(
+                    shape = heroShape,
+                    backgroundColor = Color.White.copy(alpha = 0.08f),
+                    borderColor = Color.White.copy(alpha = 0.18f),
+                    borderWidth = 1.dp,
+                    outerShadowColor = Color.Black.copy(alpha = 0.00f),
+                    outerShadowBlur = 0.dp,
+                    outerShadowOffsetX = 0.dp,
+                    outerShadowOffsetY = 0.dp,
+                    innerHighlightColor = Color.White.copy(alpha = 0.35f),
+                    innerHighlightBlur = 5.dp,
+                    innerHighlightOffsetX = (-2).dp,
+                    innerHighlightOffsetY = (-2).dp,
+                    innerShadowColor = Color.Black.copy(alpha = 0.35f),
+                    innerShadowBlur = 5.dp,
+                    innerShadowOffsetX = 2.dp,
+                    innerShadowOffsetY = 2.dp
+                  )
+                } else {
+                  Modifier
+                }
                 Surface(
                   modifier =
                     Modifier
-                      .size(56.dp)
-                      .clip(CircleShape)
+                      .size(if (isPlaybackControlsAtBottom) 42.dp else 58.dp)
+                      .then(heroGlassModifier)
+                      .clip(heroShape)
                       .clickable(interaction, ripple(), onClick = {
                         resetControlsTimestamp = System.currentTimeMillis()
                         viewModel.pauseUnpause()
@@ -1157,7 +1388,7 @@ fun PlayerControls(
                           Modifier
                         },
                       ),
-                  shape = CircleShape,
+                  shape = heroShape,
                   color = surfaceColor,
                   contentColor = contentColor,
                   tonalElevation = 0.dp,
@@ -1165,17 +1396,15 @@ fun PlayerControls(
                   border = borderColor,
                 ) {
                   Image(
-                    painter = rememberAnimatedVectorPainter(icon, paused == false),
+                    painter = rememberAnimatedVectorPainter(icon, !isPlaybackPaused),
                     modifier = Modifier
                       .fillMaxSize()
-                      .padding(MaterialTheme.spacing.small),
+                      .padding(if (isPlaybackControlsAtBottom) 6.dp else MaterialTheme.spacing.small),
                     contentDescription = null,
                     colorFilter = ColorFilter.tint(contentColor),
                   )
                 }
               }
-            }
-          }
         }
 
         AnimatedVisibility(
@@ -1228,7 +1457,10 @@ fun PlayerControls(
               },
         ) {
           val invertDuration by playerPreferences.invertDuration.collectAsState()
+          val speedAdjustedRemaining by playerPreferences.speedAdjustedRemainingTime.collectAsState()
+          val playbackSpeed by MPVLib.propFloat["speed"].collectAsState()
           val seekbarStyle by appearancePreferences.seekbarStyle.collectAsState()
+          val effectiveDuration = if (preciseDuration > 0f) preciseDuration else if (isLoadingFile) 0f else duration?.toFloat() ?: 0f
 
           // Calculate read-ahead position (current position + buffered cache time)
           // No keys for remember, derivedStateOf reactively tracks read dependencies
@@ -1236,78 +1468,95 @@ fun PlayerControls(
             derivedStateOf {
               val currentPos = position?.toFloat() ?: 0f
               val cacheDuration = demuxerCacheDuration ?: 0f
-              val totalDuration = if (preciseDuration > 0) preciseDuration else duration?.toFloat() ?: 0f
+              val totalDuration = effectiveDuration
               val isBuffering = cacheBufferingState ?: 0
 
-              // If cache duration is available and valid, use it (up to 60 seconds)
-              if (cacheDuration > 0.1f) {
+              // While seeking or file loading, reset read-ahead to current position to avoid showing stale buffer
+              if (seeking == true || isLoadingFile || isSeeking) {
+                currentPos
+              } else if (cacheDuration > 0.1f) {
                 (currentPos + cacheDuration).coerceAtMost(totalDuration)
-              } else if (isBuffering > 0 && isBuffering < 100) {
-                // Show estimated buffer when actively buffering (up to 60 seconds)
+              } else if (isBuffering in 1..99) {
                 val estimatedBuffer = (isBuffering / 100f) * 60f
                 (currentPos + estimatedBuffer).coerceAtMost(totalDuration)
               } else {
-                // When not actively buffering and cache is full, show 1 minute buffer
-                (currentPos + 60f).coerceAtMost(totalDuration)
+                currentPos
               }
             }
           }
 
-          SeekbarWithTimers(
-            position = { precisePosition },
-            duration = if (preciseDuration > 0) preciseDuration else duration?.toFloat() ?: 0f,
-            onValueChange = { newValue ->
-              if (dragStartValue == -1f) {
-                dragStartValue = precisePosition
-                changeCount = 0
-              }
-              changeCount++
-              isSeeking = true
-              resetControlsTimestamp = System.currentTimeMillis()
+          key(playlistIndex, mediaIdentifier.ifBlank { mediaTitle }) {
+            SeekbarWithTimers(
+              position = { precisePosition },
+              duration = effectiveDuration,
+              onValueChange = { newValue ->
+                if (dragStartValue == -1f) {
+                  dragStartValue = precisePosition
+                  changeCount = 0
+                  wasPlayingBeforeSeek = (paused == false)
+                  if (wasPlayingBeforeSeek) {
+                    runCatching { MPVLib.setPropertyBoolean("pause", true) }
+                  }
+                }
+                changeCount++
+                isSeeking = true
+                resetControlsTimestamp = System.currentTimeMillis()
 
-              val durationFloat = if (preciseDuration > 0) preciseDuration else duration?.toFloat() ?: 0f
-              val threshold = (durationFloat * 0.08f).coerceIn(15f, 400f)
-              val close = enableReleaseToCancel && changeCount > 1 && abs(newValue - dragStartValue) < threshold
+                val durationFloat = effectiveDuration
+                val threshold = (durationFloat * 0.08f).coerceIn(15f, 400f)
+                // Suppress release-to-cancel when the seek TARGET is the very start of the file
+                // (00:00:00). Small fixed zone, NOT the duration-scaled threshold, so it never
+                // blocks cancel mid-file on long videos.
+                val seekingToStart = newValue <= EDGE_EPSILON_SECONDS
+                val close = enableReleaseToCancel && changeCount > 1 && !seekingToStart && abs(newValue - dragStartValue) < threshold
 
-              if (close) {
-                isCloseToStart = true
-                viewModel.playerUpdate.value = PlayerUpdates.ShowText("Release to cancel")
-              } else {
+                if (close) {
+                  isCloseToStart = true
+                  viewModel.playerUpdate.value = PlayerUpdates.ShowText("Release to cancel")
+                } else {
+                  if (isCloseToStart) {
+                    isCloseToStart = false
+                    viewModel.playerUpdate.value = PlayerUpdates.None
+                  }
+                }
+                viewModel.seekTo(newValue.toInt())
+                viewModel.autoHideControls()
+              },
+              onValueChangeFinished = {
                 if (isCloseToStart) {
-                  isCloseToStart = false
+                  viewModel.seekTo(dragStartValue.toInt())
                   viewModel.playerUpdate.value = PlayerUpdates.None
                 }
-              }
-              viewModel.seekTo(newValue.toInt())
-              viewModel.autoHideControls()
-            },
-            onValueChangeFinished = {
-              if (isCloseToStart) {
-                viewModel.seekTo(dragStartValue.toInt())
-                viewModel.playerUpdate.value = PlayerUpdates.None
-              }
-              isSeeking = false
-              dragStartValue = -1f
-              isCloseToStart = false
-              changeCount = 0
-              resetControlsTimestamp = System.currentTimeMillis()
-              viewModel.showControls()
-            },
-            timersInverted = Pair(false, invertDuration),
-            durationTimerOnCLick = {
-              resetControlsTimestamp = System.currentTimeMillis()
-              playerPreferences.invertDuration.set(!invertDuration)
-            },
-            positionTimerOnClick = {},
-            chapters = chapters.toImmutableList(),
-            paused = paused ?: false,
-            readAheadValue = { readAheadPosition },
-            seekbarStyle = seekbarStyle,
-            loopStart = abLoopA?.toFloat(),
-            loopEnd = abLoopB?.toFloat(),
-            isGestureSeeking = isGestureSeeking,
-            isCancelActive = isCloseToStart
-          )
+                if (wasPlayingBeforeSeek) {
+                  runCatching { MPVLib.setPropertyBoolean("pause", false) }
+                }
+                isSeeking = false
+                dragStartValue = -1f
+                isCloseToStart = false
+                changeCount = 0
+                wasPlayingBeforeSeek = false
+                resetControlsTimestamp = System.currentTimeMillis()
+                viewModel.showControls()
+              },
+              timersInverted = Pair(false, invertDuration),
+              speed = { MPVLib.getPropertyFloat("speed") ?: playbackSpeed ?: 1f },
+              speedAdjustedRemaining = speedAdjustedRemaining,
+              durationTimerOnCLick = {
+                resetControlsTimestamp = System.currentTimeMillis()
+                playerPreferences.invertDuration.set(!invertDuration)
+              },
+              positionTimerOnClick = {},
+              chapters = chapters.toImmutableList(),
+              bookmarks = bookmarks.map { it.toSegment() }.toImmutableList(),
+              paused = isPlaybackPaused,
+              readAheadValue = { readAheadPosition },
+              seekbarStyle = seekbarStyle,
+              loopStart = abLoopA?.toFloat(),
+              loopEnd = abLoopB?.toFloat(),
+              isGestureSeeking = isGestureSeeking,
+              isCancelActive = isCloseToStart
+            )
+          }
         }
 
         AnimatedVisibility(
@@ -1350,13 +1599,9 @@ fun PlayerControls(
               .constrainAs(topLeftControls) {
                 top.linkTo(parent.top, if (isPortrait) spacing.extraLarge else spacing.small)
                 start.linkTo(parent.start, spacing.large)
-                if (isPortrait) {
-                  width = Dimension.fillToConstraints
-                  end.linkTo(parent.end, spacing.large)
-                } else {
-                  width = Dimension.fillToConstraints
-                  end.linkTo(topRightControls.start, spacing.extraSmall)
-                }
+                width = Dimension.preferredWrapContent
+                end.linkTo(topRightControls.start, spacing.extraSmall)
+                horizontalBias = 0f
               },
         ) {
           if (isPortrait) {
@@ -1379,11 +1624,21 @@ fun PlayerControls(
         }
 
         AnimatedVisibility(
-          visible = controlsShown && !areControlsLocked && !isPortrait,
+          visible = controlsShown && !areControlsLocked,
           enter =
             if (!reduceMotion) {
-              slideInHorizontally(playerControlsEnterAnimationSpec()) { it } +
-                fadeIn(playerControlsEnterAnimationSpec())
+              slideInHorizontally(
+                animationSpec = tween(
+                  durationMillis = 180,
+                  easing = LinearOutSlowInEasing,
+                ),
+              ) { it / 3 } +
+                fadeIn(
+                  tween(
+                    durationMillis = 180,
+                    easing = LinearOutSlowInEasing,
+                  ),
+                )
             } else {
               fadeIn(playerControlsEnterAnimationSpec())
             },
@@ -1416,12 +1671,18 @@ fun PlayerControls(
                 }
               )
               .constrainAs(topRightControls) {
-                top.linkTo(parent.top, spacing.small)
+                top.linkTo(parent.top, if (isPortrait) spacing.extraLarge else spacing.small)
                 end.linkTo(parent.end, spacing.large)
               },
         ) {
-          TopRightPlayerControlsLandscape(
-            buttons = topRightButtons,
+          if (isPortrait) {
+            TopRightPlayerControlsPortrait(
+              onOpenSheet = onOpenSheet,
+              onOpenPanel = onOpenPanel,
+            )
+          } else {
+            TopRightPlayerControlsLandscape(
+              buttons = topRightButtons,
             chapters = chapters,
             currentChapter = currentChapter,
             isSpeedNonOne = isSpeedNonOne,
@@ -1438,6 +1699,7 @@ fun PlayerControls(
             activity = activity,
           )
         }
+      }
 
         AnimatedVisibility(
           visible = controlsShown && !areControlsLocked && !areSlidersShown,
@@ -1472,9 +1734,17 @@ fun PlayerControls(
               .constrainAs(bottomRightControls) {
                 if (isPortrait) {
                   if (bottomControlsBelowSeekbar) {
-                    bottom.linkTo(parent.bottom, spacing.large) // Space from screen bottom
+                    if (isPlaybackControlsAtBottom) {
+                      bottom.linkTo(playerPauseButton.top, spacing.smaller)
+                    } else {
+                      bottom.linkTo(parent.bottom, spacing.large) // Space from screen bottom
+                    }
                   } else {
-                    bottom.linkTo(seekbar.top, spacing.smaller) // Tight gap to seekbar
+                    if (isPlaybackControlsAtBottom) {
+                      bottom.linkTo(playerPauseButton.top, spacing.smaller)
+                    } else {
+                      bottom.linkTo(seekbar.top, spacing.smaller) // Tight gap to seekbar
+                    }
                   }
                   start.linkTo(parent.start, spacing.medium)
                   end.linkTo(parent.end, spacing.medium)
@@ -1484,6 +1754,10 @@ fun PlayerControls(
                     bottom.linkTo(parent.bottom, spacing.medium)
                   } else {
                     bottom.linkTo(seekbar.top, spacing.small)
+                  }
+                  if (isPlaybackControlsAtBottom) {
+                    start.linkTo(playerPauseButton.end, spacing.small)
+                    horizontalBias = 1f
                   }
                   end.linkTo(parent.end, spacing.medium)
                 }
@@ -1506,7 +1780,7 @@ fun PlayerControls(
               onOpenPanel = onOpenPanel,
               viewModel = viewModel,
               activity = activity,
-              bottomPadding = if (bottomControlsBelowSeekbar) spacing.medium else 0.dp,
+              bottomPadding = if (bottomControlsBelowSeekbar && !isPlaybackControlsAtBottom) spacing.medium else 0.dp,
             )
           } else {
             BottomRightPlayerControlsLandscape(
@@ -1569,7 +1843,11 @@ fun PlayerControls(
                 }
                 start.linkTo(parent.start, spacing.medium)
                 width = Dimension.fillToConstraints
-                end.linkTo(bottomRightControls.start, spacing.small)
+                if (isPlaybackControlsAtBottom) {
+                  end.linkTo(playerPauseButton.start, spacing.small)
+                } else {
+                  end.linkTo(bottomRightControls.start, spacing.small)
+                }
               },
         ) {
           BottomLeftPlayerControlsLandscape(
@@ -1616,101 +1894,95 @@ fun PlayerControls(
             bottom.linkTo(parent.bottom)
             verticalBias = abLoopVerticalBias
           }
+            .offset(y = (-16).dp)
         ) {
-          val buttonSize = 40.dp
-          Surface(
-            shape = MaterialTheme.shapes.extraLarge,
-            color = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.55f),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
-            modifier = Modifier.height(buttonSize),
+          val itemShape = RoundedCornerShape(14.dp)
+          val buttonSize = 38.dp
+          ControlsGroup(
+            shape = RoundedCornerShape(16.dp),
           ) {
-            Row(
-              horizontalArrangement = Arrangement.spacedBy(2.dp),
-              verticalAlignment = Alignment.CenterVertically,
-              modifier = Modifier.padding(horizontal = 4.dp),
+            Surface(
+              shape = itemShape,
+              color = if (abLoopA != null) MaterialTheme.colorScheme.tertiaryContainer else Color.Transparent,
+              modifier = Modifier
+                .height(buttonSize)
+                .widthIn(min = buttonSize)
+                .clip(itemShape)
+                .clickable(onClick = { viewModel.setLoopA() }),
             ) {
-
-              Surface(
-                shape = CircleShape,
-                color = if (abLoopA != null) MaterialTheme.colorScheme.tertiaryContainer else Color.Transparent,
-                modifier = Modifier
-                  .height(buttonSize - 4.dp)
-                  .widthIn(min = buttonSize - 4.dp)
-                  .clip(CircleShape)
-                  .clickable(onClick = { viewModel.setLoopA() }),
-              ) {
-                Box(contentAlignment = Alignment.Center) {
-                  Text(
-                    text = if (abLoopA != null) viewModel.formatTimestamp(abLoopA!!) else "A",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = if (abLoopA != null) MaterialTheme.colorScheme.onTertiaryContainer else MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.padding(horizontal = if (abLoopA != null) 8.dp else 0.dp),
-                  )
-                }
+              Box(contentAlignment = Alignment.Center) {
+                Text(
+                  text = if (abLoopA != null) viewModel.formatTimestamp(abLoopA!!) else "A",
+                  style = MaterialTheme.typography.labelLarge,
+                  color = if (abLoopA != null) MaterialTheme.colorScheme.onTertiaryContainer else MaterialTheme.colorScheme.onSurface,
+                  modifier = Modifier.padding(horizontal = if (abLoopA != null) 8.dp else 0.dp),
+                )
               }
+            }
 
-              Surface(
-                shape = CircleShape,
-                color = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.55f),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
-                modifier = Modifier
-                  .size(buttonSize - 4.dp)
-                  .clip(CircleShape)
-                  .clickable(onClick = {
-                    viewModel.clearABLoop()
-                    viewModel.toggleABLoopExpanded()
-                  }),
-              ) {
-                Box(contentAlignment = Alignment.Center) {
-                  Icon(
-                    imageVector = Icons.Default.Close,
-                    contentDescription = "Clear Loop",
-                    tint = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.size(16.dp),
-                  )
-                }
+            Surface(
+              shape = itemShape,
+              color = Color.Transparent,
+              modifier = Modifier
+                .size(buttonSize)
+                .clip(itemShape)
+                .clickable(onClick = {
+                  viewModel.clearABLoop()
+                  viewModel.toggleABLoopExpanded()
+                }),
+            ) {
+              Box(contentAlignment = Alignment.Center) {
+                Icon(
+                  imageVector = Icons.Default.Close,
+                  contentDescription = "Clear Loop",
+                  tint = MaterialTheme.colorScheme.onSurface,
+                  modifier = Modifier.size(16.dp),
+                )
               }
+            }
 
-              Surface(
-                shape = CircleShape,
-                color = if (abLoopB != null) MaterialTheme.colorScheme.tertiaryContainer else Color.Transparent,
-                modifier = Modifier
-                  .height(buttonSize - 4.dp)
-                  .widthIn(min = buttonSize - 4.dp)
-                  .clip(CircleShape)
-                  .clickable(onClick = { viewModel.setLoopB() }),
-              ) {
-                Box(contentAlignment = Alignment.Center) {
-                  Text(
-                    text = if (abLoopB != null) viewModel.formatTimestamp(abLoopB!!) else "B",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = if (abLoopB != null) MaterialTheme.colorScheme.onTertiaryContainer else MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.padding(horizontal = if (abLoopB != null) 8.dp else 0.dp),
-                  )
-                }
+            Surface(
+              shape = itemShape,
+              color = if (abLoopB != null) MaterialTheme.colorScheme.tertiaryContainer else Color.Transparent,
+              modifier = Modifier
+                .height(buttonSize)
+                .widthIn(min = buttonSize)
+                .clip(itemShape)
+                .clickable(onClick = { viewModel.setLoopB() }),
+            ) {
+              Box(contentAlignment = Alignment.Center) {
+                Text(
+                  text = if (abLoopB != null) viewModel.formatTimestamp(abLoopB!!) else "B",
+                  style = MaterialTheme.typography.labelLarge,
+                  color = if (abLoopB != null) MaterialTheme.colorScheme.onTertiaryContainer else MaterialTheme.colorScheme.onSurface,
+                  modifier = Modifier.padding(horizontal = if (abLoopB != null) 8.dp else 0.dp),
+                )
               }
+            }
 
-              val context = LocalContext.current
-              val canCut = abLoopA != null && abLoopB != null
-              Surface(
-                shape = CircleShape,
-                color = if (canCut) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.55f),
-                border = BorderStroke(1.dp, if (canCut) MaterialTheme.colorScheme.primary.copy(alpha = 0.5f) else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
-                modifier = Modifier
-                  .size(buttonSize - 4.dp)
-                  .clip(CircleShape)
-                  .clickable(onClick = {
-                    viewModel.cutABLoopClip(context)
-                  }),
-              ) {
-                Box(contentAlignment = Alignment.Center) {
-                  Icon(
-                    imageVector = Icons.Default.ContentCut,
-                    contentDescription = stringResource(R.string.ab_loop_cut_clip),
-                    tint = if (canCut) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-                    modifier = Modifier.size(16.dp),
-                  )
-                }
+            val context = LocalContext.current
+            val canCut = abLoopA != null && abLoopB != null
+            Surface(
+              shape = itemShape,
+              color = if (canCut) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
+              modifier = Modifier
+                .size(buttonSize)
+                .clip(itemShape)
+                .clickable(onClick = {
+                  if (canCut) {
+                    onOpenSheet(Sheets.ClipExport)
+                  } else {
+                    android.widget.Toast.makeText(context, context.getString(R.string.ab_loop_set_both_points), android.widget.Toast.LENGTH_SHORT).show()
+                  }
+                }),
+            ) {
+              Box(contentAlignment = Alignment.Center) {
+                Icon(
+                  imageVector = Icons.Default.ContentCut,
+                  contentDescription = stringResource(R.string.ab_loop_cut_clip),
+                  tint = if (canCut) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                  modifier = Modifier.size(16.dp),
+                )
               }
             }
           }
@@ -1729,121 +2001,113 @@ fun PlayerControls(
             }
             .offset(y = frameNavYOffset)
         ) {
-          val buttonSize = 40.dp
+          val itemShape = RoundedCornerShape(14.dp)
+          val buttonSize = 38.dp
           val context = LocalContext.current
-          Surface(
-            shape = MaterialTheme.shapes.extraLarge,
-            color = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.55f),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
-            modifier = Modifier.height(buttonSize),
+          ControlsGroup(
+            shape = RoundedCornerShape(16.dp),
           ) {
-            Row(
-              horizontalArrangement = Arrangement.spacedBy(2.dp),
-              verticalAlignment = Alignment.CenterVertically,
-              modifier = Modifier.padding(horizontal = 4.dp),
+            // Previous frame button
+            Surface(
+              shape = itemShape,
+              color = Color.Transparent,
+              modifier = Modifier
+                .size(buttonSize)
+                .clip(itemShape)
+                .clickable(onClick = {
+                  viewModel.frameStepBackward()
+                }),
             ) {
-              // Previous frame button
-              Surface(
-                shape = CircleShape,
-                color = Color.Transparent,
-                modifier = Modifier
-                  .size(buttonSize - 4.dp)
-                  .clip(CircleShape)
-                  .clickable(onClick = {
-                    viewModel.frameStepBackward()
-                  }),
-              ) {
-                Box(contentAlignment = Alignment.Center) {
-                  Icon(
-                    imageVector = Icons.Default.FastRewind,
-                    contentDescription = "Previous Frame",
-                    tint = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.size(24.dp),
-                  )
-                }
+              Box(contentAlignment = Alignment.Center) {
+                Icon(
+                  imageVector = Icons.Default.FastRewind,
+                  contentDescription = "Previous Frame",
+                  tint = MaterialTheme.colorScheme.onSurface,
+                  modifier = Modifier.size(24.dp),
+                )
               }
+            }
 
-              // Camera / Loading button
-              if (isSnapshotLoading) {
-                Surface(
-                  shape = CircleShape,
-                  color = Color.Transparent,
-                  modifier = Modifier.size(buttonSize - 4.dp),
-                ) {
-                  Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
-                    CircularProgressIndicator(
-                      modifier = Modifier.size(16.dp),
-                      strokeWidth = 2.dp,
-                      color = MaterialTheme.colorScheme.onSurface,
-                    )
-                  }
-                }
-              } else {
-                @OptIn(ExperimentalFoundationApi::class)
-                Surface(
-                  shape = CircleShape,
-                  color = Color.Transparent,
-                  modifier = Modifier
-                    .size(buttonSize - 4.dp)
-                    .clip(CircleShape)
-                    .combinedClickable(
-                      onClick = {
-                        viewModel.takeSnapshot(context)
-                      },
-                      onLongClick = { onOpenSheet(Sheets.FrameNavigation) },
-                    ),
-                ) {
-                  Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                      imageVector = Icons.Default.CameraAlt,
-                      contentDescription = "Take Screenshot",
-                      tint = MaterialTheme.colorScheme.onSurface,
-                      modifier = Modifier.size(24.dp),
-                    )
-                  }
-                }
-              }
-
-              // Next frame button
+            // Camera / Loading button
+            if (isSnapshotLoading) {
               Surface(
-                shape = CircleShape,
+                shape = itemShape,
                 color = Color.Transparent,
-                modifier = Modifier
-                  .size(buttonSize - 4.dp)
-                  .clip(CircleShape)
-                  .clickable(onClick = {
-                    viewModel.frameStepForward()
-                  }),
+                modifier = Modifier.size(buttonSize),
               ) {
-                Box(contentAlignment = Alignment.Center) {
-                  Icon(
-                    imageVector = Icons.Default.FastForward,
-                    contentDescription = "Next Frame",
-                    tint = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.size(24.dp),
-                  )
-                }
-              }
-
-              // Close button
-              Surface(
-                shape = CircleShape,
-                color = Color.Transparent,
-                modifier = Modifier
-                  .size(buttonSize - 4.dp)
-                  .clip(CircleShape)
-                  .clickable(onClick = {
-                    viewModel.toggleFrameNavigationExpanded()
-                  }),
-              ) {
-                Box(contentAlignment = Alignment.Center) {
-                  Icon(
-                    imageVector = Icons.Default.Close,
-                    contentDescription = "Close Frame Nav",
-                    tint = MaterialTheme.colorScheme.onSurface,
+                Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                  CircularProgressIndicator(
                     modifier = Modifier.size(16.dp),
+                    strokeWidth = 2.dp,
+                    color = MaterialTheme.colorScheme.onSurface,
                   )
                 }
+              }
+            } else {
+              @OptIn(ExperimentalFoundationApi::class)
+              Surface(
+                shape = itemShape,
+                color = Color.Transparent,
+                modifier = Modifier
+                  .size(buttonSize)
+                  .clip(itemShape)
+                  .combinedClickable(
+                    onClick = {
+                      viewModel.takeSnapshot(context)
+                    },
+                    onLongClick = { onOpenSheet(Sheets.FrameNavigation) },
+                  ),
+              ) {
+                Box(contentAlignment = Alignment.Center) {
+                  Icon(
+                    imageVector = Icons.Default.CameraAlt,
+                    contentDescription = "Take Screenshot",
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(24.dp),
+                  )
+                }
+              }
+            }
+
+            // Next frame button
+            Surface(
+              shape = itemShape,
+              color = Color.Transparent,
+              modifier = Modifier
+                .size(buttonSize)
+                .clip(itemShape)
+                .clickable(onClick = {
+                  viewModel.frameStepForward()
+                }),
+            ) {
+              Box(contentAlignment = Alignment.Center) {
+                Icon(
+                  imageVector = Icons.Default.FastForward,
+                  contentDescription = "Next Frame",
+                  tint = MaterialTheme.colorScheme.onSurface,
+                  modifier = Modifier.size(24.dp),
+                )
+              }
+            }
+
+            // Close button
+            Surface(
+              shape = itemShape,
+              color = Color.Transparent,
+              modifier = Modifier
+                .size(buttonSize)
+                .clip(itemShape)
+                .clickable(onClick = {
+                  viewModel.toggleFrameNavigationExpanded()
+                }),
+            ) {
+              Box(contentAlignment = Alignment.Center) {
+                Icon(
+                  imageVector = Icons.Default.Close,
+                  contentDescription = "Close Frame Nav",
+                  tint = MaterialTheme.colorScheme.onSurface,
+                  modifier = Modifier.size(16.dp),
+                )
               }
             }
           }
@@ -1853,10 +2117,13 @@ fun PlayerControls(
     }
 
     val sheetShown by viewModel.sheetShown.collectAsState()
+    val currentStopLineup by viewModel.currentStopLineup.collectAsState()
     val subtitles by viewModel.subtitleTracks.collectAsState(persistentListOf())
     val audioTracks by viewModel.audioTracks.collectAsState(persistentListOf())
+    val alternateAudio by viewModel.availableAlternateAudio.collectAsState(persistentListOf())
     val sleepTimerTimeRemaining by viewModel.remainingTime.collectAsState()
     val speedPresets by playerPreferences.speedPresets.collectAsState()
+    val speedCyclePresets by playerPreferences.speedCyclePresets.collectAsState()
 
     PlayerSheets(
       viewModel = viewModel,
@@ -1871,21 +2138,77 @@ fun PlayerControls(
       onSelectAudio = {
         viewModel.selectAudioTrack(it.id, it.title, it.lang)
       },
+      alternateAudio = alternateAudio.toImmutableList(),
+      onSelectAlternateAudio = viewModel::selectAlternateAudio,
       chapter = chapters.getOrNull(currentChapter ?: 0),
       chapters = chapters.toImmutableList(),
-      onSeekToChapter = {
-        MPVLib.setPropertyInt("chapter", it)
-        viewModel.unpause()
+      currentChapterIndex = currentChapter ?: 0,
+      onSeekToChapter = { chapterIndex ->
+        viewModel.seekToChapter(chapterIndex)
       },
+      activeStop = currentStopLineup.active,
+      onAddBookmarkHere = { viewModel.addBookmark() },
+      onSeekToBookmark = viewModel::seekToBookmark,
+      onRenameBookmark = viewModel::renameBookmark,
+      onDeleteBookmark = viewModel::deleteBookmark,
       decoder = decoder,
       onUpdateDecoder = { MPVLib.setPropertyString("hwdec", it.value) },
       speed = playbackSpeed ?: playerPreferences.defaultSpeed.get(),
       onSpeedChange = { MPVLib.setPropertyFloat("speed", it.toFixed(2)) },
       onMakeDefaultSpeed = { playerPreferences.defaultSpeed.set(it.toFixed(2)) },
-      onAddSpeedPreset = { playerPreferences.speedPresets += it.toFixed(2).toString() },
-      onRemoveSpeedPreset = { playerPreferences.speedPresets -= it.toFixed(2).toString() },
-      onResetSpeedPresets = playerPreferences.speedPresets::delete,
-      speedPresets = speedPresets.map { it.toFloat() }.sorted(),
+      onAddSpeedPreset = { targetSpeed ->
+        val formatted = targetSpeed.toFixed(2).toString()
+        val current = playerPreferences.speedPresets.get()
+        if (current.none { (it.toFloatOrNull() ?: -1f).let { f -> kotlin.math.abs(f - targetSpeed) < 0.01f } }) {
+          playerPreferences.speedPresets.set(current + formatted)
+        }
+        val currentCycle = playerPreferences.speedCyclePresets.get()
+        if (currentCycle.none { (it.toFloatOrNull() ?: -1f).let { f -> kotlin.math.abs(f - targetSpeed) < 0.01f } }) {
+          playerPreferences.speedCyclePresets.set(currentCycle + formatted)
+        }
+      },
+      onRemoveSpeedPreset = { targetSpeed ->
+        val current = playerPreferences.speedPresets.get()
+        playerPreferences.speedPresets.set(
+          current.filterNot {
+            val f = it.toFloatOrNull() ?: return@filterNot false
+            kotlin.math.abs(f - targetSpeed) < 0.01f
+          }.toSet()
+        )
+        val currentCycle = playerPreferences.speedCyclePresets.get()
+        playerPreferences.speedCyclePresets.set(
+          currentCycle.filterNot {
+            val f = it.toFloatOrNull() ?: return@filterNot false
+            kotlin.math.abs(f - targetSpeed) < 0.01f
+          }.toSet()
+        )
+      },
+      onToggleSpeedCyclePreset = { targetSpeed ->
+        val currentCycle = playerPreferences.speedCyclePresets.get()
+        val isAlreadyInCycle = currentCycle.any {
+          val f = it.toFloatOrNull() ?: return@any false
+          kotlin.math.abs(f - targetSpeed) < 0.01f
+        }
+        if (isAlreadyInCycle) {
+          if (currentCycle.size > 1) {
+            playerPreferences.speedCyclePresets.set(
+              currentCycle.filterNot {
+                val f = it.toFloatOrNull() ?: return@filterNot false
+                kotlin.math.abs(f - targetSpeed) < 0.01f
+              }.toSet()
+            )
+          }
+        } else {
+          val formatted = targetSpeed.toFixed(2).toString()
+          playerPreferences.speedCyclePresets.set(currentCycle + formatted)
+        }
+      },
+      onResetSpeedPresets = {
+        playerPreferences.speedPresets.delete()
+        playerPreferences.speedCyclePresets.delete()
+      },
+      speedPresets = speedPresets.mapNotNull { it.toFloatOrNull() }.sorted(),
+      speedCyclePresets = speedCyclePresets.mapNotNull { it.toFloatOrNull() }.sorted(),
       onResetDefaultSpeed = {
         MPVLib.setPropertyFloat("speed", playerPreferences.defaultSpeed.deleteAndGet().toFixed(2))
       },

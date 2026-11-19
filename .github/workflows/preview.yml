@@ -16,17 +16,43 @@ jobs:
     outputs:
       commit_count: ${{ steps.set_commit.outputs.commit_count }}
       build_time: ${{ steps.set_commit.outputs.build_time }}
+      changelog: ${{ steps.changelog.outputs.changelog }}
       universal_size: ${{ steps.set_commit.outputs.universal_size }}
       arm64-v8a_size: ${{ steps.set_commit.outputs.arm64-v8a_size }}
       armeabi-v7a_size: ${{ steps.set_commit.outputs.armeabi-v7a_size }}
       x86_size: ${{ steps.set_commit.outputs.x86_size }}
       x86_64_size: ${{ steps.set_commit.outputs.x86_64_size }}
+      universal_bytes: ${{ steps.set_commit.outputs.universal_bytes }}
+      arm64-v8a_bytes: ${{ steps.set_commit.outputs.arm64-v8a_bytes }}
+      armeabi-v7a_bytes: ${{ steps.set_commit.outputs.armeabi-v7a_bytes }}
+      x86_bytes: ${{ steps.set_commit.outputs.x86_bytes }}
+      x86_64_bytes: ${{ steps.set_commit.outputs.x86_64_bytes }}
 
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Generate preview changelog (last 20 commits)
+        id: changelog
+        run: |
+          set -e
+          LIMIT=20
+          CHANGELOG_JSON="["
+          i=0
+          while IFS=$'\t' read -r sha msg; do
+            [ -z "$sha" ] && continue
+            serial=$(git rev-list --count "$sha")
+            esc=$(printf '%s' "$msg" | jq -Rs .)
+            if [ "$i" -gt 0 ]; then CHANGELOG_JSON+=","; fi
+            CHANGELOG_JSON+="{\"serial\":$serial,\"message\":$esc,\"sha\":\"$sha\"}"
+            i=$((i+1))
+          done < <(git log --no-merges -${LIMIT} --format='%H%x09%s')
+          CHANGELOG_JSON+="]"
+          # Must be a valid JSON array of at most LIMIT entries before it can be shipped
+          jq -e "type == \"array\" and length <= ${LIMIT}" >/dev/null <<<"$CHANGELOG_JSON"
+          echo "changelog=$CHANGELOG_JSON" >> $GITHUB_OUTPUT
 
       - name: Setup JDK 17
         uses: actions/setup-java@v4
@@ -99,9 +125,11 @@ jobs:
             
             cp "$src" "$dest"
           
-            # Get file size in human-readable format
+            # Get file size in human-readable format and bytes
             size=$(du -h "$dest" | cut -f1)
+            bytes=$(stat -c%s "$dest")
             echo "${arch}_size=$size" >> $GITHUB_OUTPUT
+            echo "${arch}_bytes=$bytes" >> $GITHUB_OUTPUT
           done
 
       - name: Upload all artifacts
@@ -127,14 +155,40 @@ jobs:
         run: |
           export COMMIT_COUNT=${{ needs.build.outputs.commit_count }}
           export BUILD_TIME="${{ needs.build.outputs.build_time }}"
+          export BRANCH_NAME="${{ github.ref_name }}"
           export UNIVERSAL_SIZE="${{ needs.build.outputs.universal_size }}"
           export ARM64_SIZE="${{ needs.build.outputs.arm64-v8a_size }}"
           export ARMV7_SIZE="${{ needs.build.outputs.armeabi-v7a_size }}"
           export X86_SIZE="${{ needs.build.outputs.x86_size }}"
           export X86_64_SIZE="${{ needs.build.outputs.x86_64_size }}"
           
+          export UNIVERSAL_BYTES=$(stat -c%s ./public/REX-Player-preview-r${COMMIT_COUNT}-universal.apk 2>/dev/null || echo "${{ needs.build.outputs.universal_bytes }}")
+          export ARM64_BYTES=$(stat -c%s ./public/REX-Player-preview-r${COMMIT_COUNT}-arm64-v8a.apk 2>/dev/null || echo "${{ needs.build.outputs.arm64-v8a_bytes }}")
+          export ARMV7_BYTES=$(stat -c%s ./public/REX-Player-preview-r${COMMIT_COUNT}-armeabi-v7a.apk 2>/dev/null || echo "${{ needs.build.outputs.armeabi-v7a_bytes }}")
+          export X86_BYTES=$(stat -c%s ./public/REX-Player-preview-r${COMMIT_COUNT}-x86.apk 2>/dev/null || echo "${{ needs.build.outputs.x86_bytes }}")
+          export X86_64_BYTES=$(stat -c%s ./public/REX-Player-preview-r${COMMIT_COUNT}-x86_64.apk 2>/dev/null || echo "${{ needs.build.outputs.x86_64_bytes }}")
+          
+          export UNIVERSAL_BYTES=${UNIVERSAL_BYTES:-0}
+          export ARM64_BYTES=${ARM64_BYTES:-0}
+          export ARMV7_BYTES=${ARMV7_BYTES:-0}
+          export X86_BYTES=${X86_BYTES:-0}
+          export X86_64_BYTES=${X86_64_BYTES:-0}
+          
           envsubst < .github/workflows/preview.template.html > ./public/index.html
+          envsubst < .github/workflows/preview.template.json > ./public/version.json
 
+      - name: Inject changelog into version.json
+        env:
+          CHANGELOG_JSON: ${{ needs.build.outputs.changelog }}
+        run: |
+          set -e
+          if jq -e . >/dev/null 2>&1 <<<"$CHANGELOG_JSON"; then
+            jq --argjson changelog "$CHANGELOG_JSON" '.changelog = $changelog' \
+              ./public/version.json > ./public/version.json.tmp
+            mv ./public/version.json.tmp ./public/version.json
+          else
+            echo "::warning::Changelog payload missing or invalid; version.json will not include changelog"
+          fi
 
       - name: Upload to GitHub Pages
         uses: actions/upload-pages-artifact@v3

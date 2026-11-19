@@ -1,0 +1,39 @@
+{
+  "tag_name": "r${COMMIT_COUNT}",
+  "name": "REX Player Preview r${COMMIT_COUNT}",
+  "body": "Nightly preview build automatically generated from the ${BRANCH_NAME} branch.",
+  "published_at": "${BUILD_TIME}",
+  "html_url": "https://mpvrex.github.io/REX-Player/",
+  "assets": [
+    {
+      "name": "REX-Player-preview-r${COMMIT_COUNT}-universal.apk",
+      "browser_download_url": "https://mpvrex.github.io/REX-Player/REX-Player-preview-r${COMMIT_COUNT}-universal.apk",
+      "size": ${UNIVERSAL_BYTES},
+      "content_type": "application/vnd.android.package-archive"
+    },
+    {
+      "name": "REX-Player-preview-r${COMMIT_COUNT}-arm64-v8a.apk",
+      "browser_download_url": "https://mpvrex.github.io/REX-Player/REX-Player-preview-r${COMMIT_COUNT}-arm64-v8a.apk",
+      "size": ${ARM64_BYTES},
+      "content_type": "application/vnd.android.package-archive"
+    },
+    {
+      "name": "REX-Player-preview-r${COMMIT_COUNT}-armeabi-v7a.apk",
+      "browser_download_url": "https://mpvrex.github.io/REX-Player/REX-Player-preview-r${COMMIT_COUNT}-armeabi-v7a.apk",
+      "size": ${ARMV7_BYTES},
+      "content_type": "application/vnd.android.package-archive"
+    },
+    {
+      "name": "REX-Player-preview-r${COMMIT_COUNT}-x86.apk",
+      "browser_download_url": "https://mpvrex.github.io/REX-Player/REX-Player-preview-r${COMMIT_COUNT}-x86.apk",
+      "size": ${X86_BYTES},
+      "content_type": "application/vnd.android.package-archive"
+    },
+    {
+      "name": "REX-Player-preview-r${COMMIT_COUNT}-x86_64.apk",
+      "browser_download_url": "https://mpvrex.github.io/REX-Player/REX-Player-preview-r${COMMIT_COUNT}-x86_64.apk",
+      "size": ${X86_64_BYTES},
+      "content_type": "application/vnd.android.package-archive"
+    }
+  ]
+}

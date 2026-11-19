@@ -10,10 +10,12 @@ import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material.ripple.RippleAlpha
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.MaterialTheme
@@ -64,6 +66,8 @@ import kotlin.math.hypot
 class ThemeTransitionState {
     var isAnimating by mutableStateOf(false)
         private set
+    var isReverse by mutableStateOf(false)
+        private set
     var clickPosition by mutableStateOf(Offset.Zero)
         private set
     var screenshotBitmap by mutableStateOf<Bitmap?>(null)
@@ -82,7 +86,7 @@ class ThemeTransitionState {
      * Captures the current screen and begins the reveal animation.
      * Will NOT start a new animation if one is already in progress.
      */
-    fun startTransition(position: Offset) {
+    fun startTransition(position: Offset, isReverse: Boolean = false) {
         // Don't allow new animation while one is in progress
         if (isAnimating) return
         
@@ -92,6 +96,7 @@ class ThemeTransitionState {
                 val bitmap = view.drawToBitmap()
                 screenshotBitmap = bitmap
                 clickPosition = position
+                this.isReverse = isReverse
                 isAnimating = true
             } catch (e: Exception) {
                 // If capture fails, just skip the animation
@@ -102,12 +107,10 @@ class ThemeTransitionState {
     }
     
     fun finishTransition() {
-        val oldBitmap = screenshotBitmap
         screenshotBitmap = null
         clickPosition = Offset.Zero
+        isReverse = false
         isAnimating = false
-        // Recycle after state is cleared
-        oldBitmap?.recycle()
     }
     
     suspend fun resetProgress() {
@@ -147,18 +150,20 @@ private fun ThemeTransitionOverlay(
         content()
 
         // 2. Render the overlay of the old screen state on top if animating and we have a bitmap
-        if (isAnimating && bitmap != null) {
+        if (isAnimating && bitmap != null && !bitmap.isRecycled) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .graphicsLayer {
                         // Use CircularRevealShape to clip the old screenshot.
-                        // The shape clips to the area OUTSIDE the circle, creating a expanding hole.
+                        // When isReverse is false, clips to area OUTSIDE circle (expanding hole / zoom out).
+                        // When isReverse is true, clips to circle area (shrinking circle / reverse).
                         clip = true
                         shape = CircularRevealShape(
                             progress = progress,
                             center = state.clickPosition,
-                            containerSize = size
+                            containerSize = size,
+                            isReverse = state.isReverse,
                         )
                     }
             ) {
@@ -190,13 +195,15 @@ private fun ThemeTransitionOverlay(
 }
 
 /**
- * Custom Shape that creates an inverse circular reveal effect.
- * The circle expands from center, and the shape clips TO THE AREA OUTSIDE the circle.
+ * Custom Shape that creates a circular reveal effect.
+ * When isReverse is false: The circle expands from center, and the shape clips TO THE AREA OUTSIDE the circle (inverse clip / zoom out).
+ * When isReverse is true: The circle shrinks towards center, and the shape clips TO THE CIRCLE (zoom in / reverse).
  */
 private class CircularRevealShape(
     private val progress: Float,
     private val center: Offset,
     private val containerSize: Size,
+    private val isReverse: Boolean = false,
 ) : androidx.compose.ui.graphics.Shape {
     override fun createOutline(
         size: Size,
@@ -211,15 +218,23 @@ private class CircularRevealShape(
         
         // Calculate the maximum radius needed to cover entire screen from center point
         val maxRadius = longestDistanceToCorner(size, actualCenter) * 1.1f
-        val currentRadius = maxRadius * progress
         
-        // Create a path that represents the area OUTSIDE the circle (inverse clip)
-        val path = android.graphics.Path().apply {
-            fillType = android.graphics.Path.FillType.EVEN_ODD
-            // Add the entire rectangle
-            addRect(0f, 0f, size.width, size.height, android.graphics.Path.Direction.CW)
-            // Subtract the circle (creates hole in the middle)
-            addCircle(actualCenter.x, actualCenter.y, currentRadius, android.graphics.Path.Direction.CCW)
+        val path = if (isReverse) {
+            // Shrinking circle: old content shrinks from maxRadius down to 0 at actualCenter (reverse reveal)
+            val currentRadius = (maxRadius * (1f - progress)).coerceAtLeast(0f)
+            android.graphics.Path().apply {
+                addCircle(actualCenter.x, actualCenter.y, currentRadius, android.graphics.Path.Direction.CW)
+            }
+        } else {
+            // Expanding hole: old content has a hole expanding from 0 to maxRadius (forward reveal)
+            val currentRadius = (maxRadius * progress).coerceAtLeast(0f)
+            android.graphics.Path().apply {
+                fillType = android.graphics.Path.FillType.EVEN_ODD
+                // Add the entire rectangle
+                addRect(0f, 0f, size.width, size.height, android.graphics.Path.Direction.CW)
+                // Subtract the circle (creates hole in the middle)
+                addCircle(actualCenter.x, actualCenter.y, currentRadius, android.graphics.Path.Direction.CCW)
+            }
         }
         
         return androidx.compose.ui.graphics.Outline.Generic(
@@ -379,6 +394,43 @@ private val pureBlackColorScheme =
 
 internal var darkColorScheme = darkColorScheme()
 
+fun ColorScheme.toAmoledElevationScheme(): ColorScheme = this.copy(
+    background = androidx.compose.ui.graphics.Color.Black,
+    surface = androidx.compose.ui.graphics.Color.Black,
+    surfaceDim = androidx.compose.ui.graphics.Color.Black,
+    surfaceBright = androidx.compose.ui.graphics.Color(0xFF2A2A2A),
+    surfaceContainerLowest = androidx.compose.ui.graphics.Color.Black,
+    surfaceContainerLow = androidx.compose.ui.graphics.Color(0xFF0A0A0A),
+    surfaceContainer = androidx.compose.ui.graphics.Color(0xFF121212),
+    surfaceContainerHigh = androidx.compose.ui.graphics.Color(0xFF1E1E1E),
+    surfaceContainerHighest = androidx.compose.ui.graphics.Color(0xFF2A2A2A),
+)
+
+fun resolveColorScheme(
+    appTheme: AppTheme,
+    themePreset: String,
+    useDarkTheme: Boolean,
+    isAmoled: Boolean,
+    context: android.content.Context,
+): ColorScheme {
+    val baseScheme = when {
+        appTheme.isDynamic && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
+            if (useDarkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+        }
+        themePreset.isNotEmpty() && themePreset != "Default" -> {
+            getPresetColorScheme(name = themePreset, darkTheme = useDarkTheme)
+        }
+        useDarkTheme -> appTheme.getDarkColorScheme()
+        else -> appTheme.getLightColorScheme()
+    }
+
+    return if (isAmoled) {
+        baseScheme.toAmoledElevationScheme()
+    } else {
+        baseScheme
+    }
+}
+
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun MpvexTheme(content: @Composable () -> Unit) {
@@ -386,6 +438,7 @@ fun MpvexTheme(content: @Composable () -> Unit) {
   val darkMode by preferences.darkMode.collectAsState()
   val amoledMode by preferences.amoledMode.collectAsState()
   val appTheme by preferences.appTheme.collectAsState()
+  val themePreset by preferences.themePreset.collectAsState()
   val useSystemFont by preferences.useSystemFont.collectAsState()
   val darkTheme = isSystemInDarkTheme()
   val context = LocalContext.current
@@ -396,30 +449,14 @@ fun MpvexTheme(content: @Composable () -> Unit) {
         DarkMode.System -> darkTheme
     }
 
-    val colorScheme = when {
-        appTheme.isDynamic && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-            when {
-                useDarkTheme && amoledMode -> {
-                    dynamicDarkColorScheme(context).copy(
-                        background = backgroundPureBlack,
-                        surface = surfacePureBlack,
-                        surfaceDim = surfaceDimPureBlack,
-                        surfaceBright = surfaceBrightPureBlack,
-                        surfaceContainerLowest = surfaceContainerLowestPureBlack,
-                        surfaceContainerLow = surfaceContainerLowPureBlack,
-                        surfaceContainer = surfaceContainerPureBlack,
-                        surfaceContainerHigh = surfaceContainerHighPureBlack,
-                        surfaceContainerHighest = surfaceContainerHighestPureBlack,
-                    )
-                }
-                useDarkTheme -> dynamicDarkColorScheme(context)
-                else -> dynamicLightColorScheme(context)
-            }
-        }
-        useDarkTheme && amoledMode -> appTheme.getAmoledColorScheme()
-        useDarkTheme -> appTheme.getDarkColorScheme()
-        else -> appTheme.getLightColorScheme()
-    }
+    val isAmoled = useDarkTheme && amoledMode
+    val colorScheme = resolveColorScheme(
+        appTheme = appTheme,
+        themePreset = themePreset,
+        useDarkTheme = useDarkTheme,
+        isAmoled = isAmoled,
+        context = context,
+    )
 
     // Provide theme transition state first, OUTSIDE MaterialTheme
     CompositionLocalProvider(
@@ -430,8 +467,9 @@ fun MpvexTheme(content: @Composable () -> Unit) {
             MaterialTheme(
                 colorScheme = colorScheme,
                 typography = getTypography(useSystemFont),
-                content = content,
+                shapes = AppShapes,
                 motionScheme = MotionScheme.expressive(),
+                content = content,
             )
         }
     }
@@ -442,14 +480,17 @@ fun MpvexTheme(content: @Composable () -> Unit) {
 fun MpvexPlayerTheme(content: @Composable () -> Unit) {
     val preferences = koinInject<AppearancePreferences>()
     val playerAlwaysDarkMode by preferences.playerAlwaysDarkMode.collectAsState()
+    val enableGlassPlayerControls by preferences.enableGlassPlayerControls.collectAsState()
     val darkMode by preferences.darkMode.collectAsState()
     val amoledMode by preferences.amoledMode.collectAsState()
     val appTheme by preferences.appTheme.collectAsState()
+    val themePreset by preferences.themePreset.collectAsState()
     val useSystemFont by preferences.useSystemFont.collectAsState()
     val darkTheme = isSystemInDarkTheme()
     val context = LocalContext.current
 
-    val useDarkTheme = if (playerAlwaysDarkMode) {
+    val isPlayerAlwaysDark = playerAlwaysDarkMode || enableGlassPlayerControls
+    val useDarkTheme = if (isPlayerAlwaysDark) {
         true
     } else {
         when (darkMode) {
@@ -459,30 +500,14 @@ fun MpvexPlayerTheme(content: @Composable () -> Unit) {
         }
     }
 
-    val colorScheme = when {
-        appTheme.isDynamic && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-            when {
-                useDarkTheme && amoledMode -> {
-                    dynamicDarkColorScheme(context).copy(
-                        background = backgroundPureBlack,
-                        surface = surfacePureBlack,
-                        surfaceDim = surfaceDimPureBlack,
-                        surfaceBright = surfaceBrightPureBlack,
-                        surfaceContainerLowest = surfaceContainerLowestPureBlack,
-                        surfaceContainerLow = surfaceContainerLowPureBlack,
-                        surfaceContainer = surfaceContainerPureBlack,
-                        surfaceContainerHigh = surfaceContainerHighPureBlack,
-                        surfaceContainerHighest = surfaceContainerHighestPureBlack,
-                    )
-                }
-                useDarkTheme -> dynamicDarkColorScheme(context)
-                else -> dynamicLightColorScheme(context)
-            }
-        }
-        useDarkTheme && amoledMode -> appTheme.getAmoledColorScheme()
-        useDarkTheme -> appTheme.getDarkColorScheme()
-        else -> appTheme.getLightColorScheme()
-    }
+    val isAmoled = useDarkTheme && amoledMode
+    val colorScheme = resolveColorScheme(
+        appTheme = appTheme,
+        themePreset = themePreset,
+        useDarkTheme = useDarkTheme,
+        isAmoled = isAmoled,
+        context = context,
+    )
 
     // Provide theme transition state first, OUTSIDE MaterialTheme
     CompositionLocalProvider(
@@ -493,8 +518,9 @@ fun MpvexPlayerTheme(content: @Composable () -> Unit) {
             MaterialTheme(
                 colorScheme = colorScheme,
                 typography = getTypography(useSystemFont),
-                content = content,
+                shapes = AppShapes,
                 motionScheme = MotionScheme.expressive(),
+                content = content,
             )
         }
     }

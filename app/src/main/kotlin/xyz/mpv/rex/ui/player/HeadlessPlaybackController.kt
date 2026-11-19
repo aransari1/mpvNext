@@ -454,6 +454,13 @@ class HeadlessPlaybackController(private val appContext: Context) : KoinComponen
   }
 
   private fun handleEndOfFile() {
+    val duration = runCatching { MPVLib.getPropertyInt("duration") }.getOrNull() ?: 0
+    val pos = runCatching { MPVLib.getPropertyInt("time-pos") }.getOrNull() ?: 0
+    if (duration > 2 && pos < (duration - 3)) {
+      Log.w(TAG, "handleEndOfFile: ignoring spurious EOF in headless mode (pos=$pos, duration=$duration)")
+      return
+    }
+
     val repeatMode = playerPreferences.repeatMode.get()
     if (repeatMode == RepeatMode.ONE) {
       runCatching { MPVLib.command("seek", "0", "absolute") }

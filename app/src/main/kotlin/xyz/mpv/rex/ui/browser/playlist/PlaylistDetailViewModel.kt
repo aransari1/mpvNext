@@ -5,12 +5,16 @@ import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import xyz.mpv.rex.R
 import xyz.mpv.rex.database.entities.PlaylistEntity
 import xyz.mpv.rex.database.entities.PlaylistItemEntity
+import xyz.mpv.rex.database.repository.MediaPlayCountRepository
 import xyz.mpv.rex.database.repository.PlaylistRepository
 import xyz.mpv.rex.domain.media.model.Video
 import xyz.mpv.rex.repository.MediaFileRepository
 import xyz.mpv.rex.ui.browser.base.BaseBrowserViewModel
+import xyz.mpv.rex.utils.storage.VideoScanUtils
+import xyz.mpv.rex.utils.media.PlaybackStateIndex
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -32,6 +36,7 @@ class PlaylistDetailViewModel(
 ) : BaseBrowserViewModel<PlaylistVideoItem>(application),
   KoinComponent {
   private val playlistRepository: PlaylistRepository by inject()
+  private val mediaPlayCountRepository: MediaPlayCountRepository by inject()
 
   private val _playlist = MutableStateFlow<PlaylistEntity?>(null)
   val playlist: StateFlow<PlaylistEntity?> = _playlist.asStateFlow()
@@ -53,17 +58,40 @@ class PlaylistDetailViewModel(
   }
 
   init {
-    // Observe playlist info
-    viewModelScope.launch(Dispatchers.IO) {
-      playlistRepository.observePlaylistById(playlistId).collectLatest { playlist ->
-        _playlist.value = playlist
+    if (playlistId == PlaylistViewModel.ID_RECENTLY_ADDED) {
+      _playlist.value = PlaylistEntity(
+        id = PlaylistViewModel.ID_RECENTLY_ADDED,
+        name = getApplication<Application>().getString(R.string.playlist_recently_added),
+        createdAt = 0L,
+        updatedAt = System.currentTimeMillis(),
+      )
+      loadData()
+    } else if (playlistId == PlaylistViewModel.ID_MOST_PLAYED) {
+      _playlist.value = PlaylistEntity(
+        id = PlaylistViewModel.ID_MOST_PLAYED,
+        name = getApplication<Application>().getString(R.string.playlist_most_played),
+        createdAt = 0L,
+        updatedAt = System.currentTimeMillis(),
+      )
+      loadData()
+      viewModelScope.launch(Dispatchers.IO) {
+        mediaPlayCountRepository.observeMostPlayedEntities().collectLatest {
+          loadData()
+        }
       }
-    }
+    } else {
+      // Observe playlist info
+      viewModelScope.launch(Dispatchers.IO) {
+        playlistRepository.observePlaylistById(playlistId).collectLatest { playlist ->
+          _playlist.value = playlist
+        }
+      }
 
-    // Observe playlist items and load video metadata
-    viewModelScope.launch(Dispatchers.IO) {
-      playlistRepository.observePlaylistItems(playlistId).collectLatest { items ->
-        loadData()
+      // Observe playlist items and load video metadata
+      viewModelScope.launch(Dispatchers.IO) {
+        playlistRepository.observePlaylistItems(playlistId).collectLatest {
+          loadData()
+        }
       }
     }
   }
@@ -72,8 +100,52 @@ class PlaylistDetailViewModel(
     viewModelScope.launch(Dispatchers.IO) {
       _isLoading.value = true
       try {
-        val itemsList = playlistRepository.getPlaylistItems(playlistId)
         val playbackStates = playbackStateRepository.getAllPlaybackStates()
+        val playbackIndex = PlaybackStateIndex.of(playbackStates)
+
+        if (playlistId == PlaylistViewModel.ID_RECENTLY_ADDED) {
+          val videos = VideoScanUtils.getRecentlyAddedVideos(getApplication(), limit = 100)
+          val videoItemsList = videos.mapIndexed { index, v ->
+            val state = playbackIndex.forVideoPathOrName(v.path, v.displayName)
+            val video = if (state?.savedOrientation != null) v.copy(savedOrientation = state.savedOrientation) else v
+            PlaylistVideoItem(
+              playlistItem = PlaylistItemEntity(
+                id = index + 1,
+                playlistId = playlistId,
+                filePath = video.path,
+                fileName = video.displayName,
+                position = index,
+                addedAt = video.dateAdded,
+              ),
+              video = video,
+            )
+          }
+          _items.value = videoItemsList
+          return@launch
+        }
+
+        if (playlistId == PlaylistViewModel.ID_MOST_PLAYED) {
+          val videos = mediaPlayCountRepository.getMostPlayedVideos(getApplication(), limit = 100)
+          val videoItemsList = videos.mapIndexed { index, v ->
+            val state = playbackIndex.forVideoPathOrName(v.path, v.displayName)
+            val video = if (state?.savedOrientation != null) v.copy(savedOrientation = state.savedOrientation) else v
+            PlaylistVideoItem(
+              playlistItem = PlaylistItemEntity(
+                id = index + 1,
+                playlistId = playlistId,
+                filePath = video.path,
+                fileName = video.displayName,
+                position = index,
+                addedAt = video.dateAdded,
+              ),
+              video = video,
+            )
+          }
+          _items.value = videoItemsList
+          return@launch
+        }
+
+        val itemsList = playlistRepository.getPlaylistItems(playlistId)
         
         if (itemsList.isEmpty()) {
           _items.value = emptyList()
@@ -103,7 +175,7 @@ class PlaylistDetailViewModel(
                   dateAdded = item.addedAt,
                   mimeType = "video/*",
                   bucketId = "m3u_playlist_$playlistId",
-                  bucketDisplayName = playlist?.name ?: "M3U Playlist",
+                  bucketDisplayName = playlist.name,
                   width = 0,
                   height = 0,
                   fps = 0f,
@@ -111,7 +183,7 @@ class PlaylistDetailViewModel(
                 )
                 
                 // Map saved orientation
-                val state = playbackStates.find { it.mediaTitle == item.filePath || it.mediaTitle == video.displayName }
+                val state = playbackIndex.forVideoPathOrName(item.filePath, video.displayName)
                 if (state?.savedOrientation != null) {
                   video = video.copy(savedOrientation = state.savedOrientation)
                 }
@@ -129,7 +201,7 @@ class PlaylistDetailViewModel(
               var matchedVideo = allVideos.find { video -> video.path == item.filePath }
               if (matchedVideo != null) {
                 // Map saved orientation
-                val state = playbackStates.find { it.mediaTitle == matchedVideo.path || it.mediaTitle == matchedVideo.displayName }
+                val state = playbackIndex.forVideoPathOrName(matchedVideo.path, matchedVideo.displayName)
                 if (state?.savedOrientation != null) {
                   matchedVideo = matchedVideo.copy(savedOrientation = state.savedOrientation)
                 }
@@ -155,24 +227,29 @@ class PlaylistDetailViewModel(
   }
 
   suspend fun updatePlaylistName(newName: String) {
+    if (playlistId < 0) return
     _playlist.value?.let { playlist ->
       playlistRepository.updatePlaylist(playlist.copy(name = newName))
     }
   }
 
   suspend fun removeVideoFromPlaylist(item: PlaylistVideoItem) {
+    if (playlistId < 0) return
     playlistRepository.removeItemFromPlaylist(item.playlistItem)
   }
 
   suspend fun removeVideosFromPlaylist(items: List<PlaylistVideoItem>) {
+    if (playlistId < 0) return
     playlistRepository.removeItemsFromPlaylist(items.map { it.playlistItem })
   }
 
   suspend fun updatePlayHistory(filePath: String, position: Long = 0) {
+    if (playlistId < 0) return
     playlistRepository.updatePlayHistory(playlistId, filePath, position)
   }
 
   suspend fun reorderPlaylistItems(fromIndex: Int, toIndex: Int) {
+    if (playlistId < 0) return
     val currentItems = _items.value.toMutableList()
     if (fromIndex < 0 || fromIndex >= currentItems.size || toIndex < 0 || toIndex >= currentItems.size) {
       return
@@ -187,11 +264,18 @@ class PlaylistDetailViewModel(
   }
 
   suspend fun refreshM3UPlaylist(): Result<Unit> {
+    if (playlistId < 0) return Result.success(Unit)
     return try {
       _isLoading.value = true
       playlistRepository.refreshM3UPlaylist(playlistId)
     } finally {
       _isLoading.value = false
     }
+  }
+
+  suspend fun setPlaylistThumbnail(path: String?) {
+    if (playlistId < 0) return
+    playlistRepository.setPlaylistCustomThumbnail(playlistId, path)
+    _playlist.value = playlistRepository.getPlaylistById(playlistId)
   }
 }

@@ -99,7 +99,7 @@ interface RecentlyPlayedDao {
     videoTitle: String,
   )
 
-  @Query("UPDATE RecentlyPlayedEntity SET videoTitle = :videoTitle, duration = :duration, fileSize = :fileSize, width = :width, height = :height WHERE filePath = :filePath")
+  @Query("UPDATE RecentlyPlayedEntity SET videoTitle = :videoTitle, duration = :duration, fileSize = :fileSize, width = :width, height = :height, isAudio = CASE WHEN :width > 0 AND :height > 0 THEN 0 ELSE isAudio END WHERE filePath = :filePath")
   suspend fun updateVideoMetadata(
     filePath: String,
     videoTitle: String?,

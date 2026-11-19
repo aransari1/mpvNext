@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.Text
 import androidx.compose.material3.ripple
 import androidx.compose.material3.Slider
@@ -37,6 +38,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -56,7 +58,13 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.text.font.FontWeight
+import xyz.mpv.rex.presentation.components.AnimatedDigitTickerText
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
+import xyz.mpv.rex.utils.HapticType
+import xyz.mpv.rex.utils.HapticUtils
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -80,6 +88,74 @@ import org.koin.compose.koinInject
 import xyz.mpv.rex.preferences.GesturePreferences
 import xyz.mpv.rex.preferences.preference.collectAsState
 
+/** Tap tolerance (in dp) used to snap a seekbar tap onto a nearby bookmark pin. */
+private const val BOOKMARK_SNAP_TOLERANCE_DP = 8f
+
+/**
+ * Snaps [tapSeconds] to the closest bookmark when the tap lands within
+ * [BOOKMARK_SNAP_TOLERANCE_DP] of it, so pins are actually easy to hit.
+ */
+internal fun snapToNearbyBookmark(
+  tapSeconds: Float,
+  bookmarks: List<Segment>,
+  widthPx: Float,
+  duration: Float,
+  density: Float,
+): Float {
+  if (bookmarks.isEmpty() || widthPx <= 0f || duration <= 0f) return tapSeconds
+  val toleranceSeconds = (BOOKMARK_SNAP_TOLERANCE_DP * density / widthPx) * duration
+  val nearest = bookmarks.minByOrNull { kotlin.math.abs(it.start - tapSeconds) } ?: return tapSeconds
+  return if (kotlin.math.abs(nearest.start - tapSeconds) <= toleranceSeconds) nearest.start else tapSeconds
+}
+
+/**
+ * Builds the (start, end) pixel gaps used to break the track at chapter and bookmark boundaries.
+ *
+ * Bookmarks are rendered exactly like chapters — a gap in the track — and are always shown.
+ */
+internal fun buildBoundaryGaps(
+  points: List<Float>,
+  duration: Float,
+  widthPx: Float,
+  gapHalf: Float,
+  startX: Float,
+  endX: Float,
+): List<Pair<Float, Float>> {
+  if (points.isEmpty() || duration <= 0f || widthPx <= 0f) return emptyList()
+  return points
+    .map { (it / duration).coerceIn(0f, 1f) * widthPx }
+    .filter { it in startX..endX }
+    .sorted()
+    .map { x -> (x - gapHalf).coerceAtLeast(startX) to (x + gapHalf).coerceAtMost(endX) }
+}
+
+/**
+ * Remaining wall-clock time at the current playback [speed].
+ *
+ * A 120s clip watched at 2x leaves 60s of real time, so the clock reads `01:00` instead of `02:00`.
+ * [end] lets callers report the AB-loop end instead of the file duration, matching where playback
+ * will actually stop. The speed is clamped away from zero so a transient/zero `speed` property can
+ * never divide by zero or produce infinities. Negative results are intentional: they mean the
+ * position sits past the end (still mid-seek) and [Utils.prettyTime] renders them as `-MM:SS`.
+ */
+internal fun speedAdjustedRemaining(
+  position: Float,
+  end: Float,
+  speed: Float,
+): Float = (end - position) / speed.coerceIn(0.05f, 100f)
+
+/** Chapter boundaries plus bookmark pins, for rendering the same way as chapters. */
+internal fun collectSeekbarBoundaries(
+  chapters: List<Segment>,
+  bookmarks: List<Segment>,
+  showChapters: Boolean,
+): List<Float> =
+  buildList {
+    if (showChapters) chapters.forEach { add(it.start) }
+    // Bookmarks are always drawn, so they stay visible even if chapters are hidden.
+    bookmarks.forEach { add(it.start) }
+  }
+
 @Composable
 fun SeekbarWithTimers(
   position: () -> Float,
@@ -97,6 +173,11 @@ fun SeekbarWithTimers(
   loopEnd: Float? = null,
   isGestureSeeking: Boolean = false,
   isCancelActive: Boolean = false,
+  bookmarks: ImmutableList<Segment> = persistentListOf(),
+  /** Live mpv `speed`; read lazily so a speed change never recomposes the seekbar. */
+  speed: () -> Float = { 1f },
+  /** Divide the remaining clock by [speed] (issue #472). Off keeps the raw media time. */
+  speedAdjustedRemaining: Boolean = false,
   modifier: Modifier = Modifier,
 ) {
   val clickEvent = LocalPlayerButtonsClickEvent.current
@@ -151,33 +232,48 @@ fun SeekbarWithTimers(
   // Only animate position updates when user is not interacting
   // Using snapshotFlow to avoid registering a state read in this composable's scope
   LaunchedEffect(Unit) {
-    snapshotFlow { position() }.collect { currentPosVal ->
-      if (!isUserInteracting && currentPosVal != animatedPosition.value) {
-        // If we recently interacted (within 2s) and the position is significantly different from the seeked target (>10s),
-        // assume it's the old position and ignore it to prevent "back and forth" glitches.
-        val timeSinceInteraction = System.currentTimeMillis() - lastInteractionTime
-        if (timeSinceInteraction < 2000 && kotlin.math.abs(currentPosVal - userPosition) > 10f) {
-          return@collect
-        }
+    var animJob: kotlinx.coroutines.Job? = null
+    try {
+      snapshotFlow { position() }.collect { currentPosVal ->
+        if (!isUserInteracting && currentPosVal != animatedPosition.value) {
+          if (currentPosVal <= 0.05f) {
+            animJob?.cancel()
+            scope.launch { animatedPosition.snapTo(0f) }
+            userPosition = 0f
+            return@collect
+          }
 
-        animatedPosition.animateTo(
-          targetValue = currentPosVal,
-          animationSpec =
-            tween(
-              durationMillis = 200,
-              easing = LinearEasing,
-            ),
-        )
+          // If we recently interacted (within 2s) and the position is significantly different from the seeked target (>10s),
+          // assume it's the old position and ignore it to prevent "back and forth" glitches.
+          val timeSinceInteraction = System.currentTimeMillis() - lastInteractionTime
+          if (timeSinceInteraction < 2000 && kotlin.math.abs(currentPosVal - userPosition) > 10f) {
+            return@collect
+          }
+
+          animJob?.cancel()
+          animJob = scope.launch {
+            animatedPosition.animateTo(
+              targetValue = currentPosVal,
+              animationSpec =
+                tween(
+                  durationMillis = 200,
+                  easing = LinearEasing,
+                ),
+            )
+          }
+        }
       }
+    } finally {
+      animJob?.cancel()
     }
   }
 
   val rowModifier = if (isGlassActive) {
     modifier
-      .height(54.dp)
+      .height(44.dp)
       .padding(horizontal = 16.dp)
       .glassSurface(
-        shape = RoundedCornerShape(27.dp),
+        shape = RoundedCornerShape(14.dp),
         backgroundColor = Color.White.copy(alpha = 0.05f),
         borderColor = Color.White.copy(alpha = 0.15f),
         borderWidth = 1.dp,
@@ -194,10 +290,15 @@ fun SeekbarWithTimers(
         innerShadowOffsetX = 2.dp,
         innerShadowOffsetY = 2.dp
       )
-      .padding(horizontal = 14.dp)
+      .padding(horizontal = 12.dp)
   } else {
     modifier.height(48.dp)
   }
+
+  // Restore pre-9f86fcf0 spacing: fixed 92.dp reserves even whitespace
+  // around the centered timestamp text; glass uses intrinsic width.
+  val timerWidthModifier =
+    if (isGlassActive) Modifier.wrapContentWidth() else Modifier.width(92.dp)
 
   Row(
     modifier = rowModifier,
@@ -211,7 +312,7 @@ fun SeekbarWithTimers(
         clickEvent()
         positionTimerOnClick()
       },
-      modifier = if (isGlassActive) Modifier.wrapContentWidth() else Modifier.width(92.dp),
+      modifier = timerWidthModifier,
     )
 
     // Seekbar
@@ -219,12 +320,34 @@ fun SeekbarWithTimers(
       modifier =
         Modifier
           .weight(1f)
-          .height(48.dp)
+          .fillMaxHeight()
           .graphicsLayer {
             scaleY = squeezeScale
           },
       contentAlignment = Alignment.Center,
     ) {
+
+      val context = LocalContext.current
+      val hapticFeedback = LocalHapticFeedback.current
+      var lastHapticSecond by remember { mutableIntStateOf(Int.MIN_VALUE) }
+
+      val handleSeek: (Float) -> Unit = { newPosition ->
+        if (!isUserInteracting) isUserInteracting = true
+        userPosition = newPosition
+        val currentSec = newPosition.toInt()
+        if (currentSec != lastHapticSecond) {
+          lastHapticSecond = currentSec
+          HapticUtils.performHapticFeedback(context, hapticFeedback, HapticType.LIGHT)
+        }
+        onValueChange(newPosition)
+      }
+
+      val handleSeekFinished: () -> Unit = {
+        scope.launch { animatedPosition.snapTo(userPosition) }
+        lastInteractionTime = System.currentTimeMillis()
+        isUserInteracting = false
+        onValueChangeFinished()
+      }
 
       when (seekbarStyle) {
         SeekbarStyle.Standard -> {
@@ -233,18 +356,10 @@ fun SeekbarWithTimers(
             duration = duration,
             readAheadValue = readAheadValue,
             chapters = chapters,
+            bookmarks = bookmarks,
             isCancelActive = isCancelActive,
-            onSeek = { newPosition ->
-              if (!isUserInteracting) isUserInteracting = true
-              userPosition = newPosition
-              onValueChange(newPosition)
-            },
-            onSeekFinished = {
-              scope.launch { animatedPosition.snapTo(userPosition) }
-              lastInteractionTime = System.currentTimeMillis()
-              isUserInteracting = false
-              onValueChangeFinished()
-            },
+            onSeek = handleSeek,
+            onSeekFinished = handleSeekFinished,
           )
         }
         SeekbarStyle.Wavy -> {
@@ -253,22 +368,14 @@ fun SeekbarWithTimers(
             duration = duration,
             readAheadValue = readAheadValue,
             chapters = chapters,
+            bookmarks = bookmarks,
             isPaused = paused,
             isScrubbing = isUserInteracting,
             useWavySeekbar = true,
             seekbarStyle = SeekbarStyle.Wavy,
             isCancelActive = isCancelActive,
-            onSeek = { newPosition ->
-              if (!isUserInteracting) isUserInteracting = true
-              userPosition = newPosition
-              onValueChange(newPosition)
-            },
-            onSeekFinished = {
-              scope.launch { animatedPosition.snapTo(userPosition) }
-              lastInteractionTime = System.currentTimeMillis()
-              isUserInteracting = false
-              onValueChangeFinished()
-            },
+            onSeek = handleSeek,
+            onSeekFinished = handleSeekFinished,
           )
         }
         SeekbarStyle.Circular -> {
@@ -277,22 +384,14 @@ fun SeekbarWithTimers(
             duration = duration,
             readAheadValue = readAheadValue,
             chapters = chapters,
+            bookmarks = bookmarks,
             isPaused = paused,
             isScrubbing = isUserInteracting,
             useWavySeekbar = true,
             seekbarStyle = SeekbarStyle.Circular,
             isCancelActive = isCancelActive,
-            onSeek = { newPosition ->
-              if (!isUserInteracting) isUserInteracting = true
-              userPosition = newPosition
-              onValueChange(newPosition)
-            },
-            onSeekFinished = {
-              scope.launch { animatedPosition.snapTo(userPosition) }
-              lastInteractionTime = System.currentTimeMillis()
-              isUserInteracting = false
-              onValueChangeFinished()
-            },
+            onSeek = handleSeek,
+            onSeekFinished = handleSeekFinished,
           )
         }
         SeekbarStyle.Simple -> {
@@ -301,22 +400,14 @@ fun SeekbarWithTimers(
             duration = duration,
             readAheadValue = readAheadValue,
             chapters = chapters,
+            bookmarks = bookmarks,
             isPaused = paused,
             isScrubbing = isUserInteracting,
             useWavySeekbar = false,
             seekbarStyle = SeekbarStyle.Simple, 
             isCancelActive = isCancelActive,
-            onSeek = { newPosition ->
-              if (!isUserInteracting) isUserInteracting = true
-              userPosition = newPosition
-              onValueChange(newPosition)
-            },
-            onSeekFinished = {
-              scope.launch { animatedPosition.snapTo(userPosition) }
-              lastInteractionTime = System.currentTimeMillis()
-              isUserInteracting = false
-              onValueChangeFinished()
-            },
+            onSeek = handleSeek,
+            onSeekFinished = handleSeekFinished,
           )
         }
         SeekbarStyle.Thick -> {
@@ -325,18 +416,11 @@ fun SeekbarWithTimers(
             duration = duration,
             readAheadValue = readAheadValue,
             chapters = chapters,
+            bookmarks = bookmarks,
             seekbarStyle = SeekbarStyle.Thick,
             isCancelActive = isCancelActive,
-            onSeek = { newPosition ->
-              if (!isUserInteracting) isUserInteracting = true
-              userPosition = newPosition
-              onValueChange(newPosition)
-            },
-            onSeekFinished = {
-              scope.launch { animatedPosition.snapTo(userPosition) }
-              isUserInteracting = false
-              onValueChangeFinished()
-            },
+            onSeek = handleSeek,
+            onSeekFinished = handleSeekFinished,
             loopStart = loopStart,
             loopEnd = loopEnd,
           )
@@ -346,13 +430,25 @@ fun SeekbarWithTimers(
     }
 
     VideoTimer(
-      value = { if (timersInverted.second) position() - duration else duration },
+      value = {
+        when {
+          !timersInverted.second -> duration
+          speedAdjustedRemaining -> {
+            // Follow the thumb while the user scrubs so the label matches the target position.
+            val currentPosition = if (isUserInteracting) userPosition else position()
+            // With an AB loop active, playback stops at loop B, so that is the real end.
+            val end = loopEnd?.takeIf { it > 0f } ?: duration
+            speedAdjustedRemaining(currentPosition, end, speed())
+          }
+          else -> position() - duration
+        }
+      },
       isInverted = timersInverted.second,
       onClick = {
         clickEvent()
         durationTimerOnCLick()
       },
-      modifier = if (isGlassActive) Modifier.wrapContentWidth() else Modifier.width(92.dp),
+      modifier = timerWidthModifier,
     )
   }
 }
@@ -372,6 +468,7 @@ private fun SquigglySeekbar(
   onSeekFinished: () -> Unit,
   loopStart: Float? = null,
   loopEnd: Float? = null,
+  bookmarks: ImmutableList<Segment> = persistentListOf(),
   modifier: Modifier = Modifier,
 ) {
   val playerPreferences = koinInject<PlayerPreferences>()
@@ -400,6 +497,8 @@ private fun SquigglySeekbar(
   var heightFraction by remember { mutableFloatStateOf(1f) }
 
   val scope = rememberCoroutineScope()
+  val density = androidx.compose.ui.platform.LocalDensity.current.density
+  val currentBookmarks by rememberUpdatedState(bookmarks)
 
   // Wave parameters
   val waveLength = 80f
@@ -469,7 +568,14 @@ private fun SquigglySeekbar(
             },
             onTap = { offset ->
                 if (preventSeekbarTap) return@detectTapGestures
-                val newPosition = (offset.x / size.width) * currentDuration
+                val rawPosition = (offset.x / size.width) * currentDuration
+                val newPosition = snapToNearbyBookmark(
+                  tapSeconds = rawPosition,
+                  bookmarks = currentBookmarks,
+                  widthPx = size.width.toFloat(),
+                  duration = currentDuration,
+                  density = density,
+                )
                 onSeek(newPosition.coerceIn(0f, currentDuration))
                 onSeekFinished()
             }
@@ -615,13 +721,18 @@ private fun SquigglySeekbar(
         return
       }
       val gaps =
-        if (showSeekbarChapters) {
-          chapters
-            .map { (it.start / duration).coerceIn(0f, 1f) * totalWidth }
-            .filter { it in startX..endX }
-            .sorted()
-            .map { x -> (x - gapHalf).coerceAtLeast(startX) to (x + gapHalf).coerceAtMost(endX) }
-        } else emptyList()
+        buildBoundaryGaps(
+          points = collectSeekbarBoundaries(
+            chapters = chapters,
+            bookmarks = currentBookmarks,
+            showChapters = showSeekbarChapters,
+          ),
+          duration = duration,
+          widthPx = totalWidth,
+          gapHalf = gapHalf,
+          startX = startX,
+          endX = endX,
+        )
 
       var segmentStart = startX
       for ((gapStart, gapEnd) in gaps) {
@@ -764,7 +875,7 @@ fun VideoTimer(
   
   val timeText = Utils.prettyTime(value().toInt(), isInverted)
   
-  Text(
+  AnimatedDigitTickerText(
     modifier =
       modifier
         .fillMaxHeight()
@@ -776,7 +887,8 @@ fun VideoTimer(
         .wrapContentHeight(Alignment.CenterVertically),
     text = timeText,
     color = if (matchTheme) MaterialTheme.colorScheme.primary else Color.White,
-    textAlign = TextAlign.Center,
+    style = LocalTextStyle.current.copy(fontFeatureSettings = "tnum"),
+    fontWeight = FontWeight.Normal,
   )
 }
 
@@ -795,6 +907,7 @@ fun StandardSeekbar(
     loopStart: Float? = null,
     loopEnd: Float? = null,
     isCancelActive: Boolean = false,
+    bookmarks: ImmutableList<Segment> = persistentListOf(),
     modifier: Modifier = Modifier,
 ) {
     val playerPreferences = koinInject<PlayerPreferences>()
@@ -816,6 +929,8 @@ fun StandardSeekbar(
 
     val currentPosition by rememberUpdatedState(position)
     val currentDuration by rememberUpdatedState(duration)
+    val density = androidx.compose.ui.platform.LocalDensity.current.density
+    val currentBookmarks by rememberUpdatedState(bookmarks)
 
     val thumbScale by animateFloatAsState(
         targetValue = if (isCancelActive) 0.7f else 1f,
@@ -840,7 +955,14 @@ fun StandardSeekbar(
                 detectTapGestures(
                     onTap = { offset ->
                         if (preventSeekbarTap) return@detectTapGestures
-                        val newPosition = (offset.x / size.width) * currentDuration
+                        val rawPosition = (offset.x / size.width) * currentDuration
+                        val newPosition = snapToNearbyBookmark(
+                            tapSeconds = rawPosition,
+                            bookmarks = currentBookmarks,
+                            widthPx = size.width.toFloat(),
+                            duration = currentDuration,
+                            density = density,
+                        )
                         onSeek(newPosition.coerceIn(0f, currentDuration))
                         onSeekFinished()
                     }
@@ -883,11 +1005,12 @@ fun StandardSeekbar(
                 }
             }
     ) {
+        val safeDuration = duration.coerceAtLeast(0.1f)
         Slider(
-            value = if (isUserInteracting) userPosition else position(),
+            value = (if (isUserInteracting) userPosition else position()).coerceIn(0f, safeDuration),
             onValueChange = { /* Handled by custom gestures */ },
             onValueChangeFinished = { /* Handled by custom gestures */ },
-            valueRange = 0f..duration.coerceAtLeast(0.1f),
+            valueRange = 0f..safeDuration,
             modifier = Modifier.fillMaxWidth(),
             interactionSource = interactionSource,
             enabled = false, // Disable built-in interaction
@@ -901,17 +1024,17 @@ fun StandardSeekbar(
             val isGlassActive = enableGlassPlayerControls && enableGlassSeekbar
             val outerRadiusDp = trackHeightDp / 2
 
-            val trackModifier = if (isGlassActive) {
-                Modifier.background(Color.White.copy(alpha = 0.15f), RoundedCornerShape(outerRadiusDp))
-            } else {
-                Modifier
-            }
+            val trackModifier = Modifier
+                .fillMaxWidth()
+                .height(trackHeightDp)
+                .background(
+                    color = if (isGlassActive) Color.White.copy(alpha = 0.15f) 
+                            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = disabledAlpha),
+                    shape = RoundedCornerShape(outerRadiusDp)
+                )
 
             Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(trackHeightDp)
-                    .then(trackModifier)
+                modifier = trackModifier
             ) {
                 Canvas(
                     modifier = Modifier.fillMaxSize(),
@@ -943,12 +1066,18 @@ fun StandardSeekbar(
                     val thumbGapStart = (thumbPx - gapHalf).coerceIn(0f, size.width)
                     val thumbGapEnd = (thumbPx + gapHalf).coerceIn(0f, size.width)
                     
-                    val chapterGaps = if (showSeekbarChapters) {
-                        chapters
-                            .map { (it.start / duration).coerceIn(0f, 1f) * size.width }
-                            .filter { it > 0f && it < size.width }
-                            .map { x -> (x - chapterGapHalf) to (x + chapterGapHalf) }
-                    } else emptyList()
+                    val chapterGaps = buildBoundaryGaps(
+                        points = collectSeekbarBoundaries(
+                            chapters = chapters,
+                            bookmarks = currentBookmarks,
+                            showChapters = showSeekbarChapters,
+                        ),
+                        duration = duration,
+                        widthPx = size.width,
+                        gapHalf = chapterGapHalf,
+                        startX = 0f,
+                        endX = size.width,
+                    ).filter { (gStart, _) -> gStart > chapterGapHalf && gStart < size.width - chapterGapHalf }
 
                     val allGaps = (chapterGaps + (thumbGapStart to thumbGapEnd))
                         .filter { it.first < it.second }
@@ -1029,7 +1158,7 @@ fun StandardSeekbar(
                      if (playedPx > 0f) {
                          drawRangeWithGaps(0f, playedPx, allGaps, primaryColor)
                      }
- 
+
                      // 3. A-B Loop Indicators
                      if (loopStart != null || loopEnd != null) {
                          val loopColor = Color(0xFFFFB300) // Amber/Gold color for loop

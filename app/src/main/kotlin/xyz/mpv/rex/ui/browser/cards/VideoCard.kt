@@ -23,6 +23,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -34,6 +35,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
@@ -58,6 +60,7 @@ import kotlin.math.roundToInt
 
 import xyz.mpv.rex.utils.media.MediaFormatter
 import xyz.mpv.rex.preferences.UiSettings
+import xyz.mpv.rex.ui.theme.pillShape
 
 @Composable
 fun VideoCard(
@@ -78,6 +81,8 @@ fun VideoCard(
   showSubtitleIndicator: Boolean = true,
   useFolderNameStyle: Boolean = false,
   allowThumbnailGeneration: Boolean = true,
+  isPinned: Boolean = false,
+  shape: Shape? = null,
 ) {
   val maxLines = if (uiSettings.unlimitedNameLines) Int.MAX_VALUE else 2
   
@@ -116,8 +121,16 @@ fun VideoCard(
     }
   }
 
+  val displayTitle = if (uiSettings.showFileExtension) {
+      video.displayName
+  } else {
+      val extensionIndex = video.displayName.lastIndexOf('.')
+      if (extensionIndex > 0) video.displayName.substring(0, extensionIndex)
+      else video.displayName
+  }
+
   BaseMediaCard(
-    title = video.displayName,
+    title = displayTitle,
     listTitleStyle = MaterialTheme.typography.bodyMedium,
     modifier = modifier,
     thumbnailAspectRatio = 16f / 9f,
@@ -135,46 +148,51 @@ fun VideoCard(
     onThumbClick = onThumbClick,
     isSelected = isSelected,
     isRecentlyPlayed = isRecentlyPlayed,
-    isNeverPlayed = isNeverPlayed,
     isWatched = isWatched,
     isGridMode = isGridMode,
     gridColumns = gridColumns,
-    progressPercentage = if (uiSettings.showProgressBar) progressPercentage else null,
+    shape = shape,
+    progressPercentage = if (uiSettings.showProgressBar && !isWatched) progressPercentage else null,
     maxTitleLines = maxLines,
     thumbnailSize = thumbWidthDp,
     overlayContent = {
       // NEW Label
       if (uiSettings.showUnplayedOldVideoLabel && isOldAndUnplayed) {
-        Box(
+        Surface(
+          shape = pillShape,
+          color = MaterialTheme.colorScheme.errorContainer,
+          contentColor = MaterialTheme.colorScheme.onErrorContainer,
           modifier = Modifier
-            .align(Alignment.TopStart)
-            .padding(6.dp)
-            .clip(RoundedCornerShape(4.dp))
-            .background(Color(0xFFD32F2F))
-            .padding(horizontal = 8.dp, vertical = 3.dp),
+            .align(Alignment.TopEnd)
+            .padding(6.dp),
+          shadowElevation = 2.dp,
         ) {
           Text(
             text = stringResource(R.string.video_label_new),
-            color = Color.White,
             style = MaterialTheme.typography.labelSmall,
             fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
           )
         }
       }
       // Duration overlay
-      Box(
+      Surface(
+        shape = pillShape,
+        color = Color.Black.copy(alpha = 0.72f),
+        contentColor = Color.White,
         modifier = Modifier
           .align(Alignment.BottomEnd)
-          .padding(6.dp)
-          .clip(RoundedCornerShape(4.dp))
-          .background(Color.Black.copy(alpha = 0.65f))
-          .padding(horizontal = 6.dp, vertical = 2.dp),
+          .padding(6.dp),
       ) {
         Text(
           text = video.durationFormatted,
           style = MaterialTheme.typography.labelSmall,
-          color = Color.White,
+          fontWeight = FontWeight.Medium,
+          modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
         )
+      }
+      if (isPinned) {
+        PinBadge(modifier = Modifier.align(Alignment.BottomStart).padding(6.dp))
       }
     },
     infoContent = {
@@ -195,16 +213,28 @@ fun VideoCard(
       }
     },
     chipsContent = {
-      if (showSubtitleIndicator && video.hasEmbeddedSubtitles && video.subtitleCodec.isNotBlank()) {
-        video.subtitleCodec.split(" ").forEach { codec ->
-          Text(
-            text = codec,
-            style = MaterialTheme.typography.labelSmall,
-            modifier = Modifier
-              .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(8.dp))
-              .padding(horizontal = 8.dp, vertical = 4.dp),
-            color = MaterialTheme.colorScheme.onPrimary,
-          )
+      // Embedded and matching-external subtitle badges form one logical indicator group.
+      // Wait until subtitle metadata resolution is complete so both sources appear together
+      // in the same UI state instead of exposing one badge before the other is ready.
+      if (showSubtitleIndicator && video.subtitleIndicatorReady) {
+        if (video.hasEmbeddedSubtitles && video.subtitleCodec.isNotBlank()) {
+          for (codec in video.subtitleCodec.split(" ").filter { it.isNotBlank() }) {
+            MediaMetadataChip(
+              text = codec,
+              color = MaterialTheme.colorScheme.tertiaryContainer,
+              contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
+            )
+          }
+        }
+
+        if (!video.isAudio) {
+          for (format in video.matchingExternalSubtitleFormats) {
+            MediaMetadataChip(
+              text = format,
+              color = MaterialTheme.colorScheme.secondaryContainer,
+              contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+            )
+          }
         }
       }
       if (uiSettings.showSizeChip && video.sizeFormatted != "0 B" && video.sizeFormatted != "--") {

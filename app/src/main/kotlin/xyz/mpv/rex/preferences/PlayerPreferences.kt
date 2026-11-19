@@ -1,22 +1,60 @@
 
 package xyz.mpv.rex.preferences
 
+import xyz.mpv.rex.preferences.preference.Preference
 import xyz.mpv.rex.preferences.preference.PreferenceStore
 import xyz.mpv.rex.preferences.preference.getEnum
 import xyz.mpv.rex.ui.player.BackgroundPlaybackMode
+import xyz.mpv.rex.ui.player.LongPressSpeedMemoryMode
+import java.security.MessageDigest
+import xyz.mpv.rex.ui.player.PlaybackControlsPosition
 import xyz.mpv.rex.ui.player.PlayerOrientation
 import xyz.mpv.rex.ui.player.RepeatMode
 import xyz.mpv.rex.ui.player.ResumePlaybackMode
 import xyz.mpv.rex.ui.player.VideoAspect
 
 class PlayerPreferences(
-  preferenceStore: PreferenceStore,
+  private val preferenceStore: PreferenceStore,
 ) {
   val orientation = preferenceStore.getEnum("player_orientation", PlayerOrientation.Video)
   val backgroundPlayback = preferenceStore.getEnum("background_playback_mode", BackgroundPlaybackMode.AudioOnly)
   val invertDuration = preferenceStore.getBoolean("invert_duration")
+  /**
+   * When enabled, the "remaining" seekbar clock is divided by the current playback speed, so a
+   * 2-minute clip watched at 2x reads "01:00 remaining" (real time left for the viewer).
+   */
+  val speedAdjustedRemainingTime = preferenceStore.getBoolean("speed_adjusted_remaining_time")
   val holdForMultipleSpeed = preferenceStore.getFloat("hold_for_multiple_speed", 2f)
-  val rememberLongPressSpeed = preferenceStore.getBoolean("remember_long_press_speed", true)
+  private val legacyRememberLongPressSpeed = preferenceStore.getBoolean("remember_long_press_speed", true)
+  val longPressSpeedMemoryMode =
+    preferenceStore.getEnum("long_press_speed_memory_mode", LongPressSpeedMemoryMode.Reset)
+  private val longPressSpeedModeMigrated = preferenceStore.getBoolean("long_press_speed_mode_migrated", false)
+
+  init {
+    if (!longPressSpeedModeMigrated.get()) {
+      if (!longPressSpeedMemoryMode.isSet()) {
+        val migratedMode = when {
+          legacyRememberLongPressSpeed.isSet() && legacyRememberLongPressSpeed.get() -> LongPressSpeedMemoryMode.Global
+          legacyRememberLongPressSpeed.isSet() -> LongPressSpeedMemoryMode.Reset
+          holdForMultipleSpeed.isSet() -> LongPressSpeedMemoryMode.Global
+          else -> LongPressSpeedMemoryMode.Reset
+        }
+        longPressSpeedMemoryMode.set(migratedMode)
+      }
+      longPressSpeedModeMigrated.set(true)
+    }
+  }
+
+  fun longPressSpeedForVideo(
+    mediaIdentifier: String,
+    defaultSpeed: Float = holdForMultipleSpeed.get(),
+  ): Preference<Float> {
+    val identifierHash =
+      MessageDigest.getInstance("SHA-256")
+        .digest(mediaIdentifier.toByteArray(Charsets.UTF_8))
+        .joinToString("") { "%02x".format(it.toInt() and 0xff) }
+    return preferenceStore.getFloat("long_press_speed_video_$identifierHash", defaultSpeed)
+  }
   val showDynamicSpeedOverlay = preferenceStore.getBoolean("show_dynamic_speed_overlay", true)
   val showSpeedIndicatorOverlay = preferenceStore.getBoolean("show_speed_indicator_overlay", true)
   val showDoubleTapOvals = preferenceStore.getBoolean("show_double_tap_ovals", true)
@@ -30,6 +68,7 @@ class PlayerPreferences(
   val horizontalSwipeToSeek = preferenceStore.getBoolean("horizontal_swipe_to_seek", true)
   val swipeToSubtitleSeek = preferenceStore.getBoolean("swipe_to_subtitle_seek", true)
   val moveSubtitleByDragging = preferenceStore.getBoolean("move_subtitle_by_dragging", true)
+  val pinchToResizeSubtitle = preferenceStore.getBoolean("pinch_to_resize_subtitle", true)
   val horizontalSwipeSensitivity = preferenceStore.getFloat("horizontal_swipe_sensitivity", 0.05f)
 
   val customAspectRatios = preferenceStore.getStringSet("custom_aspect_ratios", emptySet())
@@ -40,11 +79,17 @@ class PlayerPreferences(
       "default_speed_presets",
       setOf("0.25", "0.5", "0.75", "1.0", "1.25", "1.5", "1.75", "2.0", "2.5", "3.0", "3.5", "4.0"),
     )
+  val speedCyclePresets =
+    preferenceStore.getStringSet(
+      "speed_cycle_presets",
+      setOf("1.0", "1.25", "1.5", "1.75", "2.0"),
+    )
   val displayVolumeAsPercentage = preferenceStore.getBoolean("display_volume_as_percentage", true)
   val swapVolumeAndBrightness = preferenceStore.getBoolean("display_volume_on_right")
   val showLoadingCircle = preferenceStore.getBoolean("show_loading_circle", true)
   val savePositionOnQuit = preferenceStore.getBoolean("save_position", true)
   val resumePlaybackMode = preferenceStore.getEnum("resume_playback_mode", ResumePlaybackMode.Always)
+  val autoResumeOnAsk = preferenceStore.getBoolean("auto_resume_on_ask", true)
 
   val closeAfterReachingEndOfVideo = preferenceStore.getBoolean("close_after_eof", true)
 
@@ -78,6 +123,7 @@ class PlayerPreferences(
 
   val useWavySeekbar = preferenceStore.getBoolean("use_wavy_seekbar", true)
   val bottomControlsBelowSeekbar = preferenceStore.getBoolean("bottom_controls_below_seekbar", false)
+  val playbackControlsPosition = preferenceStore.getEnum("playback_controls_position", PlaybackControlsPosition.Center)
   val showSeekBarWhenSeeking = preferenceStore.getBoolean("show_seekbar_when_seeking", false)
   val whiteSeekBar = preferenceStore.getBoolean("white_seekbar", false)
   val showSeekbarChapters = preferenceStore.getBoolean("show_seekbar_chapters", true)
@@ -91,14 +137,17 @@ class PlayerPreferences(
 
   // New: autoplay next video when current file ends
   val autoplayNextVideo = preferenceStore.getBoolean("autoplay_next_video", true)
-  val showControlsOnPlay = preferenceStore.getBoolean("show_controls_on_play", true)
+  val autoplayOnOpen = preferenceStore.getBoolean("autoplay_on_open", true)
+  val showControlsOnPlay = preferenceStore.getBoolean("show_controls_on_play", false)
 
   val autoPiPOnNavigation = preferenceStore.getBoolean("auto_pip_on_navigation", false)
+  val pipOnHome = preferenceStore.getBoolean("pip_on_home", false)
 
   val keepScreenOnWhenPaused = preferenceStore.getBoolean("keep_screen_on_when_paused", false)
-  val resumeOnUnlock = preferenceStore.getBoolean("resume_on_unlock", false)
 
-  // Persist aspect ratio setting (default to Fit)
+  /**
+   * Baseline default aspect ratio used when opening videos (Fit, Crop, Stretch).
+   */
   val defaultVideoAspect = preferenceStore.getEnum("default_video_aspect", VideoAspect.Fit)
   val defaultCustomAspectRatio = preferenceStore.getObject(
     key = "default_custom_aspect_ratio",
@@ -106,6 +155,12 @@ class PlayerPreferences(
     serializer = { it.toString() },
     deserializer = { it.toDoubleOrNull() ?: -1.0 }
   )
+
+  /**
+   * Whether aspect ratio adjustments made during video playback should persist across videos
+   * or remain session-only.
+   */
+  val rememberVideoAspect = preferenceStore.getBoolean("remember_video_aspect", false)
 
   // Custom Buttons - JSON List
   val customButtons = preferenceStore.getString("custom_buttons_json", "[]")
@@ -115,4 +170,7 @@ class PlayerPreferences(
 
   // External media controls
   val disableMediaButtons = preferenceStore.getBoolean("disable_media_buttons", false)
+
+  // More sheet last opened tab
+  val lastMoreSheetTab = preferenceStore.getInt("last_more_sheet_tab", 0)
 }

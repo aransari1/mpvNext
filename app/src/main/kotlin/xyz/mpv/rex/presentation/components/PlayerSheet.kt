@@ -66,6 +66,7 @@ import kotlin.math.roundToInt
 
 private val sheetAnimationSpec = tween<Float>(350)
 
+@OptIn(androidx.compose.material3.ExperimentalMaterial3ExpressiveApi::class)
 @SuppressLint("ConfigurationScreenWidthHeight")
 @Composable
 fun PlayerSheet(
@@ -167,8 +168,8 @@ fun PlayerSheet(
             WindowInsets.systemBars
               .only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal),
           ).imePadding(),
-      shape = MaterialTheme.shapes.extraLarge.copy(bottomEnd = ZeroCornerSize, bottomStart = ZeroCornerSize),
-      color = surfaceColor ?: MaterialTheme.colorScheme.surface,
+      shape = MaterialTheme.shapes.extraLargeIncreased.copy(bottomEnd = ZeroCornerSize, bottomStart = ZeroCornerSize),
+      color = surfaceColor ?: MaterialTheme.colorScheme.surfaceContainerLow,
       tonalElevation = tonalElevation,
       content = {
         BackHandler(
@@ -182,10 +183,10 @@ fun PlayerSheet(
             Box(
                 modifier = Modifier
                     .padding(vertical = 12.dp)
-                    .size(width = 32.dp, height = 4.dp)
+                    .size(width = 36.dp, height = 4.dp)
                     .background(
                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
-                        shape = MaterialTheme.shapes.extraLarge
+                        shape = xyz.mpv.rex.ui.theme.pillShape
                     )
             )
             content()

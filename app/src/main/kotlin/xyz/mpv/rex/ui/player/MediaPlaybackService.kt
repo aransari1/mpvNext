@@ -31,6 +31,7 @@ import `is`.xyz.mpv.MPVNode
 import xyz.mpv.rex.preferences.PlayerPreferences
 import xyz.mpv.rex.preferences.GesturePreferences
 import xyz.mpv.rex.ui.player.SingleActionGesture
+import xyz.mpv.rex.ui.player.managers.PlaybackManager
 import xyz.mpv.rex.ui.browser.miniplayer.MiniPlayerStateManager
 import kotlinx.coroutines.cancel
 import org.koin.core.component.KoinComponent
@@ -47,6 +48,9 @@ class MediaPlaybackService :
     private const val TAG = "MediaPlaybackService"
     private const val NOTIFICATION_ID = 1
     private const val NOTIFICATION_CHANNEL_ID = "mpvex_playback_channel"
+
+    const val ACTION_TOGGLE_REPEAT = "xyz.mpv.rex.action.TOGGLE_REPEAT"
+    const val ACTION_TOGGLE_SHUFFLE = "xyz.mpv.rex.action.TOGGLE_SHUFFLE"
 
     @Volatile
     internal var thumbnail: Bitmap? = null
@@ -108,6 +112,8 @@ class MediaPlaybackService :
   interface ServiceListener {
     fun onNextRequested()
     fun onPreviousRequested()
+    fun onRepeatToggled()
+    fun onShuffleToggled()
   }
 
   private var listener: ServiceListener? = null
@@ -162,7 +168,18 @@ class MediaPlaybackService :
     flags: Int,
     startId: Int,
   ): Int {
-    Log.d(TAG, "Service starting with startId: $startId")
+    Log.d(TAG, "Service starting with action: ${intent?.action}, startId: $startId")
+
+    when (intent?.action) {
+      ACTION_TOGGLE_REPEAT -> {
+        handleToggleRepeat()
+        return START_NOT_STICKY
+      }
+      ACTION_TOGGLE_SHUFFLE -> {
+        handleToggleShuffle()
+        return START_NOT_STICKY
+      }
+    }
 
     // Handle media button events
     intent?.let {
@@ -235,6 +252,26 @@ class MediaPlaybackService :
     updateMediaSession()
   }
 
+  fun handleToggleRepeat() {
+    val currentListener = listener
+    if (currentListener != null) {
+      currentListener.onRepeatToggled()
+    } else {
+      miniPlayerStateManager.cycleRepeatMode()
+    }
+    updateMediaSession()
+  }
+
+  fun handleToggleShuffle() {
+    val currentListener = listener
+    if (currentListener != null) {
+      currentListener.onShuffleToggled()
+    } else {
+      miniPlayerStateManager.toggleShuffle()
+    }
+    updateMediaSession()
+  }
+
   private fun setupMediaSession() {
     mediaSession =
       MediaSessionCompat(this, TAG).apply {
@@ -281,6 +318,27 @@ class MediaPlaybackService :
               Log.d(TAG, "onSeekTo called: $pos")
               MPVLib.setPropertyDouble("time-pos", pos / 1000.0)
             }
+
+            override fun onSetRepeatMode(repeatMode: Int) {
+              if (!canHandle()) return
+              Log.d(TAG, "onSetRepeatMode called: $repeatMode")
+              handleToggleRepeat()
+            }
+
+            override fun onSetShuffleMode(shuffleMode: Int) {
+              if (!canHandle()) return
+              Log.d(TAG, "onSetShuffleMode called: $shuffleMode")
+              handleToggleShuffle()
+            }
+
+            override fun onCustomAction(action: String?, extras: android.os.Bundle?) {
+              if (!canHandle()) return
+              Log.d(TAG, "onCustomAction called: $action")
+              when (action) {
+                ACTION_TOGGLE_REPEAT -> handleToggleRepeat()
+                ACTION_TOGGLE_SHUFFLE -> handleToggleShuffle()
+              }
+            }
           },
         )
 
@@ -295,7 +353,7 @@ class MediaPlaybackService :
     sessionToken = mediaSession.sessionToken
   }
 
-  private fun updateMediaSession() {
+  fun updateMediaSession() {
     try {
       // Ensure we have valid media title
       val title = mediaTitle.ifBlank { "Unknown Video" }
@@ -326,7 +384,36 @@ class MediaPlaybackService :
       
       val state = if (paused) PlaybackStateCompat.STATE_PAUSED else PlaybackStateCompat.STATE_PLAYING
 
-      mediaSession.setPlaybackState(
+      val repeatMode = playerPreferences.repeatMode.get()
+      val shuffleEnabled = playerPreferences.shuffleEnabled.get()
+
+      val playbackRepeatMode = when (repeatMode) {
+        RepeatMode.OFF -> PlaybackStateCompat.REPEAT_MODE_NONE
+        RepeatMode.ONE -> PlaybackStateCompat.REPEAT_MODE_ONE
+        RepeatMode.ALL -> PlaybackStateCompat.REPEAT_MODE_ALL
+      }
+      val playbackShuffleMode = if (shuffleEnabled) {
+        PlaybackStateCompat.SHUFFLE_MODE_ALL
+      } else {
+        PlaybackStateCompat.SHUFFLE_MODE_NONE
+      }
+
+      mediaSession.setRepeatMode(playbackRepeatMode)
+      mediaSession.setShuffleMode(playbackShuffleMode)
+
+      val (shuffleIcon, shuffleLabel) = if (shuffleEnabled) {
+        Pair(R.drawable.ic_shuffle_on, getString(R.string.shuffle_on))
+      } else {
+        Pair(R.drawable.ic_shuffle, getString(R.string.shuffle_off))
+      }
+
+      val (repeatIcon, repeatLabel) = when (repeatMode) {
+        RepeatMode.OFF -> Pair(R.drawable.ic_repeat_off, getString(R.string.repeat_off))
+        RepeatMode.ONE -> Pair(R.drawable.ic_repeat_one, getString(R.string.repeat_one))
+        RepeatMode.ALL -> Pair(R.drawable.ic_repeat, getString(R.string.repeat_all))
+      }
+
+      val playbackState =
         PlaybackStateCompat
           .Builder()
           .setActions(
@@ -336,10 +423,28 @@ class MediaPlaybackService :
               PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS or
               PlaybackStateCompat.ACTION_SKIP_TO_NEXT or
               PlaybackStateCompat.ACTION_STOP or
-              PlaybackStateCompat.ACTION_SEEK_TO,
-          ).setState(state, position, 1.0f)
-          .build(),
-      )
+              PlaybackStateCompat.ACTION_SEEK_TO or
+              PlaybackStateCompat.ACTION_SET_REPEAT_MODE or
+              PlaybackStateCompat.ACTION_SET_SHUFFLE_MODE,
+          )
+          .addCustomAction(
+            PlaybackStateCompat.CustomAction.Builder(
+              ACTION_TOGGLE_SHUFFLE,
+              shuffleLabel,
+              shuffleIcon,
+            ).build()
+          )
+          .addCustomAction(
+            PlaybackStateCompat.CustomAction.Builder(
+              ACTION_TOGGLE_REPEAT,
+              repeatLabel,
+              repeatIcon,
+            ).build()
+          )
+          .setState(state, position, 1.0f)
+          .build()
+
+      mediaSession.setPlaybackState(playbackState)
 
       miniPlayerStateManager.updateState(
         isPlaybackActive = true,
@@ -349,8 +454,8 @@ class MediaPlaybackService :
         durationMs = duration,
         isPaused = paused,
         thumbnail = thumbnail,
-        shuffleEnabled = playerPreferences.shuffleEnabled.get(),
-        repeatMode = playerPreferences.repeatMode.get(),
+        shuffleEnabled = shuffleEnabled,
+        repeatMode = repeatMode,
       )
 
       // Update notification
@@ -385,7 +490,32 @@ class MediaPlaybackService :
         PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
       )
 
-    // Create notification actions
+    val repeatMode = playerPreferences.repeatMode.get()
+    val shuffleEnabled = playerPreferences.shuffleEnabled.get()
+
+    // Shuffle Action
+    val shuffleIntent = Intent(this, MediaPlaybackService::class.java).apply {
+      action = ACTION_TOGGLE_SHUFFLE
+    }
+    val shufflePendingIntent = PendingIntent.getService(
+      this,
+      101,
+      shuffleIntent,
+      PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+    )
+    val (shuffleIcon, shuffleLabel) = if (shuffleEnabled) {
+      Pair(R.drawable.ic_shuffle_on, getString(R.string.shuffle_on))
+    } else {
+      Pair(R.drawable.ic_shuffle, getString(R.string.shuffle_off))
+    }
+    val shuffleAction =
+      NotificationCompat.Action(
+        shuffleIcon,
+        shuffleLabel,
+        shufflePendingIntent,
+      )
+
+    // Previous Action
     val previousAction =
       NotificationCompat.Action(
         android.R.drawable.ic_media_previous,
@@ -396,6 +526,7 @@ class MediaPlaybackService :
         ),
       )
 
+    // Play/Pause Action
     val playPauseAction =
       NotificationCompat.Action(
         if (paused) android.R.drawable.ic_media_play else android.R.drawable.ic_media_pause,
@@ -406,6 +537,7 @@ class MediaPlaybackService :
         ),
       )
 
+    // Next Action
     val nextAction =
       NotificationCompat.Action(
         android.R.drawable.ic_media_next,
@@ -414,6 +546,28 @@ class MediaPlaybackService :
           this,
           PlaybackStateCompat.ACTION_SKIP_TO_NEXT,
         ),
+      )
+
+    // Repeat Action
+    val repeatIntent = Intent(this, MediaPlaybackService::class.java).apply {
+      action = ACTION_TOGGLE_REPEAT
+    }
+    val repeatPendingIntent = PendingIntent.getService(
+      this,
+      102,
+      repeatIntent,
+      PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+    )
+    val (repeatIcon, repeatLabel) = when (repeatMode) {
+      RepeatMode.OFF -> Pair(R.drawable.ic_repeat_off, getString(R.string.repeat_off))
+      RepeatMode.ONE -> Pair(R.drawable.ic_repeat_one, getString(R.string.repeat_one))
+      RepeatMode.ALL -> Pair(R.drawable.ic_repeat, getString(R.string.repeat_all))
+    }
+    val repeatAction =
+      NotificationCompat.Action(
+        repeatIcon,
+        repeatLabel,
+        repeatPendingIntent,
       )
 
     return NotificationCompat
@@ -426,14 +580,16 @@ class MediaPlaybackService :
       .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
       .setOnlyAlertOnce(true)
       .setOngoing(!paused)
+      .addAction(shuffleAction)
       .addAction(previousAction)
       .addAction(playPauseAction)
       .addAction(nextAction)
+      .addAction(repeatAction)
       .setStyle(
         androidx.media.app.NotificationCompat
           .MediaStyle()
           .setMediaSession(mediaSession.sessionToken)
-          .setShowActionsInCompactView(0, 1, 2),
+          .setShowActionsInCompactView(1, 2, 3),
       ).setPriority(NotificationCompat.PRIORITY_LOW)
       .build()
   }

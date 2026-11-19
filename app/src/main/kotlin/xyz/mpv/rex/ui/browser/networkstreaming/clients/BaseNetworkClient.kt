@@ -1,6 +1,8 @@
 package xyz.mpv.rex.ui.browser.networkstreaming.clients
 
 import android.net.Uri
+import kotlinx.coroutines.NonCancellable
+
 import xyz.mpv.rex.domain.network.NetworkConnection
 import xyz.mpv.rex.domain.network.NetworkFile
 import kotlinx.coroutines.Dispatchers
@@ -10,7 +12,7 @@ import java.io.InputStream
 /**
  * Base class for all network protocol clients to reduce duplication.
  */
-abstract class BaseNetworkClient(protected val connection: NetworkConnection) : NetworkClient {
+abstract class BaseNetworkClient(override val connection: NetworkConnection) : NetworkClient {
 
     protected abstract suspend fun performConnect(): Unit
     protected abstract suspend fun performDisconnect(): Unit
@@ -25,7 +27,7 @@ abstract class BaseNetworkClient(protected val connection: NetworkConnection) : 
         runCatching { performConnect() }
     }
 
-    override suspend fun disconnect() = withContext(Dispatchers.IO) {
+    override suspend fun disconnect() = withContext(NonCancellable + Dispatchers.IO) {
         runCatching { performDisconnect() }
         Unit
     }

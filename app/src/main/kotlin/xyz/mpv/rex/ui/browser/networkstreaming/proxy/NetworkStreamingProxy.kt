@@ -1,7 +1,9 @@
 package xyz.mpv.rex.ui.browser.networkstreaming.proxy
 
 import android.util.Log
+import java.net.URI
 import xyz.mpv.rex.domain.network.NetworkConnection
+import xyz.mpv.rex.utils.storage.FileTypeUtils
 import xyz.mpv.rex.ui.browser.networkstreaming.clients.NetworkClient
 import xyz.mpv.rex.ui.browser.networkstreaming.clients.NetworkClientFactory
 import xyz.mpv.rex.ui.browser.networkstreaming.clients.SmbClient
@@ -15,6 +17,10 @@ import com.hierynomus.smbj.connection.Connection
 import com.hierynomus.smbj.session.Session
 import com.hierynomus.smbj.share.DiskShare
 import fi.iki.elonen.NanoHTTPD
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import java.io.BufferedInputStream
 import java.io.InputStream
@@ -36,25 +42,58 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
     @Volatile
     private var instance: NetworkStreamingProxy? = null
 
-    fun getInstance(): NetworkStreamingProxy {
-      return instance ?: synchronized(this) {
-        instance ?: NetworkStreamingProxy().also {
-          it.start()
-          instance = it
-        }
+    /**
+     * Returns the running proxy, or null when it could not be started.
+     *
+     * Starting the proxy binds a `127.0.0.1` socket, which Android gates behind the
+     * `INTERNET` permission. Users can revoke that permission (e.g. GrapheneOS
+     * "Network" toggle) and still expect local playback to work, so a failed bind must
+     * never propagate: callers fall back to playing the original URI directly.
+     */
+    fun getInstance(): NetworkStreamingProxy? {
+      instance?.let { return it }
+      return synchronized(this) {
+        instance ?: runCatching { NetworkStreamingProxy().also { it.start() } }
+          .onFailure { Log.w(TAG, "Local proxy unavailable, network streams fall back to direct playback", it) }
+          .getOrNull()
+          ?.also { instance = it }
       }
+    }
+
+    /**
+     * True when [url] points at this proxy, i.e. it is a local `127.0.0.1`/`localhost`
+     * URL produced by [registerStream]. Used to avoid starting the proxy for local files.
+     */
+    fun isProxyUrl(url: String?): Boolean {
+      if (url.isNullOrBlank()) return false
+      val uri = runCatching { URI(url) }.getOrNull() ?: return false
+      return uri.host == "127.0.0.1" || uri.host == "localhost"
+    }
+
+    /**
+     * Extracts the stream ID from a local proxy URL (e.g. http://127.0.0.1:port/streamId).
+     * Pure URL parsing: never starts the proxy.
+     */
+    fun extractStreamIdFromUrl(url: String?): String? {
+      if (!isProxyUrl(url)) return null
+      val uri = runCatching { URI(url) }.getOrNull() ?: return null
+      return uri.path?.trim('/')?.substringBefore('/')?.takeIf { it.isNotEmpty() }
     }
 
     fun stopInstance() {
       synchronized(this) {
         instance?.let { proxy ->
-          proxy.stop()
-          proxy.cleanup()
+          runCatching {
+            proxy.stop()
+            proxy.cleanup()
+          }.onFailure { Log.w(TAG, "Failed to stop local proxy cleanly", it) }
           instance = null
         }
       }
     }
   }
+
+  private val proxyScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
   // Store active connections and their clients
   private val activeStreams = ConcurrentHashMap<String, StreamInfo>()
@@ -76,7 +115,7 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
     connection: NetworkConnection,
     filePath: String,
     fileSize: Long = -1L,
-    mimeType: String = "video/mp4",
+    mimeType: String = FileTypeUtils.getMimeTypeFromExtension(java.io.File(filePath).extension).takeIf { it != "*/*" } ?: "video/mp4",
   ): String {
     val client = NetworkClientFactory.createClient(connection)
 
@@ -98,15 +137,18 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
    */
   fun unregisterStream(streamId: String) {
     activeStreams.remove(streamId)?.let { streamInfo ->
-      runBlocking {
+      proxyScope.launch {
         try {
           streamInfo.client.disconnect()
-        } catch (e: Exception) {
-          // Ignore disconnect errors
-        }
+        } catch (_: Exception) {}
       }
     }
   }
+
+  /**
+   * Extracts the stream ID from a local proxy URL (e.g. http://127.0.0.1:port/streamId)
+   */
+  fun extractStreamId(url: String?): String? = extractStreamIdFromUrl(url)
 
   /**
    * Cleanup all streams

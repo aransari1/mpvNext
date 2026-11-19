@@ -13,5 +13,6 @@ MERGE_RULES.md
 KeyStore.jks
 install_debug.sh
 compile_release.sh
-/gradle/gradle-daemon-jvm.properties
-.idx/dev.nix
+remote.log
+mpvRex-libmpv/
+REX-Ytdlp/

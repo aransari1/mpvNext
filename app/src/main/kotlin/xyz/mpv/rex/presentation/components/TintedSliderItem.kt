@@ -36,24 +36,30 @@ fun TintedSliderItem(
 ) {
   val haptic = LocalHapticFeedback.current
 
-  Row(
+  Column(
     modifier =
       modifier
         .fillMaxWidth()
         .padding(
-          horizontal = MaterialTheme.spacing.medium,
           vertical = MaterialTheme.spacing.smaller,
         ),
-    verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.large),
   ) {
-    icon()
-    Column(modifier = Modifier.weight(0.5f)) {
+    Row(
+      modifier = Modifier.fillMaxWidth(),
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.small),
+    ) {
+      icon()
       Text(
         text = label,
         style = MaterialTheme.typography.bodyMedium,
+        modifier = Modifier.weight(1f),
       )
-      Text(valueText)
+      Text(
+        text = valueText,
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+      )
     }
 
     TintedSlider(
@@ -65,7 +71,7 @@ fun TintedSliderItem(
           haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
         }
       },
-      modifier = Modifier.weight(1.5f),
+      modifier = Modifier.fillMaxWidth(),
       valueRange = min.toFloat()..max.toFloat(),
       steps = max - min,
       tint = tint,

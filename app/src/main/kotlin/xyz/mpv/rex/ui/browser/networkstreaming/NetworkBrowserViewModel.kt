@@ -11,12 +11,19 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import xyz.mpv.rex.domain.network.NetworkConnection
 import xyz.mpv.rex.domain.network.NetworkFile
 import xyz.mpv.rex.domain.network.NetworkProtocol
+import xyz.mpv.rex.preferences.BrowserPreferences
 import xyz.mpv.rex.repository.NetworkRepository
 import xyz.mpv.rex.ui.browser.base.BaseBrowserViewModel
+import xyz.mpv.rex.utils.media.FolderPlaylistOps
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.koin.core.component.KoinComponent
 import org.koin.core.component.inject
 
@@ -35,6 +42,18 @@ class NetworkBrowserViewModel(
   private val _error = MutableStateFlow<String?>(null)
   val error: StateFlow<String?> = _error.asStateFlow()
 
+  init {
+    viewModelScope.launch(Dispatchers.Default) {
+      combine(
+        browserPreferences.networkSortType.changes(),
+        browserPreferences.networkSortOrder.changes(),
+      ) { _, _ -> }
+        .drop(1)
+        .collect {
+          _items.update { it.sortedWith(listComparator()) }
+        }
+    }
+  }
   /**
    * Load files in the current directory
    */
@@ -49,10 +68,7 @@ class NetworkBrowserViewModel(
 
         repository.listFiles(connection, currentPath)
           .onSuccess { fileList ->
-            _items.value = fileList.sortedWith(
-              compareBy<NetworkFile> { !it.isDirectory }
-                .thenBy { it.name.lowercase() },
-            )
+            _items.value = fileList.sortedWith(listComparator())
           }
           .onFailure { e ->
             _error.value = e.message ?: "Unknown error"
@@ -69,6 +85,10 @@ class NetworkBrowserViewModel(
     loadData()
   }
 
+  /** Directories first, then the network browser's sort preference. */
+  private fun listComparator(): Comparator<NetworkFile> =
+    compareBy<NetworkFile> { !it.isDirectory }.then(FolderPlaylistOps.networkFileComparator())
+
   /**
    * Play a video file
    */
@@ -83,6 +103,7 @@ class NetworkBrowserViewModel(
 
         val uri = if (useProxy) {
           val proxy = xyz.mpv.rex.ui.browser.networkstreaming.proxy.NetworkStreamingProxy.getInstance()
+            ?: throw IllegalStateException("Local proxy unavailable; network playback requires the Network permission")
           val streamId = "${connectionId}_${System.currentTimeMillis()}"
           val proxyUrl = proxy.registerStream(
             streamId = streamId,

@@ -49,14 +49,21 @@ import java.io.File
 import xyz.mpv.rex.preferences.AdvancedPreferences
 import xyz.mpv.rex.preferences.preference.collectAsState
 import xyz.mpv.rex.presentation.Screen
+import xyz.mpv.rex.presentation.components.CollapsibleHeaderScreen
 import xyz.mpv.rex.ui.utils.LocalBackStack
+import xyz.mpv.rex.ui.utils.navigateBack
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import org.koin.compose.koinInject
+import xyz.mpv.rex.presentation.MotionStyle
 
 @Serializable
 object LuaScriptsScreen : Screen {
+  /** Settings keep the app's original full horizontal push. */
+  override val motion: MotionStyle
+    get() = MotionStyle.Default
+
   @OptIn(ExperimentalMaterial3Api::class)
   @Composable
   override fun Content() {
@@ -181,28 +188,10 @@ object LuaScriptsScreen : Screen {
       }
     }
     
-    Scaffold(
-      topBar = {
-        TopAppBar(
-          title = {
-            Text(
-              text = "Lua Scripts",
-              style = MaterialTheme.typography.headlineSmall,
-              fontWeight = FontWeight.ExtraBold,
-              color = MaterialTheme.colorScheme.primary,
-            )
-          },
-          navigationIcon = {
-            IconButton(onClick = backStack::removeLastOrNull) {
-              Icon(
-                Icons.AutoMirrored.Default.ArrowBack,
-                contentDescription = "Back",
-                tint = MaterialTheme.colorScheme.secondary,
-              )
-            }
-          },
-        )
-      },
+    CollapsibleHeaderScreen(
+      title = "Lua Scripts",
+      showBackButton = true,
+      onBackClick = backStack::navigateBack,
       floatingActionButton = {
         FloatingActionButton(
           onClick = {
@@ -217,12 +206,10 @@ object LuaScriptsScreen : Screen {
           )
         }
       },
-    ) { padding ->
+    ) { contentModifier ->
       val navBarHeight = xyz.mpv.rex.ui.browser.LocalNavigationBarHeight.current
       LazyColumn(
-        modifier = Modifier
-          .fillMaxSize()
-          .padding(padding),
+        modifier = contentModifier.fillMaxSize(),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = navBarHeight + 16.dp),
       ) {
         items(availableScripts) { scriptName ->

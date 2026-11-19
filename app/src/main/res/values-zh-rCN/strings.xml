@@ -29,9 +29,6 @@
     <string name="pref_appearance_darkmode_dark">深色模式</string>
     <string name="pref_appearance_amoled_mode_title">AMOLED 纯黑模式</string>
     <string name="pref_appearance_amoled_mode_summary">深色主题使用纯黑色背景</string>
-    <string name="pref_appearance_material_you_title">Material You 动态色彩</string>
-    <string name="pref_appearance_material_you_summary">启用系统取色动态配色</string>
-    <string name="pref_appearance_material_you_summary_disabled">仅支持 Android 12 及以上系统</string>
     <string name="pref_appearance_unlimited_name_lines_title">显示完整名称</string>
     <string name="pref_appearance_unlimited_name_lines_summary">完整展示文件夹与视频名称，不截断文字</string>
     <string name="pref_appearance_enable_bounce_animation_title">开启弹性动画</string>
@@ -49,8 +46,6 @@
     <string name="pref_appearance_use_system_font_title">使用系统字体</string>
     <string name="pref_appearance_use_system_font_summary">使用设备默认字体，替代应用内置字体</string>
     <string name="pref_appearance_category_file_browser">文件浏览器</string>
-    <string name="pref_appearance_show_hidden_files_title">显示隐藏文件</string>
-    <string name="pref_appearance_show_hidden_files_summary">显示以点(.)开头的隐藏目录，包括 android、data、system 文件夹与 .nomedia 文件</string>
     <string name="pref_appearance_show_unplayed_old_video_label_title">新视频标识</string>
     <string name="pref_appearance_show_unplayed_old_video_label_summary">对指定天数内添加、从未播放的视频展示“新的”标签</string>
     <string name="pref_appearance_unplayed_old_video_days_title">新视频标签天数阈值</string>
@@ -58,15 +53,6 @@
     <string name="pref_appearance_category_thumbnails">缩略图</string>
     <string name="pref_appearance_show_network_thumbnails_title">加载网络缩略图（实验功能）</string>
     <string name="pref_appearance_show_network_thumbnails_summary">为网络视频生成缩略图（移动网络下可能增加流量消耗）</string>
-    <string name="pref_appearance_thumbnail_strategy_title">缩略图生成方式</string>
-    <string name="pref_appearance_thumbnail_strategy_summary">选择从视频中提取缩略图的方案</string>
-    <string name="pref_appearance_thumbnail_strategy_first_frame_title">首帧截取</string>
-    <string name="pref_appearance_thumbnail_strategy_first_frame_summary">速度最快，截取视频第10秒画面</string>
-    <string name="pref_appearance_thumbnail_strategy_position_title">指定位置帧</string>
-    <string name="pref_appearance_thumbnail_strategy_position_summary">需要更多运算，截取视频靠后画面，避免空白片头</string>
-    <string name="pref_appearance_thumbnail_position_title">缩略图截取位置</string>
-    <string name="pref_appearance_thumbnail_position_summary">在视频时长 %d%% 位置截取缩略图</string>
-    <string name="pref_appearance_thumbnail_position_reset">将缩略图位置恢复默认</string>
     <string name="pref_appearance_theme_picker_label">应用主题</string>
     <string name="pref_appearance_auto_scroll_title">自动定位到上次播放</string>
     <string name="pref_appearance_auto_scroll_summary">打开视频列表时自动滚动至上次播放视频</string>
@@ -115,13 +101,8 @@
     <!-- Player Preferences -->
     <string name="pref_autoplay_title">启用上一个/下一个切换按钮</string>
     <string name="pref_autoplay_summary">为文件夹内所有视频显示上一个、下一个切换按钮</string>
-    <string name="pref_autoplay_next_video_title">自动播放下一个视频</string>
-    <string name="pref_autoplay_next_video_summary">当前视频播放结束后自动播放下一个</string>
     <string name="pref_auto_pip_title">自动画中画</string>
     <string name="pref_auto_pip_summary">按下主页键或返回键时自动进入画中画模式</string>
-    <string name="pref_player_resume_on_unlock_title">解锁后继续播放</string>
-    <string name="pref_player_resume_on_unlock_summary_on">锁屏前正在播放，解锁后自动恢复播放</string>
-    <string name="pref_player_resume_on_unlock_summary_off">屏幕解锁后保持暂停状态</string>
     <string name="pref_dynamic_speed_overlay_title">变速悬浮面板</string>
     <string name="pref_dynamic_speed_overlay_summary">长按滑动时弹出调速操作面板</string>
     <string name="pref_show_navigation_bar_title">显示带有控制按钮的导航栏</string>
@@ -147,14 +128,10 @@
 
     <string name="pref_layout_title">播放器布局</string>
     <string name="pref_layout_summary">自定义播放器按钮布局</string>
-    <string name="pref_layout_reset_default">恢复默认</string>
     <string name="pref_layout_top_right_controls">右上角控件</string>
     <string name="pref_layout_bottom_right_controls">右下角控件</string>
     <string name="pref_layout_bottom_left_controls">左下角控件</string>
     <string name="pref_layout_portrait_bottom_controls">竖屏底部控件</string>
-    <string name="pref_layout_preview">预览</string>
-    <string name="pref_layout_reset_title">重置布局？</string>
-    <string name="pref_layout_reset_summary">所有自定义播放器控件布局将恢复默认位置</string>
 
     <string name="pref_player">播放器</string>
     <string name="pref_player_summary">屏幕方向、手势与控制选项</string>
@@ -169,7 +146,6 @@
     <string name="pref_player_orientation_landscape">横屏</string>
     <string name="pref_player_orientation_reverse_landscape">反向横屏</string>
     <string name="pref_player_orientation_sensor_landscape">传感器横屏</string>
-    <string name="pref_player_save_position_on_quit">退出时保存播放位置</string>
     <string name="pref_player_double_tap_seek_duration">双击跳转时长</string>
     <string name="pref_player_custom_skip_duration_title">自定义跳转时长</string>
     <string name="pref_player_custom_skip_duration_summary">自定义快进按钮的跳转秒数</string>
@@ -229,13 +205,16 @@
     <string name="pref_gesture_use_relative_seeking_title">相对进度拖动</string>
     <string name="pref_gesture_use_relative_seeking_summary">以拖动起始位置计算偏移，而非直接跳转到手指坐标</string>
 
-    <string name="pref_gesture_double_tap_custom_info">你可以在 input.conf 中使用下列按键代码绑定自定义动作：\n\n左侧: MBTN_LEFT_DBL\n中间: MBTN_MID_DBL\n右侧: MBTN_RIGHT_DBL</string>
+    <string name="pref_gesture_double_tap_custom_info">你可以在 input.conf 中使用下列按键代码绑定自定义动作：</string>
+    <string name="pref_gesture_double_tap_left">左侧</string>
+    <string name="pref_gesture_double_tap_center">中间</string>
+    <string name="pref_gesture_double_tap_right">右侧</string>
 
     <string name="pref_gesture_media_title">媒体控制</string>
     <string name="pref_gesture_media_previous">上一个</string>
     <string name="pref_gesture_media_play">播放/暂停</string>
     <string name="pref_gesture_media_next">下一个</string>
-    <string name="pref_gesture_media_custom_info">你可以在 input.conf 中使用下列按键代码绑定媒体控制自定义动作：\n\n上一个: PREV\n播放/暂停: PLAYPAUSE\n下一个: NEXT</string>
+    <string name="pref_gesture_media_custom_info">你可以在 input.conf 中使用下列按键代码绑定媒体控制自定义动作：</string>
 
     <string name="pref_gesture_view_title">浏览视图</string>
     <string name="pref_gesture_tap_thumbnail_to_select_title">点击缩略图进入多选模式</string>
@@ -570,7 +549,6 @@
     <string name="pref_player_hide_osd_text_summary">拖动进度、调整字幕时不显示 mpv 默认 OSD 文字</string>
     <string name="pref_player_keep_screen_on_when_paused_title">暂停时保持屏幕常亮</string>
     <string name="pref_player_keep_screen_on_when_paused_summary">视频暂停期间防止屏幕自动熄屏</string>
-    <string name="pref_player_save_position_on_quit_summary">记录播放进度，下次接续观看</string>
     <string name="pref_player_interaction_header">播放器交互设置</string>
 
     <!-- Folders Preferences -->
@@ -642,10 +620,7 @@
     <string name="export_complete">导出完成</string>
     <string name="import_complete">导入完成</string>
     <string name="auto_picture_in_picture">自动画中画</string>
-    <string name="dynamic_speed_overlay">动态倍速悬浮显示</string>
     <string name="show_navigation_bar_with_controls">显示导航栏与控制组件</string>
-    <string name="enable_lua_scripts">启用 Lua 脚本</string>
-    <string name="manage_lua_scripts">管理 Lua 脚本</string>
     <string name="rename_playlist">重命名播放列表</string>
     <string name="create_playlist">新建播放列表</string>
     <string name="add_connection">添加连接</string>
@@ -680,7 +655,6 @@
     <string name="filter_presets">滤镜预设</string>
     <string name="no_storage_devices_found">未检测到存储设备</string>
     <string name="no_folders_or_supported_files">暂无文件夹或支持的文件</string>
-    <string name="hello_world">Hello world</string>
 
     <!-- Browser Preferences -->
     <string name="pref_show_audio_files_title">显示音频文件</string>
@@ -1063,11 +1037,6 @@
     <!-- Appearance Preferences Screen -->
     <string name="pref_appearance_network_thumbnails_dialog_title">启用网络缩略图？</string>
     <string name="pref_appearance_network_thumbnails_dialog_message">为流媒体（M3U/HTTP）生成缩略图会大幅增加流量消耗与加载时间，是否继续？</string>
-    <string name="pref_appearance_thumbnail_strategy_dialog_title">更改缩略图生成策略？</string>
-    <string name="pref_appearance_thumbnail_strategy_dialog_message">切换提取策略将清空现有缩略图缓存，浏览时自动重新生成缩略图。</string>
-    <string name="pref_appearance_thumbnail_position_dialog_title">修改缩略图截取位置？</string>
-    <string name="pref_appearance_thumbnail_position_reset_confirm">将缩略图截取位置重置至视频 %1$d%% 处。</string>
-    <string name="pref_appearance_thumbnail_position_dialog_message">修改截取位置将清空现有缩略图缓存，浏览时自动重新生成缩略图。</string>
 
     <!-- Control Layout Editor Screen -->
     <string name="control_layout_edit_title_top_right">编辑右上角区域</string>
@@ -1101,9 +1070,6 @@
     <string name="tree_view">树形视图</string>
 
     <string name="pref_player_general">常规</string>
-    <string name="pref_player_autoplay_next_video">自动播放下一个视频</string>
-    <string name="pref_player_autoplay_next_video_summary_on">当前视频播放结束后自动播放下一个</string>
-    <string name="pref_player_autoplay_next_video_summary_off">视频播放结束后停留在当前画面</string>
     <string name="pref_player_playlist_mode_summary_on">为本文件夹所有视频显示上/下一曲按钮</string>
     <string name="pref_player_playlist_mode_summary_off">独立播放视频（多选文件可创建临时播放列表）</string>
     <string name="pref_player_keep_screen_on_when_paused_summary_on">暂停播放时保持屏幕常亮</string>

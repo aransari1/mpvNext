@@ -14,9 +14,11 @@ import xyz.mpv.rex.ui.player.Sheets
 import xyz.mpv.rex.ui.player.TrackNode
 import androidx.navigation3.runtime.NavBackStack
 import xyz.mpv.rex.presentation.Screen
+import xyz.mpv.rex.database.entities.BookmarkEntity
 import xyz.mpv.rex.ui.player.controls.components.sheets.AspectRatioSheet
 import xyz.mpv.rex.ui.player.controls.components.sheets.AudioTracksSheet
 import xyz.mpv.rex.ui.player.controls.components.sheets.ChaptersSheet
+import xyz.mpv.rex.ui.player.controls.components.sheets.ChapterSheetItem
 import xyz.mpv.rex.ui.player.controls.components.sheets.CustomSkipDurationSheet
 import xyz.mpv.rex.ui.player.controls.components.sheets.SleepTimerSheet
 import xyz.mpv.rex.ui.player.controls.components.sheets.VideoZoomSheet
@@ -27,9 +29,12 @@ import xyz.mpv.rex.ui.player.controls.components.sheets.PlaybackSpeedSheet
 import xyz.mpv.rex.ui.player.controls.components.sheets.PlaylistSheet
 import xyz.mpv.rex.ui.player.controls.components.sheets.SubtitlesSheet
 import xyz.mpv.rex.ui.player.controls.components.sheets.OnlineSubtitleSearchSheet
+import xyz.mpv.rex.ui.player.controls.components.sheets.ClipExportSheet
+import xyz.mpv.rex.ui.player.controls.components.sheets.VideoQualitySheet
 import xyz.mpv.rex.utils.media.MediaInfoParser
 import dev.vivvvek.seeker.Segment
 import kotlinx.collections.immutable.ImmutableList
+import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
 import org.koin.compose.koinInject
 import androidx.compose.runtime.collectAsState as composeCollectAsState
@@ -51,19 +56,29 @@ fun PlayerSheets(
   audioTracks: ImmutableList<TrackNode>,
   onAddAudio: (Uri) -> Unit,
   onSelectAudio: (TrackNode) -> Unit,
+  alternateAudio: ImmutableList<xyz.mpv.rex.domain.ytdl.model.AudioTrack> = persistentListOf(),
+  onSelectAlternateAudio: (xyz.mpv.rex.domain.ytdl.model.AudioTrack) -> Unit = {},
   // chapters sheet
   chapter: Segment?,
   chapters: ImmutableList<Segment>,
   onSeekToChapter: (Int) -> Unit,
+  currentChapterIndex: Int? = null,
+  activeStop: ChapterSheetItem? = null,
+  onAddBookmarkHere: () -> Unit = {},
+  onSeekToBookmark: (BookmarkEntity) -> Unit = {},
+  onRenameBookmark: (Long, String) -> Unit = { _, _ -> },
+  onDeleteBookmark: (Long) -> Unit = {},
   // Decoders sheet
   decoder: Decoder,
   onUpdateDecoder: (Decoder) -> Unit,
   // Speed sheet
   speed: Float,
   speedPresets: List<Float>,
+  speedCyclePresets: List<Float> = emptyList(),
   onSpeedChange: (Float) -> Unit,
   onAddSpeedPreset: (Float) -> Unit,
   onRemoveSpeedPreset: (Float) -> Unit,
+  onToggleSpeedCyclePreset: (Float) -> Unit = {},
   onResetSpeedPresets: () -> Unit,
   onMakeDefaultSpeed: (Float) -> Unit,
   onResetDefaultSpeed: () -> Unit,
@@ -161,6 +176,10 @@ fun PlayerSheets(
       // Media Search / Autocomplete
       val mediaResults by viewModel.mediaSearchResults.composeCollectAsState()
       val isSearchingMedia by viewModel.isSearchingMedia.composeCollectAsState()
+
+      // Failure / empty states
+      val searchError by viewModel.subtitleManager.searchError.composeCollectAsState()
+      val hasSearched by viewModel.subtitleManager.hasSearched.composeCollectAsState()
       
       // TV Show / Seasons / Episodes
       val selectedTvShow by viewModel.selectedTvShow.composeCollectAsState()
@@ -179,23 +198,36 @@ fun PlayerSheets(
         isOnlineSectionExpanded = isOnlineSectionExpanded,
         onToggleOnlineSection = { viewModel.toggleOnlineSection() },
         mediaTitle = viewModel.currentMediaTitle,
+        searchError = searchError,
+        hasSearched = hasSearched,
+        hasApiKey = viewModel.hasSubtitleApiKey(),
+        onRetry = {
+          val fileInfo = MediaInfoParser.parse(viewModel.currentMediaTitle)
+          viewModel.subtitleManager.searchSubtitles(
+            query = fileInfo.title.ifBlank { viewModel.currentMediaTitle },
+            season = selectedSeason?.season_number ?: fileInfo.season,
+            episode = selectedEpisode?.episode_number ?: fileInfo.episode,
+            year = fileInfo.year,
+          )
+        },
         // Autocomplete & Series Selection
         mediaSearchResults = mediaResults.toImmutableList(),
         isSearchingMedia = isSearchingMedia,
+        // "Search" only looks the title up. Searching for subtitles needs a concrete movie or
+        // show; firing both at once searched series titles as movies and returned nothing.
         onSearchMedia = { query ->
-          // Parse both the user's search query and the original filename
+          val queryInfo = MediaInfoParser.parse(query)
+          viewModel.findMedia(queryInfo.title.ifBlank { query })
+        },
+        onSearchSubtitles = { query ->
           val queryInfo = MediaInfoParser.parse(query)
           val fileInfo = MediaInfoParser.parse(viewModel.currentMediaTitle)
-          
-          // Use clean title from query for TMDB search (strip S01E05 noise)
-          val searchTitle = queryInfo.title.ifBlank { query }
-          viewModel.subtitleManager.searchMedia(searchTitle)
-          
-          // Priority: TMDB selection > query parsed > file parsed
-          val s = selectedSeason?.season_number ?: queryInfo.season ?: fileInfo.season
-          val e = selectedEpisode?.episode_number ?: queryInfo.episode ?: fileInfo.episode
-          val y = queryInfo.year ?: fileInfo.year
-          viewModel.subtitleManager.searchSubtitles(searchTitle, s, e, y)
+          viewModel.subtitleManager.searchSubtitles(
+            query = queryInfo.title.ifBlank { query },
+            season = selectedSeason?.season_number ?: queryInfo.season ?: fileInfo.season,
+            episode = selectedEpisode?.episode_number ?: queryInfo.episode ?: fileInfo.episode,
+            year = queryInfo.year ?: fileInfo.year,
+          )
         },
         onSelectMedia = { viewModel.subtitleManager.selectMedia(it) },
         selectedTvShow = selectedTvShow,
@@ -272,15 +304,27 @@ fun PlayerSheets(
         onAddAudioTrack = { showFilePicker = true },
         onOpenDelayPanel = { onOpenPanel(Panels.AudioDelay) },
         onDismissRequest,
+        alternateTracks = alternateAudio,
+        onSelectAlternate = onSelectAlternateAudio,
       )
     }
 
     Sheets.Chapters -> {
+      val bookmarks by viewModel.bookmarks.collectAsState(initial = emptyList())
+      val currentPosition by viewModel.currentPosition.collectAsState()
       ChaptersSheet(
-        chapters,
+        chapters = chapters,
         currentChapter = chapter,
-        onClick = { onSeekToChapter(chapters.indexOf(it)) },
-        onDismissRequest,
+        currentChapterIndex = currentChapterIndex,
+        onChapterClick = onSeekToChapter,
+        onDismissRequest = onDismissRequest,
+        bookmarks = bookmarks.toImmutableList(),
+        currentPositionSeconds = currentPosition,
+        activeStop = activeStop,
+        onAddBookmark = onAddBookmarkHere,
+        onSeekToBookmark = onSeekToBookmark,
+        onRenameBookmark = onRenameBookmark,
+        onDeleteBookmark = onDeleteBookmark,
       )
     }
 
@@ -309,8 +353,10 @@ fun PlayerSheets(
         speed,
         onSpeedChange = onSpeedChange,
         speedPresets = speedPresets,
+        speedCyclePresets = speedCyclePresets,
         onAddSpeedPreset = onAddSpeedPreset,
         onRemoveSpeedPreset = onRemoveSpeedPreset,
+        onToggleSpeedCyclePreset = onToggleSpeedCyclePreset,
         onResetPresets = onResetSpeedPresets,
         onMakeDefault = onMakeDefaultSpeed,
         onResetDefault = onResetDefaultSpeed,
@@ -483,6 +529,41 @@ fun PlayerSheets(
       SleepTimerSheet(
         remainingTime = sleepTimerTimeRemaining,
         onStartTimer = onStartSleepTimer,
+        onDismissRequest = onDismissRequest,
+      )
+    }
+
+    Sheets.ClipExport -> {
+      val a by viewModel.abLoopA.composeCollectAsState()
+      val b by viewModel.abLoopB.composeCollectAsState()
+      val valA = a ?: 0.0
+      val valB = b ?: 0.0
+      val startSec = minOf(valA, valB)
+      val endSec = maxOf(valA, valB)
+      val context = androidx.compose.ui.platform.LocalContext.current
+
+      ClipExportSheet(
+        startSec = startSec,
+        endSec = endSec,
+        onExport = { mode ->
+          viewModel.cutABLoopClip(context, mode)
+        },
+        onDismissRequest = onDismissRequest,
+      )
+    }
+
+    Sheets.VideoQuality -> {
+      val availableQualities by viewModel.availableVideoQualities.composeCollectAsState()
+      val currentQuality by viewModel.currentVideoQuality.composeCollectAsState()
+      val context = androidx.compose.ui.platform.LocalContext.current
+      val activity = context as? xyz.mpv.rex.ui.player.PlayerActivity
+
+      VideoQualitySheet(
+        qualities = availableQualities,
+        currentQuality = currentQuality,
+        onSelectQuality = { quality ->
+          activity?.switchVideoQuality(quality)
+        },
         onDismissRequest = onDismissRequest,
       )
     }

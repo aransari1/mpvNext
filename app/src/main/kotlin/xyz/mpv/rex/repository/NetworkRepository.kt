@@ -1,9 +1,12 @@
 package xyz.mpv.rex.repository
 
 import xyz.mpv.rex.database.dao.NetworkConnectionDao
+import java.util.concurrent.ConcurrentHashMap
+
 import xyz.mpv.rex.domain.network.ConnectionStatus
 import xyz.mpv.rex.domain.network.NetworkConnection
 import xyz.mpv.rex.domain.network.NetworkFile
+import xyz.mpv.rex.domain.network.NetworkProtocol
 import xyz.mpv.rex.ui.browser.networkstreaming.clients.NetworkClient
 import xyz.mpv.rex.ui.browser.networkstreaming.clients.NetworkClientFactory
 import kotlinx.coroutines.flow.Flow
@@ -18,7 +21,7 @@ class NetworkRepository(
   private val dao: NetworkConnectionDao,
 ) {
   // Active network clients
-  private val activeClients = mutableMapOf<Long, NetworkClient>()
+  private val activeClients = ConcurrentHashMap<Long, NetworkClient>()
 
   // Connection statuses
   private val _connectionStatuses = MutableStateFlow<Map<Long, ConnectionStatus>>(emptyMap())
@@ -40,15 +43,63 @@ class NetworkRepository(
   suspend fun getConnectionById(id: Long): NetworkConnection? = dao.getConnectionById(id)
 
   /**
+   * Find the saved SMB connection that owns `smb://[host]/[share]/…`, or null if none is saved.
+   *
+   * There is no query for this, so the (short) list is matched in Kotlin. Host names and SMB share
+   * names are case-insensitive, and the saved share may or may not carry surrounding slashes.
+   */
+  suspend fun findSmbConnection(
+    host: String,
+    share: String,
+  ): NetworkConnection? {
+    fun normalizeHost(raw: String): String {
+      val trimmed = raw.trim().removePrefix("smb://").trimEnd('/')
+      return when {
+        trimmed.startsWith('[') && trimmed.contains(']') -> trimmed.substringAfter('[').substringBefore(']')
+        trimmed.count { it == ':' } > 1 -> trimmed
+        else -> trimmed.substringBefore(':')
+      }
+    }
+
+    val cleanHost = normalizeHost(host)
+    val cleanShare = share.trim('/')
+    val smbConnections = dao.getAllConnectionsList().filter {
+      it.protocol == NetworkProtocol.SMB &&
+        normalizeHost(it.host).equals(cleanHost, ignoreCase = true)
+    }
+
+    return smbConnections.firstOrNull {
+      it.path.trim('/').equals(cleanShare, ignoreCase = true)
+    } ?: smbConnections.firstOrNull {
+      it.path.trim('/').isEmpty()
+    }?.copy(path = cleanShare)
+  }
+
+  /**
+   * Strips stray whitespace from the fields that address the server.
+   *
+   * A pasted or fat-fingered space in the username authenticates as a different (non-existent)
+   * account, which surfaces as a confusing "share not found" rather than a login failure. The
+   * password is deliberately left alone — spaces can be part of a real one.
+   */
+  private fun NetworkConnection.trimmed(): NetworkConnection =
+    copy(
+      name = name.trim(),
+      host = host.trim(),
+      username = username.trim(),
+      path = path.trim(),
+    )
+
+  /**
    * Add a new connection
    */
-  suspend fun addConnection(connection: NetworkConnection): Long = dao.insert(connection)
+  suspend fun addConnection(connection: NetworkConnection): Long = dao.insert(connection.trimmed())
 
   /**
    * Update an existing connection
    */
   suspend fun updateConnection(connection: NetworkConnection) {
-    dao.update(connection)
+    dao.update(connection.trimmed())
     // Disconnect and remove cached client if it exists
     // This ensures the next connection uses the updated credentials
     activeClients[connection.id]?.let { client ->
@@ -194,25 +245,40 @@ class NetworkRepository(
     path: String,
   ): Result<List<NetworkFile>> =
     try {
-      // Always fetch the latest connection from database to ensure we have current credentials
-      val latestConnection = dao.getConnectionById(connection.id) ?: connection
-
-      // Check if we have an active client
-      val existingClient = activeClients[connection.id]
-
-      // If no client exists, or if connection details have changed, create a new one
-      val client = if (existingClient == null) {
-        // Create new client with latest connection settings
-        NetworkClientFactory.createClient(latestConnection).also { newClient ->
-          newClient.connect().getOrThrow()
-          activeClients[connection.id] = newClient
+      if (connection.id <= 0) {
+        val client = NetworkClientFactory.createClient(connection)
+        try {
+          client.connect().getOrThrow()
+          client.listFiles(path)
+        } finally {
+          client.disconnect()
         }
       } else {
-        existingClient
-      }
+        // Always fetch the latest connection from database to ensure we have current credentials
+        val dbConnection = dao.getConnectionById(connection.id)
+        val latestConnection = dbConnection?.copy(
+          path = connection.path.takeIf { it.isNotBlank() && it != "/" } ?: dbConnection.path,
+          port = connection.port.takeIf { it > 0 } ?: dbConnection.port,
+        ) ?: connection
 
-      // List files
-      client.listFiles(path)
+        // Check if we have an active client
+        val existingClient = activeClients[connection.id]
+
+        // If no client exists, or if connection details have changed, create a new one
+        val client = if (existingClient == null || !existingClient.isConnected() || existingClient.connection.path != latestConnection.path) {
+          existingClient?.disconnect()
+          // Create new client with latest connection settings
+          NetworkClientFactory.createClient(latestConnection).also { newClient ->
+            newClient.connect().getOrThrow()
+            activeClients[connection.id] = newClient
+          }
+        } else {
+          existingClient
+        }
+
+        // List files
+        client.listFiles(path)
+      }
     } catch (e: Exception) {
       Result.failure(e)
     }

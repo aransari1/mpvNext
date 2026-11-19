@@ -1,6 +1,7 @@
 package xyz.mpv.rex.utils.media
 
 import android.util.Log
+import xyz.mpv.rex.database.repository.MediaPlayCountRepository
 import xyz.mpv.rex.domain.playbackstate.repository.PlaybackStateRepository
 import org.koin.java.KoinJavaComponent.inject
 import java.io.File
@@ -11,6 +12,7 @@ import java.io.File
 object PlaybackStateOps {
   private const val TAG = "PlaybackStateOps"
   private val repository: PlaybackStateRepository by inject(PlaybackStateRepository::class.java)
+  private val mediaPlayCountRepository: MediaPlayCountRepository by inject(MediaPlayCountRepository::class.java)
 
   /**
    * Called when a video file is renamed
@@ -34,6 +36,7 @@ object PlaybackStateOps {
         repository.updateMediaTitle(oldFileName, newFileName)
         Log.d(TAG, "✓ Updated playback state: $oldFileName -> $newFileName")
       }
+      mediaPlayCountRepository.updateFilePath(oldPath, newPath)
     } catch (e: Exception) {
       Log.w(TAG, "Failed to update playback state: ${e.message}")
     }
@@ -51,6 +54,7 @@ object PlaybackStateOps {
     try {
       val fileName = File(filePath).name
       repository.deleteByTitle(fileName)
+      mediaPlayCountRepository.deleteByFilePath(filePath)
       Log.d(TAG, "✓ Deleted playback state for: $fileName")
     } catch (e: Exception) {
       Log.w(TAG, "Failed to delete playback state: ${e.message}")

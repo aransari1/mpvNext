@@ -8,8 +8,9 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.basicMarquee
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
@@ -37,6 +38,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import xyz.mpv.rex.preferences.AppearancePreferences
 import xyz.mpv.rex.preferences.preference.collectAsState
+import xyz.mpv.rex.ui.theme.controlColor
 import xyz.mpv.rex.ui.theme.spacing
 import dev.vivvvek.seeker.Segment
 import `is`.xyz.mpv.Utils
@@ -49,14 +51,47 @@ fun CurrentChapter(
   modifier: Modifier = Modifier,
   onClick: () -> Unit = {},
   onDoubleClick: (() -> Unit)? = null,
-  onLongClick: (() -> Unit)? = null,
 ) {
   val appearancePreferences = koinInject<AppearancePreferences>()
   val enableGlass by appearancePreferences.enableGlassPlayerControls.collectAsState()
+  val hideBackground by appearancePreferences.hidePlayerButtonsBackground.collectAsState()
+  val matchTheme by appearancePreferences.matchPlayerControlsToTheme.collectAsState()
+  val inDock = LocalInControlsDock.current
 
-  val glassModifier = if (enableGlass) {
+  val chapterShape = if (inDock) RoundedCornerShape(14.dp) else RoundedCornerShape(16.dp)
+  val chapterHeight = if (inDock) 38.dp else 42.dp
+
+  val surfaceColor = when {
+    inDock -> Color.Transparent
+    hideBackground -> Color.Transparent
+    enableGlass -> Color.Transparent
+    matchTheme -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f)
+    else -> MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.55f)
+  }
+
+  val contentColor = when {
+    matchTheme -> {
+      if (hideBackground) MaterialTheme.colorScheme.primary
+      else MaterialTheme.colorScheme.onPrimaryContainer
+    }
+    else -> if (hideBackground) controlColor else MaterialTheme.colorScheme.onSurface
+  }
+
+  val timeColor = when {
+    matchTheme -> MaterialTheme.colorScheme.primary
+    enableGlass -> Color.White
+    else -> MaterialTheme.colorScheme.primary
+  }
+
+  val borderColor = if (inDock || hideBackground || enableGlass) null else BorderStroke(
+    1.dp,
+    if (matchTheme) MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
+    else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
+  )
+
+  val glassModifier = if (enableGlass && !inDock && !hideBackground) {
     Modifier.glassSurface(
-      shape = RoundedCornerShape(50),
+      shape = chapterShape,
       backgroundColor = Color.White.copy(alpha = 0.05f),
       borderColor = Color.White.copy(alpha = 0.15f),
       borderWidth = 1.dp,
@@ -81,26 +116,20 @@ fun CurrentChapter(
     modifier =
       modifier
         .then(glassModifier)
-        .height(40.dp)
+        .height(chapterHeight)
         .widthIn(max = 220.dp)
-        .clip(RoundedCornerShape(50))
-        .combinedClickable(
-          onClick = onClick,
-          onDoubleClick = onDoubleClick,
-          onLongClick = onLongClick,
-        ),
-    shape = RoundedCornerShape(50),
-    color = if (enableGlass) Color.Transparent else MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.55f),
-    contentColor = MaterialTheme.colorScheme.onSurface,
+        .clip(chapterShape)
+        .combinedClickable(onClick = onClick, onDoubleClick = onDoubleClick),
+    shape = chapterShape,
+    color = surfaceColor,
+    contentColor = contentColor,
     tonalElevation = 0.dp,
-    border = if (enableGlass) null else BorderStroke(
-      1.dp,
-      MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
-    ),
+    shadowElevation = 0.dp,
+    border = borderColor,
   ) {
     AnimatedContent(
       targetState = chapter,
-      modifier = Modifier.padding(horizontal = MaterialTheme.spacing.medium, vertical = MaterialTheme.spacing.smaller),
+      modifier = Modifier.padding(horizontal = 10.dp, vertical = 2.dp),
       contentAlignment = Alignment.Center,
       transitionSpec = {
         if (targetState.start > initialState.start) {
@@ -125,7 +154,7 @@ fun CurrentChapter(
           style = MaterialTheme.typography.bodyMedium,
           maxLines = 1,
           overflow = TextOverflow.Clip,
-          color = MaterialTheme.colorScheme.primary,
+          color = timeColor,
         )
         currentChapter.name.let {
           Text(
@@ -133,7 +162,7 @@ fun CurrentChapter(
             textAlign = TextAlign.Center,
             style = MaterialTheme.typography.bodyMedium,
             maxLines = 1,
-            color = MaterialTheme.colorScheme.onSurface,
+            color = contentColor,
             overflow = TextOverflow.Clip,
           )
           Text(
@@ -143,7 +172,7 @@ fun CurrentChapter(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             fontWeight = FontWeight.ExtraBold,
-            color = MaterialTheme.colorScheme.onSurface,
+            color = contentColor,
             modifier = Modifier.basicMarquee(),
           )
         }

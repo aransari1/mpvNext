@@ -30,7 +30,8 @@ class HistoryManager(
     private val recentlyPlayedRepository: RecentlyPlayedRepository,
     private val playbackStateRepository: PlaybackStateRepository,
     private val advancedPreferences: AdvancedPreferences,
-    private val scope: CoroutineScope
+    private val scope: CoroutineScope,
+    private val mediaPlayCountRepository: xyz.mpv.rex.database.repository.MediaPlayCountRepository? = org.koin.core.context.GlobalContext.getOrNull()?.getOrNull(),
 ) {
     companion object {
         private const val TAG = "HistoryManager"
@@ -45,7 +46,11 @@ class HistoryManager(
         launchSource: String,
         playlistId: Int? = null
     ) {
-        if (!advancedPreferences.enableRecentlyPlayed.get()) return
+        val isExternalOrShare = launchSource == "share" || launchSource == "open_file" || launchSource == "external"
+        if (isExternalOrShare && advancedPreferences.excludeExternalPlaybackFromHistory.get()) {
+            Log.d(TAG, "recordPlaybackStart: skipping history for external/share launchSource=$launchSource")
+            return
+        }
 
         scope.launch(Dispatchers.IO) {
             runCatching {
@@ -56,14 +61,25 @@ class HistoryManager(
                     return@launch
                 }
 
+                mediaPlayCountRepository?.incrementPlayCount(filePath)
+
+                if (!advancedPreferences.enableRecentlyPlayed.get()) {
+                    return@launch
+                }
+
                 val videoTitle = MPVLib.getPropertyString("media-title")?.takeIf { it != fileName }
                 val duration = (MPVLib.getPropertyDouble("duration") ?: 0.0).times(1000).toLong()
                 val fileSize = getMPVFileSize()
                 val (width, height) = getMPVResolution()
                 val (artist, album) = getMPVMetadata()
                 
-                // Use extension first, then height
-                val isAudio = xyz.mpv.rex.utils.storage.FileTypeUtils.isAudioFile(File(filePath)) || (height <= 0)
+                val file = File(filePath)
+                val isAudio = when {
+                    xyz.mpv.rex.utils.storage.FileTypeUtils.isAudioFile(file) -> true
+                    xyz.mpv.rex.utils.storage.FileTypeUtils.isVideoFile(file) -> false
+                    width > 0 && height > 0 -> false
+                    else -> false
+                }
 
                 addRecentlyPlayed(
                     filePath = filePath,
@@ -104,6 +120,8 @@ class HistoryManager(
         album: String = ""
     ) {
         if (!advancedPreferences.enableRecentlyPlayed.get()) return
+        val isExternalOrShare = launchSource == "share" || launchSource == "open_file" || launchSource == "external"
+        if (isExternalOrShare && advancedPreferences.excludeExternalPlaybackFromHistory.get()) return
         if (shouldSkipHistory(filePath)) return
 
         recentlyPlayedRepository.addRecentlyPlayed(
@@ -123,9 +141,9 @@ class HistoryManager(
                 val fileSize = getMPVFileSize()
                 val (width, height) = getMPVResolution()
 
-                // Update the most recent entry
+                // Update the most recent entry ONLY if it matches the current file
                 val lastPlayed = recentlyPlayedRepository.getRecentlyPlayed(1).firstOrNull()
-                if (lastPlayed != null) {
+                if (lastPlayed != null && (lastPlayed.fileName == fileName || lastPlayed.filePath.endsWith(fileName))) {
                     recentlyPlayedRepository.updateVideoMetadata(
                         lastPlayed.filePath,
                         mediaTitle,
@@ -151,12 +169,13 @@ class HistoryManager(
     }
 
     suspend fun getLastPlayed(): String? = withContext(Dispatchers.IO) {
+        val autoRemove = advancedPreferences.autoRemoveDeletedFromHistory.get()
         val recent = runCatching { recentlyPlayedRepository.getRecentlyPlayed(50) }.getOrDefault(emptyList())
         for (entity in recent) {
             val path = entity.filePath
             if (isNonFileUri(path) || fileExists(path)) {
                 return@withContext path
-            } else {
+            } else if (autoRemove) {
                 recentlyPlayedRepository.deleteByFilePath(path)
             }
         }
@@ -164,12 +183,13 @@ class HistoryManager(
     }
 
     suspend fun getLastPlayedEntity(): RecentlyPlayedEntity? = withContext(Dispatchers.IO) {
+        val autoRemove = advancedPreferences.autoRemoveDeletedFromHistory.get()
         val recent = runCatching { recentlyPlayedRepository.getRecentlyPlayed(50) }.getOrDefault(emptyList())
         for (entity in recent) {
             val path = entity.filePath
             if (isNonFileUri(path) || fileExists(path)) {
                 return@withContext entity
-            } else {
+            } else if (autoRemove) {
                 recentlyPlayedRepository.deleteByFilePath(path)
             }
         }
@@ -220,6 +240,8 @@ class HistoryManager(
                         audioDelay = existing?.audioDelay ?: 0,
                         timeRemaining = -1,
                         hasBeenWatched = false,
+                        videoAspect = null,
+                        customAspectRatio = -1.0,
                     )
                 )
                 recentlyPlayedRepository.deleteByFilePath(filePath)
@@ -240,8 +262,13 @@ class HistoryManager(
                         subSpeed = existing?.subSpeed ?: 1.0,
                         aid = existing?.aid ?: -1,
                         audioDelay = existing?.audioDelay ?: 0,
-                        timeRemaining = durationSeconds,
+                        timeRemaining = existing?.timeRemaining ?: durationSeconds,
+                        savedOrientation = existing?.savedOrientation,
+                        externalSubtitles = existing?.externalSubtitles ?: "",
+                        externalAudioTracks = existing?.externalAudioTracks ?: "",
                         hasBeenWatched = false,
+                        videoAspect = existing?.videoAspect,
+                        customAspectRatio = existing?.customAspectRatio ?: -1.0,
                     )
                 )
                 // Upsert a RecentlyPlayed entry with timestamp = now so the file surfaces
@@ -269,7 +296,12 @@ class HistoryManager(
                         aid = existing?.aid ?: -1,
                         audioDelay = existing?.audioDelay ?: 0,
                         timeRemaining = 0,
+                        savedOrientation = existing?.savedOrientation,
+                        externalSubtitles = existing?.externalSubtitles ?: "",
+                        externalAudioTracks = existing?.externalAudioTracks ?: "",
                         hasBeenWatched = true,
+                        videoAspect = existing?.videoAspect,
+                        customAspectRatio = existing?.customAspectRatio ?: -1.0,
                     )
                 )
                 // Also add/bump in recently played history
@@ -297,7 +329,12 @@ class HistoryManager(
                         aid = existing?.aid ?: -1,
                         audioDelay = existing?.audioDelay ?: 0,
                         timeRemaining = durationSeconds,
+                        savedOrientation = existing?.savedOrientation,
+                        externalSubtitles = existing?.externalSubtitles ?: "",
+                        externalAudioTracks = existing?.externalAudioTracks ?: "",
                         hasBeenWatched = false,
+                        videoAspect = existing?.videoAspect,
+                        customAspectRatio = existing?.customAspectRatio ?: -1.0,
                     )
                 )
                 // Also clear from recently played history
@@ -356,23 +393,30 @@ class HistoryManager(
         return false
     }
 
-    private fun fileExists(path: String): Boolean = runCatching {
+    fun fileExists(path: String): Boolean = runCatching {
         if (path.startsWith("/") || path.startsWith("file://")) {
             val filePath = if (path.startsWith("file://")) path.removePrefix("file://") else path
             File(filePath).exists()
         } else {
             val uri = Uri.parse(path)
             val scheme = uri.scheme
-            if (scheme == null || scheme.equals("file", ignoreCase = true)) File(path).exists()
-            else true
+            if (scheme == null || scheme.equals("file", ignoreCase = true)) {
+                File(path).exists()
+            } else if (scheme.equals("content", ignoreCase = true)) {
+                context.contentResolver.query(uri, arrayOf(MediaStore.MediaColumns._ID), null, null, null)?.use { cursor ->
+                    cursor.moveToFirst()
+                } ?: false
+            } else {
+                true
+            }
         }
     }.getOrDefault(false)
 
-    private fun isNonFileUri(path: String): Boolean = runCatching {
+    fun isNonFileUri(path: String): Boolean = runCatching {
         if (path.startsWith("/") || path.startsWith("file://")) false
         else {
             val scheme = Uri.parse(path).scheme
-            scheme != null && !scheme.equals("file", ignoreCase = true)
+            scheme != null && !scheme.equals("file", ignoreCase = true) && !scheme.equals("content", ignoreCase = true)
         }
     }.getOrDefault(false)
 

@@ -97,12 +97,14 @@ fun CustomSkipDurationSheet(
       }
 
       // Presets
-      LazyRow(
-        modifier = Modifier.fillMaxWidth(),
-        contentPadding = PaddingValues(horizontal = MaterialTheme.spacing.medium),
+      androidx.compose.foundation.layout.FlowRow(
+        modifier = Modifier
+          .fillMaxWidth()
+          .padding(horizontal = MaterialTheme.spacing.medium),
         horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.small),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
       ) {
-        items(presets) { preset ->
+        presets.forEach { preset ->
           FilterChip(
             selected = duration == preset,
             onClick = { onDurationChange(preset) },

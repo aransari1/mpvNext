@@ -164,14 +164,16 @@ object MediaUtils : KoinComponent {
     }
 
     val isAudio = when (source) {
-      is Video -> source.isAudio
+      is Video -> source.isAudio && !xyz.mpv.rex.utils.storage.FileTypeUtils.isVideoFile(File(source.path))
       is String -> {
         val path = if (source.startsWith("file://")) source.removePrefix("file://") else source
-        xyz.mpv.rex.utils.storage.FileTypeUtils.isAudioFile(File(path))
+        val file = File(path)
+        xyz.mpv.rex.utils.storage.FileTypeUtils.isAudioFile(file) && !xyz.mpv.rex.utils.storage.FileTypeUtils.isVideoFile(file)
       }
       is Uri -> {
         val path = source.path ?: ""
-        xyz.mpv.rex.utils.storage.FileTypeUtils.isAudioFile(File(path))
+        val file = File(path)
+        xyz.mpv.rex.utils.storage.FileTypeUtils.isAudioFile(file) && !xyz.mpv.rex.utils.storage.FileTypeUtils.isVideoFile(file)
       }
       else -> false
     }
@@ -261,7 +263,7 @@ object MediaUtils : KoinComponent {
     intent.putExtra("title", firstVideo.displayName)
 
     // Direct mini player mode: start headless playback with the full playlist for audio files.
-    if (playerPreferences.playInMiniPlayerDirectly.get() && firstVideo.isAudio) {
+    if (playerPreferences.playInMiniPlayerDirectly.get() && firstVideo.isAudio && !xyz.mpv.rex.utils.storage.FileTypeUtils.isVideoFile(File(firstVideo.path))) {
       val uris = videos.map { video ->
         if (video.uri.scheme == null &&
           (video.path.startsWith("/") || video.path.startsWith("file://"))

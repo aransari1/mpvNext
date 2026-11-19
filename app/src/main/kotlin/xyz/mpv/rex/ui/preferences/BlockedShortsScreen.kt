@@ -36,15 +36,22 @@ import androidx.compose.ui.unit.dp
 import xyz.mpv.rex.R
 import xyz.mpv.rex.database.dao.ShortsMediaDao
 import xyz.mpv.rex.presentation.Screen
+import xyz.mpv.rex.presentation.components.CollapsibleHeaderScreen
 import xyz.mpv.rex.ui.browser.shorts.ShortsScreen
 import xyz.mpv.rex.ui.utils.LocalBackStack
+import xyz.mpv.rex.ui.utils.navigateBack
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import org.koin.compose.koinInject
 import java.io.File
+import xyz.mpv.rex.presentation.MotionStyle
 
 @Serializable
 object BlockedShortsScreen : Screen {
+  /** Settings keep the app's original full horizontal push. */
+  override val motion: MotionStyle
+    get() = MotionStyle.Default
+
     @OptIn(ExperimentalMaterial3Api::class)
     @Composable
     override fun Content() {
@@ -55,32 +62,18 @@ object BlockedShortsScreen : Screen {
         val blockedVideos by shortsMediaDao.observeAllShortsMedia().collectAsState(initial = emptyList())
         val filteredBlocked = blockedVideos.filter { it.isBlocked }
 
-        Scaffold(
-            topBar = {
-                TopAppBar(
-                    title = {
-                        Text(
-                            text = stringResource(R.string.pref_blocked_videos),
-                            style = MaterialTheme.typography.headlineSmall,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = MaterialTheme.colorScheme.primary,
-                        )
-                    },
-                    navigationIcon = {
-                        IconButton(onClick = backstack::removeLastOrNull) {
-                            Icon(
-                                Icons.AutoMirrored.Outlined.ArrowBack,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.secondary,
-                            )
-                        }
-                    },
-                )
-            },
-        ) { padding ->
+        val pageColor = MaterialTheme.colorScheme.surfaceContainer
+        val cardColor = MaterialTheme.colorScheme.surface
+
+        CollapsibleHeaderScreen(
+            title = stringResource(R.string.pref_blocked_videos),
+            showBackButton = true,
+            onBackClick = backstack::navigateBack,
+            containerColor = pageColor,
+        ) { contentModifier ->
             if (filteredBlocked.isEmpty()) {
                 Box(
-                    modifier = Modifier.fillMaxSize().padding(padding),
+                    modifier = contentModifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
@@ -91,9 +84,8 @@ object BlockedShortsScreen : Screen {
             } else {
                 val navBarHeight = xyz.mpv.rex.ui.browser.LocalNavigationBarHeight.current
                 LazyColumn(
-                    modifier = Modifier
+                    modifier = contentModifier
                         .fillMaxSize()
-                        .padding(padding)
                         .padding(horizontal = 16.dp),
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = navBarHeight + 16.dp),
                 ) {
@@ -109,7 +101,7 @@ object BlockedShortsScreen : Screen {
                                     backstack.add(ShortsScreen(initialVideoPath = media.path, blockedOnly = true))
                                 },
                             colors = CardDefaults.cardColors(
-                                containerColor = MaterialTheme.colorScheme.surfaceContainer
+                                containerColor = cardColor
                             )
                         ) {
                             Row(

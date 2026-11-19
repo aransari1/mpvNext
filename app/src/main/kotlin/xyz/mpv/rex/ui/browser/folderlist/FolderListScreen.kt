@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -27,8 +28,6 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.filled.AccountTree
@@ -41,6 +40,7 @@ import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.SwapVert
@@ -59,6 +59,10 @@ import androidx.compose.material3.PlainTooltip
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.TopAppBarState
+import androidx.compose.material3.rememberTopAppBarState
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.material3.SearchBar
 import androidx.compose.material3.SearchBarDefaults
 import androidx.compose.material3.Text
@@ -101,6 +105,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.viewmodel.compose.viewModel
 import android.util.Log
 import xyz.mpv.rex.domain.browser.FileSystemItem
+import xyz.mpv.rex.domain.pinned.PinScope
 import xyz.mpv.rex.domain.media.model.VideoFolder
 import xyz.mpv.rex.preferences.AppearancePreferences
 import xyz.mpv.rex.preferences.BrowserPreferences
@@ -116,9 +121,11 @@ import xyz.mpv.rex.repository.MediaFileRepository
 import xyz.mpv.rex.presentation.Screen
 import xyz.mpv.rex.presentation.components.pullrefresh.PullRefreshBox
 import xyz.mpv.rex.ui.browser.LocalNavigationBarHeight
+import xyz.mpv.rex.ui.browser.LocalMiniPlayerActive
 import xyz.mpv.rex.ui.browser.cards.FolderCard
 import xyz.mpv.rex.ui.browser.cards.VideoCard
 import xyz.mpv.rex.ui.browser.components.BrowserTopBar
+import xyz.mpv.rex.ui.browser.components.ContentSurfaceContainer
 import xyz.mpv.rex.ui.browser.components.UnifiedExplorerContent
 import xyz.mpv.rex.ui.browser.components.SelectionOverflowAction
 import xyz.mpv.rex.ui.browser.dialogs.DeleteConfirmationDialog
@@ -143,6 +150,7 @@ import xyz.mpv.rex.ui.utils.LocalBackStack
 import xyz.mpv.rex.utils.history.RecentlyPlayedOps
 import xyz.mpv.rex.utils.media.MediaUtils
 import xyz.mpv.rex.utils.permission.PermissionUtils
+import xyz.mpv.rex.utils.sort.PinnedSortUtils
 import xyz.mpv.rex.utils.sort.SortUtils
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.PermissionStatus
@@ -151,6 +159,7 @@ import kotlinx.serialization.Serializable
 
 import org.koin.compose.koinInject
 import java.io.File
+import xyz.mpv.rex.ui.motion.RexMotion
 
 @Serializable
 object FolderListScreen : Screen {
@@ -192,6 +201,14 @@ object FolderListScreen : Screen {
     val gesturePreferences = koinInject<GesturePreferences>()
     val foldersPreferences = koinInject<FoldersPreferences>()
     val advancedPreferences = koinInject<xyz.mpv.rex.preferences.AdvancedPreferences>()
+    val appearancePreferences = koinInject<AppearancePreferences>()
+    val hidePlayFabShowInHeader by appearancePreferences.hidePlayFabShowInHeader.collectAsState()
+
+    // Pinned folders (issue #466), scoped to the album view so tree-view pins
+    // don't flood this list when isolation is enabled.
+    val pinnedItemRepository = koinInject<xyz.mpv.rex.domain.pinned.PinnedItemRepository>()
+    val pinnedPaths by pinnedItemRepository.pinnedPaths(PinScope.ALBUM)
+      .collectAsState(initial = pinnedItemRepository.getPinnedPaths(PinScope.ALBUM))
 
     // State collection
     val videoFolders by viewModel.videoFolders.collectAsState()
@@ -215,6 +232,7 @@ object FolderListScreen : Screen {
     val showSubtitleIndicator by browserPreferences.showSubtitleIndicator.collectAsState()
     val tapThumbnailToSelect by gesturePreferences.tapThumbnailToSelect.collectAsState()
     val enableRecentlyPlayed by advancedPreferences.enableRecentlyPlayed.collectAsState()
+    val showAudioFiles by browserPreferences.showAudioFiles.collectAsState()
     val autoScrollToLastPlayed by browserPreferences.autoScrollToLastPlayed.collectAsState()
 
     // UI state - use standalone states to avoid scroll issues with predictive back gesture
@@ -226,8 +244,10 @@ object FolderListScreen : Screen {
     val hasGridAutoScrolled = rememberSaveable(inputs = arrayOf(recentlyPlayedFilePath ?: "")) { mutableStateOf(false) }
 
     // Sorting and filtering
-    val sortedFolders = remember(videoFolders, folderSortType, folderSortOrder) {
-      SortUtils.sortFolders(videoFolders, folderSortType, folderSortOrder)
+    val sortedFolders = remember(videoFolders, folderSortType, folderSortOrder, showAudioFiles, pinnedPaths) {
+      val sorted = SortUtils.sortFolders(videoFolders, folderSortType, folderSortOrder, showAudioFiles)
+      // Pinned folders come first, in pin order (issue #466).
+      PinnedSortUtils.sortPinnedFirst(sorted, pinnedPaths) { it.path }
     }
 
     val initialListIndex = if (rememberedListIndex.intValue > 0) {
@@ -327,6 +347,12 @@ object FolderListScreen : Screen {
     // FAB state
     val isFabVisible = remember { mutableStateOf(true) }
     val isFabExpanded = remember { mutableStateOf(false) }
+    val isMiniPlayerActive = LocalMiniPlayerActive.current
+    LaunchedEffect(isMiniPlayerActive) {
+      if (isMiniPlayerActive) {
+        isFabExpanded.value = false
+      }
+    }
 
     // File picker
     val filePicker = rememberLauncherForActivityResult(
@@ -435,10 +461,24 @@ object FolderListScreen : Screen {
       onExpandedChange = { isFabExpanded.value = it },
     )
 
+    val topAppBarState = rememberTopAppBarState()
+    val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior(topAppBarState)
+
     Scaffold(
+      modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
+      // The content below reads `LocalNavigationBarHeight`, which already carries the device
+      // navigation bar inset. Leaving Scaffold's default insets on would apply that inset twice
+      // and lift the content sheet off the bottom bar, hiding its rounded bottom corners.
+      contentWindowInsets = WindowInsets(0, 0, 0, 0),
+      containerColor = if (MaterialTheme.colorScheme.background == androidx.compose.ui.graphics.Color.Black) {
+        androidx.compose.ui.graphics.Color.Black
+      } else {
+        MaterialTheme.colorScheme.surfaceContainer
+      },
       topBar = {
         BrowserTopBar(
           title = stringResource(xyz.mpv.rex.R.string.app_name),
+          scrollBehavior = scrollBehavior,
           isInSelectionMode = selectionManager.isInSelectionMode,
           selectedCount = selectionManager.selectedCount,
           totalCount = videoFolders.size,
@@ -447,6 +487,19 @@ object FolderListScreen : Screen {
           onCancelSelection = { selectionManager.clear() },
           onSortClick = { sortDialogOpen.value = true },
           onSearchClick = { backstack.add(xyz.mpv.rex.ui.browser.search.SearchScreen()) },
+            normalPlayClick = if (hidePlayFabShowInHeader) {
+              {
+                coroutineScope.launch {
+                  val recentlyPlayedVideos = RecentlyPlayedOps.getRecentlyPlayed(limit = 1)
+                  val lastPlayed = recentlyPlayedVideos.firstOrNull()
+                  if (lastPlayed != null) {
+                    MediaUtils.playFile(lastPlayed.filePath, context, "recently_played_button")
+                  } else {
+                    Toast.makeText(context, context.getString(R.string.no_recently_played_videos), Toast.LENGTH_SHORT).show()
+                  }
+                }
+              }
+            } else null,
             onSettingsClick = {
               backstack.add(xyz.mpv.rex.ui.preferences.PreferencesScreen)
             },
@@ -456,8 +509,8 @@ object FolderListScreen : Screen {
               val selected = selectionManager.getSelectedItems()
               folderSelectionInfo = Triple(
                 selected.size,
-                selected.sumOf { it.totalSize },
-                selected.sumOf { it.totalDuration },
+                selected.sumOf { it.activeSize(showAudioFiles) },
+                selected.sumOf { it.activeDuration(showAudioFiles) },
               )
             },
             onPlayClick = {
@@ -465,6 +518,9 @@ object FolderListScreen : Screen {
                 val selectedIds = selectionManager.getSelectedItems().map { it.bucketId }.toSet()
                 val allVideos = xyz.mpv.rex.repository.MediaFileRepository
                   .getVideosForBuckets(context, selectedIds)
+                  .let { videos ->
+                    if (!showAudioFiles) videos.filter { !it.isAudio } else videos
+                  }
                 if (allVideos.isNotEmpty()) {
                   if (allVideos.size == 1) {
                     MediaUtils.playFile(allVideos.first(), context)
@@ -478,8 +534,8 @@ object FolderListScreen : Screen {
             onSelectAll = { selectionManager.selectAll() },
             onInvertSelection = { selectionManager.invertSelection() },
             onDeselectAll = { selectionManager.clear() },
-            selectionOverflowActions = listOf(
-              SelectionOverflowAction(
+            selectionOverflowActions = buildList {
+              add(SelectionOverflowAction(
                 icon = Icons.Filled.Share,
                 label = stringResource(R.string.generic_share),
                 onClick = {
@@ -487,13 +543,16 @@ object FolderListScreen : Screen {
                     val selectedIds = selectionManager.getSelectedItems().map { it.bucketId }.toSet()
                     val allVideos = xyz.mpv.rex.repository.MediaFileRepository
                       .getVideosForBuckets(context, selectedIds)
+                      .let { videos ->
+                        if (!showAudioFiles) videos.filter { !it.isAudio } else videos
+                      }
                     if (allVideos.isNotEmpty()) {
                       MediaUtils.shareVideos(context, allVideos)
                     }
                   }
                 },
-              ),
-              SelectionOverflowAction(
+              ))
+              add(SelectionOverflowAction(
                 icon = Icons.Filled.Block,
                 label = stringResource(R.string.pref_folders_blacklist),
                 onClick = {
@@ -511,8 +570,8 @@ object FolderListScreen : Screen {
                     ).show()
                   }
                 },
-              ),
-              SelectionOverflowAction(
+              ))
+              add(SelectionOverflowAction(
                 icon = Icons.Filled.ContentCopy,
                 label = stringResource(R.string.copy_folder_path),
                 onClick = {
@@ -523,13 +582,33 @@ object FolderListScreen : Screen {
                     Toast.makeText(context, R.string.copied_to_clipboard, Toast.LENGTH_SHORT).show()
                   }
                 }
-              ),
-            ),
+              ))
+              // Pin / unpin the selected folders to the top of the list (issue #466).
+              val pinPaths = selectionManager.getSelectedItems().map { it.path }.filter { it.isNotBlank() }
+              if (pinPaths.isNotEmpty()) {
+                val allPinned = pinPaths.all { it in pinnedPaths.toSet() }
+                add(SelectionOverflowAction(
+                  icon = Icons.Filled.PushPin,
+                  label = stringResource(if (allPinned) R.string.unpin_from_top else R.string.pin_to_top),
+                  onClick = {
+                    coroutineScope.launch {
+                      if (allPinned) {
+                        pinnedItemRepository.unpinAll(PinScope.ALBUM, pinPaths)
+                      } else {
+                        pinnedItemRepository.pinAll(PinScope.ALBUM, pinPaths)
+                      }
+                      selectionManager.clear()
+                    }
+                  },
+                ))
+              }
+            },
           )
         },
       floatingActionButton = {
+        if (!hidePlayFabShowInHeader && !isMiniPlayerActive) {
         FloatingActionButtonMenu(
-          modifier = Modifier.padding(bottom = navigationBarHeight + 8.dp),
+          modifier = Modifier.padding(bottom = (navigationBarHeight - 4.dp).coerceAtLeast(0.dp)),
           expanded = isFabExpanded.value,
           button = {
             TooltipBox(
@@ -631,6 +710,7 @@ object FolderListScreen : Screen {
             text = { Text(text = "Open Link") },
           )
         }
+        }
       },
     ) { padding ->
       Box(modifier = Modifier.padding(top = padding.calculateTopPadding()).fillMaxSize()) {
@@ -668,6 +748,8 @@ object FolderListScreen : Screen {
                 selectionManager.handleLongClick(folder)
               },
               scrollTriggerKey = "${folderSortType.name}:${folderSortOrder.name}",
+              pinnedPaths = pinnedPaths,
+              headerScrollState = topAppBarState,
             )
           }
 
@@ -703,14 +785,8 @@ object FolderListScreen : Screen {
       Box(modifier = Modifier.fillMaxSize()) {
         AnimatedVisibility(
           visible = selectionManager.isInSelectionMode,
-          enter = slideInVertically(
-            animationSpec = tween(durationMillis = 200),
-            initialOffsetY = { fullHeight -> fullHeight },
-          ),
-          exit = slideOutVertically(
-            animationSpec = tween(durationMillis = 200),
-            targetOffsetY = { fullHeight -> fullHeight },
-          ),
+          enter = RexMotion.dockEnter(LocalContext.current),
+          exit = RexMotion.dockExit(LocalContext.current),
           modifier = Modifier.align(Alignment.BottomCenter),
         ) {
           BrowserBottomBar(
@@ -897,13 +973,16 @@ private fun FolderListContent(
   onFolderClick: (VideoFolder) -> Unit,
   onFolderLongClick: (VideoFolder) -> Unit,
   scrollTriggerKey: Any? = null,
+  pinnedPaths: List<String> = emptyList(),
+  headerScrollState: TopAppBarState? = null,
 ) {
   val showLoading = isLoading && !hasCompletedInitialLoad
 
-  Box(modifier = Modifier.fillMaxSize()) {
+  ContentSurfaceContainer(navigationBarHeight = navigationBarHeight) {
     UnifiedExplorerContent(
       items = folders,
-      isLoading = showLoading,
+      isLoading = isLoading,
+      hasLoaded = hasCompletedInitialLoad,
       uiSettings = uiSettings,
       isSelected = { selectionManager.isSelected(it) },
       onClick = { onFolderClick(it) },
@@ -913,6 +992,7 @@ private fun FolderListContent(
       emptyMessage = stringResource(R.string.no_video_folders_found_desc),
       isRefreshing = isRefreshing,
       onRefresh = onRefresh,
+      headerScrollState = headerScrollState,
       isInSelectionMode = selectionManager.isInSelectionMode,
       recentlyPlayedFilePath = recentlyPlayedFilePath,
       recentlyPlayedFilePaths = recentlyPlayedFilePaths,
@@ -923,6 +1003,8 @@ private fun FolderListContent(
       gridState = gridState,
       scrollTriggerKey = scrollTriggerKey,
       gridColumns = folderGridColumns,
+      pinnedPaths = pinnedPaths,
+      useContentSurface = true,
     )
   }
 }

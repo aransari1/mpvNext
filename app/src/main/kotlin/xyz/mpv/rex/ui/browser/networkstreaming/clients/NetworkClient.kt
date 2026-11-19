@@ -1,6 +1,7 @@
 package xyz.mpv.rex.ui.browser.networkstreaming.clients
 
 import android.net.Uri
+import xyz.mpv.rex.domain.network.NetworkConnection
 import xyz.mpv.rex.domain.network.NetworkFile
 import java.io.InputStream
 
@@ -8,6 +9,8 @@ import java.io.InputStream
  * Common interface for all network protocol clients
  */
 interface NetworkClient {
+  val connection: NetworkConnection
+
   /**
    * Connect to the server
    */

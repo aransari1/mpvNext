@@ -26,6 +26,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.PlaylistAdd
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
@@ -40,6 +41,10 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SearchBar
 import androidx.compose.material3.SearchBarDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.TopAppBarState
+import androidx.compose.material3.rememberTopAppBarState
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.material3.TooltipAnchorPosition
 import androidx.compose.material3.TooltipBox
 import androidx.compose.material3.TooltipDefaults
@@ -76,12 +81,15 @@ import xyz.mpv.rex.presentation.Screen
 import xyz.mpv.rex.presentation.components.pullrefresh.PullRefreshBox
 import xyz.mpv.rex.ui.browser.cards.PlaylistCard
 import xyz.mpv.rex.ui.browser.components.BrowserTopBar
+import xyz.mpv.rex.ui.browser.components.ContentSurfaceContainer
 import xyz.mpv.rex.ui.browser.components.UnifiedExplorerContent
 import xyz.mpv.rex.ui.browser.dialogs.DeleteConfirmationDialog
 import xyz.mpv.rex.ui.browser.selection.rememberSelectionManager
+import xyz.mpv.rex.ui.browser.sheets.AutoPlaylistsSheet
 import xyz.mpv.rex.ui.browser.sheets.PlaylistActionSheet
 import xyz.mpv.rex.ui.browser.states.EmptyState
 import xyz.mpv.rex.ui.utils.LocalBackStack
+import xyz.mpv.rex.ui.utils.navigateBack
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 
@@ -131,9 +139,12 @@ object PlaylistScreen : Screen {
       }
     }
 
-    // Selection manager - use filtered list
+    // Selection manager - use user-manageable playlists only
+    val selectablePlaylists = remember(filteredPlaylists) {
+      filteredPlaylists.filter { !it.isAutoPlaylist && it.playlist.id >= 0 }
+    }
     val selectionManager = rememberSelectionManager(
-      items = filteredPlaylists,
+      items = selectablePlaylists,
       getId = { it.playlist.id },
       onDeleteItems = { itemsToDelete, _ ->
         // Delete all items sequentially
@@ -171,12 +182,14 @@ object PlaylistScreen : Screen {
     var showDeleteDialog by rememberSaveable { mutableStateOf(false) }
     // Playlist action sheet state
     var showPlaylistActionSheet by remember { mutableStateOf(false) }
+    var showAutoPlaylistsSheet by rememberSaveable { mutableStateOf(false) }
 
     // FAB visibility for scroll-based hiding
     val isFabVisible = remember { mutableStateOf(true) }
+    val canNavigateBack = remember { backStack.size > 1 }
 
-    // Predictive back: Intercept when in selection mode or searching
-    BackHandler(enabled = selectionManager.isInSelectionMode || isSearching) {
+    // Predictive back: Intercept when in selection mode, searching, or when navigated from another screen
+    BackHandler(enabled = selectionManager.isInSelectionMode || isSearching || canNavigateBack) {
       when {
         isSearching -> {
           isSearching = false
@@ -184,6 +197,7 @@ object PlaylistScreen : Screen {
         }
 
         selectionManager.isInSelectionMode -> selectionManager.clear()
+        else -> backStack.navigateBack()
       }
     }
 
@@ -196,7 +210,20 @@ object PlaylistScreen : Screen {
       onExpandedChange = {},
     )
 
+    val topAppBarState = rememberTopAppBarState()
+    val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior(topAppBarState)
+
     Scaffold(
+        modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
+      // Nested/pushed screens must set the screen tone themselves; it does not
+      // propagate from MainScreen across a NavDisplay boundary, and a nested
+      // Scaffold overrides it. surfaceContainer is what shows through the
+      // content surface's gaps and around its 24.dp corners.
+      containerColor = if (MaterialTheme.colorScheme.background == androidx.compose.ui.graphics.Color.Black) {
+        androidx.compose.ui.graphics.Color.Black
+      } else {
+        MaterialTheme.colorScheme.surfaceContainer
+      },
         topBar = {
           if (isSearching) {
             // Search mode - show search bar
@@ -244,10 +271,22 @@ object PlaylistScreen : Screen {
           } else {
             BrowserTopBar(
               title = stringResource(R.string.playlists),
+              scrollBehavior = scrollBehavior,
               isInSelectionMode = selectionManager.isInSelectionMode,
               selectedCount = selectionManager.selectedCount,
               totalCount = playlistsWithCount.size,
-              onBackClick = null,
+              onBackClick = if (canNavigateBack) {
+                {
+                  when {
+                    isSearching -> {
+                      isSearching = false
+                      searchQuery = ""
+                    }
+                    selectionManager.isInSelectionMode -> selectionManager.clear()
+                    else -> backStack.navigateBack()
+                  }
+                }
+              } else null,
               onCancelSelection = { selectionManager.clear() },
               isSingleSelection = selectionManager.isSingleSelection,
               onSearchClick = { isSearching = true },
@@ -261,12 +300,20 @@ object PlaylistScreen : Screen {
               onSelectAll = { selectionManager.selectAll() },
               onInvertSelection = { selectionManager.invertSelection() },
               onDeselectAll = { selectionManager.clear() },
+              normalOverflowActions = listOf(
+                xyz.mpv.rex.ui.browser.components.SelectionOverflowAction(
+                  icon = Icons.Filled.AutoAwesome,
+                  label = stringResource(R.string.auto_playlists),
+                  onClick = { showAutoPlaylistsSheet = true },
+                ),
+              ),
             )
           }
         },
         floatingActionButton = {
           val navigationBarHeight = xyz.mpv.rex.ui.browser.LocalNavigationBarHeight.current
-          if (!selectionManager.isInSelectionMode && isFabVisible.value) {
+          val isMiniPlayerActive = xyz.mpv.rex.ui.browser.LocalMiniPlayerActive.current
+          if (!selectionManager.isInSelectionMode && isFabVisible.value && !isMiniPlayerActive) {
             ExtendedFloatingActionButton(
               onClick = { showPlaylistActionSheet = true },
               icon = { Icon(Icons.Filled.Add, contentDescription = null) },
@@ -315,17 +362,22 @@ object PlaylistScreen : Screen {
             gridState = gridState,
             uiSettings = uiSettings,
             isRefreshing = isRefreshing,
+            headerScrollState = topAppBarState,
             onRefresh = { viewModel.refresh() },
             selectionManager = selectionManager,
             onPlaylistClick = { playlistWithCount ->
               if (selectionManager.isInSelectionMode) {
-                selectionManager.toggle(playlistWithCount)
+                if (!playlistWithCount.isAutoPlaylist && playlistWithCount.playlist.id >= 0) {
+                  selectionManager.toggle(playlistWithCount)
+                }
               } else {
                 backStack.add(PlaylistDetailScreen(playlistWithCount.playlist.id))
               }
             },
             onPlaylistLongClick = { playlistWithCount ->
-              selectionManager.handleLongClick(playlistWithCount)
+              if (!playlistWithCount.isAutoPlaylist && playlistWithCount.playlist.id >= 0) {
+                selectionManager.handleLongClick(playlistWithCount)
+              }
             },
             modifier = Modifier.padding(top = paddingValues.calculateTopPadding()),
             isInSelectionMode = selectionManager.isInSelectionMode,
@@ -415,6 +467,11 @@ object PlaylistScreen : Screen {
           itemNames = selectionManager.getSelectedItems().map { it.playlist.name },
         )
       }
+
+      AutoPlaylistsSheet(
+        isOpen = showAutoPlaylistsSheet,
+        onDismiss = { showAutoPlaylistsSheet = false },
+      )
     }
   }
 
@@ -431,22 +488,30 @@ object PlaylistScreen : Screen {
     onPlaylistLongClick: (PlaylistWithCount) -> Unit,
     modifier: Modifier = Modifier,
     isInSelectionMode: Boolean = false,
+    headerScrollState: TopAppBarState? = null,
   ) {
-    UnifiedExplorerContent(
-      items = playlistsWithCount,
-      isLoading = false,
-      uiSettings = uiSettings,
-      isSelected = { selectionManager.isSelected(it) },
-      onClick = onPlaylistClick,
-      onLongClick = onPlaylistLongClick,
-      onToggleSelection = { selectionManager.toggle(it) },
+    ContentSurfaceContainer(
+      navigationBarHeight = xyz.mpv.rex.ui.browser.LocalNavigationBarHeight.current,
       modifier = modifier,
-      emptyTitle = stringResource(R.string.no_playlists_found),
-      emptyMessage = stringResource(R.string.empty_playlists_desc),
-      isRefreshing = isRefreshing,
-      onRefresh = onRefresh,
-      isInSelectionMode = isInSelectionMode,
-      listState = listState,
-      gridState = gridState,
-    )
+    ) {
+      UnifiedExplorerContent(
+        items = playlistsWithCount,
+        isLoading = false,
+        uiSettings = uiSettings,
+        isSelected = { selectionManager.isSelected(it) },
+        onClick = onPlaylistClick,
+        onLongClick = onPlaylistLongClick,
+        onToggleSelection = { selectionManager.toggle(it) },
+        emptyTitle = stringResource(R.string.no_playlists_found),
+        emptyMessage = stringResource(R.string.empty_playlists_desc),
+        isRefreshing = isRefreshing,
+        onRefresh = onRefresh,
+        headerScrollState = headerScrollState,
+        isInSelectionMode = isInSelectionMode,
+        listState = listState,
+        gridState = gridState,
+        useContentSurface = true,
+        // Playlist rows expand into PlaylistDetailScreen.
+      )
+    }
   }

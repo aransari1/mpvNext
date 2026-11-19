@@ -20,6 +20,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -28,6 +29,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
@@ -37,6 +39,7 @@ import xyz.mpv.rex.utils.media.MediaFormatter
 import xyz.mpv.rex.preferences.AppearancePreferences
 import xyz.mpv.rex.preferences.BrowserPreferences
 import xyz.mpv.rex.preferences.preference.collectAsState
+import xyz.mpv.rex.ui.theme.pillShape
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.material3.ListItemDefaults.verticalAlignment
 import org.koin.compose.koinInject
@@ -68,11 +71,15 @@ fun FolderCard(
   thumbnailSize: androidx.compose.ui.unit.Dp = 64.dp,
   thumbnailAspectRatio: Float = 1f,
   thumbnail: ImageBitmap? = null,
+  isPinned: Boolean = false,
+  shape: Shape? = null,
 ) {
   val browserPreferences = koinInject<BrowserPreferences>()
   val showFolderPath by browserPreferences.showFolderPath.collectAsState()
   val showAudioFiles by browserPreferences.showAudioFiles.collectAsState()
-  val totalCount = if (showAudioFiles) folder.videoCount + folder.audioCount else folder.videoCount
+  val totalCount = folder.activeCount(showAudioFiles)
+  val totalSize = folder.activeSize(showAudioFiles)
+  val totalDuration = folder.activeDuration(showAudioFiles)
   val countLabel = if (totalCount == 1) "1 Item" else "$totalCount Items"
   val maxLines = if (uiSettings.unlimitedNameLines) Int.MAX_VALUE else 2
   val parentPath = folder.path.substringBeforeLast("/", folder.path)
@@ -102,41 +109,47 @@ fun FolderCard(
     onThumbClick = onThumbClick,
     isSelected = isSelected,
     isRecentlyPlayed = isRecentlyPlayed,
-    isNeverPlayed = isNeverPlayed,
     isWatched = isWatched,
     isGridMode = isGridMode,
     gridColumns = gridColumns,
     maxTitleLines = maxLines,
+    shape = shape,
     overlayContent = {
+      if (isPinned) {
+        PinBadge(modifier = Modifier.align(Alignment.BottomStart).padding(6.dp))
+      }
       if (uiSettings.showUnplayedOldVideoLabel && newVideoCount > 0) {
-        Box(
+        Surface(
+          shape = pillShape,
+          color = MaterialTheme.colorScheme.errorContainer,
+          contentColor = MaterialTheme.colorScheme.onErrorContainer,
           modifier = Modifier
             .align(Alignment.TopEnd)
-            .padding(6.dp)
-            .clip(RoundedCornerShape(4.dp))
-            .background(Color(0xFFD32F2F))
-            .padding(horizontal = 6.dp, vertical = 2.dp),
+            .padding(6.dp),
+          shadowElevation = 2.dp,
         ) {
           Text(
             text = newVideoCount.toString(),
-            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-            color = Color.White,
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
           )
         }
       }
-      if (isGridMode && uiSettings.showTotalDurationChip && folder.totalDuration > 0) {
-        Box(
+      if (isGridMode && uiSettings.showTotalDurationChip && totalDuration > 0) {
+        Surface(
+          shape = pillShape,
+          color = Color.Black.copy(alpha = 0.72f),
+          contentColor = Color.White,
           modifier = Modifier
             .align(Alignment.BottomEnd)
-            .padding(6.dp)
-            .clip(RoundedCornerShape(4.dp))
-            .background(Color.Black.copy(alpha = 0.65f))
-            .padding(horizontal = 6.dp, vertical = 2.dp),
+            .padding(6.dp),
         ) {
           Text(
-            text = MediaFormatter.formatDuration(folder.totalDuration),
+            text = MediaFormatter.formatDuration(totalDuration),
             style = MaterialTheme.typography.labelSmall,
-            color = Color.White,
+            fontWeight = FontWeight.Medium,
+            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
           )
         }
       }
@@ -159,11 +172,11 @@ fun FolderCard(
       if (totalCount > 0) {
         MediaMetadataChip(text = countLabel)
       }
-      if (uiSettings.showSizeChip && folder.totalSize > 0) {
-        MediaMetadataChip(text = MediaFormatter.formatFileSize(folder.totalSize))
+      if (uiSettings.showSizeChip && totalSize > 0) {
+        MediaMetadataChip(text = MediaFormatter.formatFileSize(totalSize))
       }
-      if (uiSettings.showTotalDurationChip && folder.totalDuration > 0) {
-        MediaMetadataChip(text = MediaFormatter.formatDuration(folder.totalDuration))
+      if (uiSettings.showTotalDurationChip && totalDuration > 0) {
+        MediaMetadataChip(text = MediaFormatter.formatDuration(totalDuration))
       }
       if (uiSettings.showDateChip && folder.lastModified > 0) {
         MediaMetadataChip(text = MediaFormatter.formatDate(folder.lastModified * 1000))

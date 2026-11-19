@@ -62,7 +62,11 @@ import xyz.mpv.rex.R
 import xyz.mpv.rex.preferences.SubtitlesPreferences
 import xyz.mpv.rex.preferences.preference.collectAsState
 import xyz.mpv.rex.presentation.Screen
+import xyz.mpv.rex.presentation.components.CollapsibleHeaderScreen
+import xyz.mpv.rex.presentation.components.GroupPosition
+import xyz.mpv.rex.presentation.components.GroupedListColumn
 import xyz.mpv.rex.ui.utils.LocalBackStack
+import xyz.mpv.rex.ui.utils.navigateBack
 import xyz.mpv.rex.utils.media.CustomFontEntry
 import xyz.mpv.rex.utils.media.copyFontsFromDirectory
 import xyz.mpv.rex.utils.media.loadCustomFontEntries
@@ -71,6 +75,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
+import me.zhanghai.compose.preference.ListPreference
 import me.zhanghai.compose.preference.Preference
 import me.zhanghai.compose.preference.ProvidePreferenceLocals
 import xyz.mpv.rex.ui.preferences.components.SwitchPreference
@@ -80,10 +85,16 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.TextButton
 import android.net.Uri
 import xyz.mpv.rex.repository.wyzie.WyzieLanguages
+import xyz.mpv.rex.utils.media.SubtitleEncodingUtils
 import org.koin.compose.koinInject
+import xyz.mpv.rex.presentation.MotionStyle
 
 @Serializable
 object SubtitlesPreferencesScreen : Screen {
+  /** Settings keep the app's original full horizontal push. */
+  override val motion: MotionStyle
+    get() = MotionStyle.Default
+
   @OptIn(ExperimentalMaterial3Api::class)
   @Composable
   override fun Content() {
@@ -92,31 +103,15 @@ object SubtitlesPreferencesScreen : Screen {
     val preferences = koinInject<SubtitlesPreferences>()
     val fileManager = koinInject<FileManager>()
 
-    Scaffold(
-      topBar = {
-        TopAppBar(
-          title = {
-            Text(
-              text = stringResource(R.string.pref_subtitles),
-              style = MaterialTheme.typography.headlineSmall,
-              fontWeight = FontWeight.ExtraBold,
-              color = MaterialTheme.colorScheme.primary,
-            )
-          },
-          navigationIcon = {
-            IconButton(
-              onClick = backstack::removeLastOrNull,
-            ) {
-              Icon(
-                Icons.AutoMirrored.Outlined.ArrowBack,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.secondary,
-              )
-            }
-          },
-        )
-      },
-    ) { padding ->
+    val pageColor = MaterialTheme.colorScheme.surfaceContainer
+    val cardColor = MaterialTheme.colorScheme.surface
+
+    CollapsibleHeaderScreen(
+      containerColor = pageColor,
+      title = stringResource(R.string.pref_subtitles),
+      showBackButton = true,
+      onBackClick = backstack::navigateBack,
+    ) { contentModifier ->
       ProvidePreferenceLocals {
         val fontsFolder by preferences.fontsFolder.collectAsState()
         var availableFonts by remember { mutableStateOf<List<String>>(emptyList()) }
@@ -182,11 +177,10 @@ object SubtitlesPreferencesScreen : Screen {
           }
 
         val navBarHeight = xyz.mpv.rex.ui.browser.LocalNavigationBarHeight.current
+        val listState = rememberPreferenceLazyListState()
         LazyColumn(
-          modifier =
-            Modifier
-              .fillMaxSize()
-              .padding(padding),
+          state = listState,
+          modifier = contentModifier,
           contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = navBarHeight + 16.dp),
         ) {
           // === GENERAL SECTION ===
@@ -195,269 +189,322 @@ object SubtitlesPreferencesScreen : Screen {
           }
 
           item {
-            PreferenceCard {
+            val preferredLanguages by preferences.preferredLanguages.collectAsState()
+            val disableByDefault by preferences.disableSubtitlesByDefault.collectAsState()
+            val autoload by preferences.autoloadMatchingSubtitles.collectAsState()
+            val overrideAss by preferences.overrideAssSubs.collectAsState()
+            val scaleByWindow by preferences.scaleByWindow.collectAsState()
+            val forceLtr by preferences.forceLtr.collectAsState()
+            val openAtVideoLocation by preferences.openPickerAtVideoLocation.collectAsState()
+            val customSubtitleFolder by preferences.customSubtitleFolder.collectAsState()
+            val customFolderPicker =
+              rememberLauncherForActivityResult(
+                OpenDocumentTreeContract(),
+              ) { uri ->
+                if (uri == null) return@rememberLauncherForActivityResult
 
-              val preferredLanguages by preferences.preferredLanguages.collectAsState()
-              TextFieldPreference(
-                value = preferredLanguages,
-                onValueChange = preferences.preferredLanguages::set,
-                textToValue = { it },
-                title = { Text(stringResource(R.string.pref_preferred_languages)) },
-                summary = {
-                  if (preferredLanguages.isNotBlank()) {
-                    Text(
-                      preferredLanguages,
-                      color = MaterialTheme.colorScheme.outline,
-                    )
-                  } else {
-                    Text(
-                      stringResource(R.string.not_set_video_default),
-                      color = MaterialTheme.colorScheme.outline,
-                    )
-                  }
-                },
-                textField = { value, onValueChange, _ ->
-                  Column {
-                    Text(stringResource(R.string.enter_language_codes))
-                    TextField(
-                      value,
-                      onValueChange,
-                      modifier = Modifier.fillMaxWidth(),
-                      placeholder = { Text(stringResource(R.string.language_codes_placeholder)) },
-                    )
-                  }
-                },
-              )
-              
-              PreferenceDivider()
+                val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION
+                context.contentResolver.takePersistableUriPermission(uri, flags)
+                
+                val path = getSimplifiedPathFromUri(uri.toString())
+                preferences.customSubtitleFolder.set(path)
+              }
 
-              val disableByDefault by preferences.disableSubtitlesByDefault.collectAsState()
-              SwitchPreference(
-                value = disableByDefault,
-                onValueChange = { preferences.disableSubtitlesByDefault.set(it) },
-                title = { Text(stringResource(R.string.pref_subtitles_disable_by_default_title)) },
-                summary = {
-                  Text(
-                    stringResource(R.string.pref_subtitles_disable_by_default_summary),
-                    color = MaterialTheme.colorScheme.outline,
-                  )
-                },
-              )
-
-              PreferenceDivider()
-
-              val autoload by preferences.autoloadMatchingSubtitles.collectAsState()
-              SwitchPreference(
-                value = autoload,
-                onValueChange = { preferences.autoloadMatchingSubtitles.set(it) },
-                title = { Text(stringResource(R.string.pref_subtitles_autoload_title)) },
-                summary = {
-                  Text(
-                    stringResource(R.string.pref_subtitles_autoload_summary),
-                    color = MaterialTheme.colorScheme.outline,
-                  )
-                },
-              )
-
-              PreferenceDivider()
-
-              val overrideAss by preferences.overrideAssSubs.collectAsState()
-              SwitchPreference(
-                value = overrideAss,
-                onValueChange = { preferences.overrideAssSubs.set(it) },
-                title = { Text(stringResource(R.string.player_sheets_sub_override_ass)) },
-                summary = {
-                  Text(
-                    stringResource(R.string.player_sheets_sub_override_ass_subtitle),
-                    color = MaterialTheme.colorScheme.outline,
-                  )
-                },
-              )
-
-              PreferenceDivider()
-
-              val scaleByWindow by preferences.scaleByWindow.collectAsState()
-              SwitchPreference(
-                value = scaleByWindow,
-                onValueChange = { preferences.scaleByWindow.set(it) },
-                title = { Text(stringResource(R.string.player_sheets_sub_scale_by_window)) },
-                summary = {
-                  Text(
-                    stringResource(R.string.player_sheets_sub_scale_by_window_summary),
-                    color = MaterialTheme.colorScheme.outline,
-                  )
-                },
-              )
-
-              PreferenceDivider()
-
-              val forceLtr by preferences.forceLtr.collectAsState()
-              SwitchPreference(
-                value = forceLtr,
-                onValueChange = { preferences.forceLtr.set(it) },
-                title = { Text(stringResource(R.string.pref_subtitles_force_ltr_title)) },
-                summary = {
-                  Text(
-                    stringResource(R.string.pref_subtitles_force_ltr_summary),
-                    color = MaterialTheme.colorScheme.outline,
-                  )
-                },
-              )
-
-              PreferenceDivider()
-
-              val openAtVideoLocation by preferences.openPickerAtVideoLocation.collectAsState()
-              SwitchPreference(
-                value = openAtVideoLocation,
-                onValueChange = { preferences.openPickerAtVideoLocation.set(it) },
-                title = { Text(stringResource(R.string.pref_subtitles_open_at_video_location_title)) },
-                summary = {
-                  Text(
-                    stringResource(R.string.pref_subtitles_open_at_video_location_summary),
-                    color = MaterialTheme.colorScheme.outline,
-                  )
-                },
-              )
-
-              PreferenceDivider()
-
-              val customSubtitleFolder by preferences.customSubtitleFolder.collectAsState()
-              val customFolderPicker =
-                rememberLauncherForActivityResult(
-                  OpenDocumentTreeContract(),
-                ) { uri ->
-                  if (uri == null) return@rememberLauncherForActivityResult
-
-                  val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION
-                  context.contentResolver.takePersistableUriPermission(uri, flags)
-                  
-                  val path = getSimplifiedPathFromUri(uri.toString())
-                  preferences.customSubtitleFolder.set(path)
-                }
-
-              Box(
-                modifier =
-                  Modifier
-                    .fillMaxWidth()
-                    .clickable { customFolderPicker.launch(null) }
-                    .padding(vertical = 16.dp, horizontal = 16.dp),
+            GroupedListColumn {
+              GroupedPreferenceCard(
+                color = cardColor, tonalElevation = 0.dp,
+                position = GroupPosition.FIRST,
+                highlightKey = listOf(R.string.pref_subtitles, R.string.pref_preferred_languages),
               ) {
-                Row(
-                  modifier = Modifier.fillMaxWidth(),
-                  verticalAlignment = Alignment.CenterVertically,
-                  horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                  Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                      stringResource(R.string.pref_subtitles_custom_picker_folder_title),
-                      style = MaterialTheme.typography.titleMedium,
-                    )
-                    Text(
-                      if (customSubtitleFolder.isBlank()) stringResource(R.string.not_set_video_default) else customSubtitleFolder,
-                      style = MaterialTheme.typography.bodyMedium,
-                      color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                  }
-                  if (customSubtitleFolder.isNotBlank()) {
-                    IconButton(onClick = { preferences.customSubtitleFolder.set("") }) {
-                      Icon(
-                        Icons.Default.Clear,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.tertiary,
+                TextFieldPreference(
+                  value = preferredLanguages,
+                  onValueChange = preferences.preferredLanguages::set,
+                  textToValue = { it },
+                  title = { Text(stringResource(R.string.pref_preferred_languages)) },
+                  summary = {
+                    if (preferredLanguages.isNotBlank()) {
+                      Text(
+                        preferredLanguages,
+                        color = MaterialTheme.colorScheme.outline,
                       )
+                    } else {
+                      Text(
+                        stringResource(R.string.not_set_video_default),
+                        color = MaterialTheme.colorScheme.outline,
+                      )
+                    }
+                  },
+                  textField = { value, onValueChange, _ ->
+                    Column {
+                      Text(stringResource(R.string.enter_language_codes))
+                      TextField(
+                        value,
+                        onValueChange,
+                        modifier = Modifier.fillMaxWidth(),
+                        placeholder = { Text(stringResource(R.string.language_codes_placeholder)) },
+                      )
+                    }
+                  },
+                )
+              }
+
+              GroupedPreferenceCard(
+                color = cardColor, tonalElevation = 0.dp,
+                position = GroupPosition.MIDDLE,
+                highlightKey = R.string.pref_subtitles_disable_by_default_title,
+              ) {
+                SwitchPreference(
+                  value = disableByDefault,
+                  onValueChange = { preferences.disableSubtitlesByDefault.set(it) },
+                  title = { Text(stringResource(R.string.pref_subtitles_disable_by_default_title)) },
+                  summary = {
+                    Text(
+                      stringResource(R.string.pref_subtitles_disable_by_default_summary),
+                      color = MaterialTheme.colorScheme.outline,
+                    )
+                  },
+                )
+              }
+
+              GroupedPreferenceCard(
+                color = cardColor, tonalElevation = 0.dp,
+                position = GroupPosition.MIDDLE,
+                highlightKey = R.string.pref_subtitles_autoload_title,
+              ) {
+                SwitchPreference(
+                  value = autoload,
+                  onValueChange = { preferences.autoloadMatchingSubtitles.set(it) },
+                  title = { Text(stringResource(R.string.pref_subtitles_autoload_title)) },
+                  summary = {
+                    Text(
+                      stringResource(R.string.pref_subtitles_autoload_summary),
+                      color = MaterialTheme.colorScheme.outline,
+                    )
+                  },
+                )
+              }
+
+              GroupedPreferenceCard(
+                color = cardColor, tonalElevation = 0.dp,
+                position = GroupPosition.MIDDLE,
+                highlightKey = R.string.player_sheets_sub_override_ass,
+              ) {
+                SwitchPreference(
+                  value = overrideAss,
+                  onValueChange = { preferences.overrideAssSubs.set(it) },
+                  title = { Text(stringResource(R.string.player_sheets_sub_override_ass)) },
+                  summary = {
+                    Text(
+                      stringResource(R.string.player_sheets_sub_override_ass_subtitle),
+                      color = MaterialTheme.colorScheme.outline,
+                    )
+                  },
+                )
+              }
+
+              GroupedPreferenceCard(
+                color = cardColor, tonalElevation = 0.dp,
+                position = GroupPosition.MIDDLE,
+                highlightKey = R.string.player_sheets_sub_scale_by_window,
+              ) {
+                SwitchPreference(
+                  value = scaleByWindow,
+                  onValueChange = { preferences.scaleByWindow.set(it) },
+                  title = { Text(stringResource(R.string.player_sheets_sub_scale_by_window)) },
+                  summary = {
+                    Text(
+                      stringResource(R.string.player_sheets_sub_scale_by_window_summary),
+                      color = MaterialTheme.colorScheme.outline,
+                    )
+                  },
+                )
+              }
+
+              GroupedPreferenceCard(
+                color = cardColor, tonalElevation = 0.dp,
+                position = GroupPosition.MIDDLE,
+                highlightKey = R.string.pref_subtitles_force_ltr_title,
+              ) {
+                SwitchPreference(
+                  value = forceLtr,
+                  onValueChange = { preferences.forceLtr.set(it) },
+                  title = { Text(stringResource(R.string.pref_subtitles_force_ltr_title)) },
+                  summary = {
+                    Text(
+                      stringResource(R.string.pref_subtitles_force_ltr_summary),
+                      color = MaterialTheme.colorScheme.outline,
+                    )
+                  },
+                )
+              }
+
+              val subtitleEncoding by preferences.subtitleEncoding.collectAsState()
+              GroupedPreferenceCard(
+                color = cardColor, tonalElevation = 0.dp,
+                position = GroupPosition.MIDDLE,
+                highlightKey = R.string.pref_subtitles_encoding_title,
+              ) {
+                ListPreference(
+                  value = subtitleEncoding,
+                  onValueChange = { preferences.subtitleEncoding.set(it) },
+                  values = SubtitleEncodingUtils.ENCODINGS.map { it.code },
+                  valueToText = { androidx.compose.ui.text.AnnotatedString(SubtitleEncodingUtils.getDisplayName(it)) },
+                  title = { Text(stringResource(R.string.pref_subtitles_encoding_title)) },
+                  summary = {
+                    Text(
+                      SubtitleEncodingUtils.getDisplayName(subtitleEncoding),
+                      color = MaterialTheme.colorScheme.outline,
+                    )
+                  },
+                )
+              }
+
+              GroupedPreferenceCard(
+                color = cardColor, tonalElevation = 0.dp,
+                position = GroupPosition.MIDDLE,
+                highlightKey = R.string.pref_subtitles_open_at_video_location_title,
+              ) {
+                SwitchPreference(
+                  value = openAtVideoLocation,
+                  onValueChange = { preferences.openPickerAtVideoLocation.set(it) },
+                  title = { Text(stringResource(R.string.pref_subtitles_open_at_video_location_title)) },
+                  summary = {
+                    Text(
+                      stringResource(R.string.pref_subtitles_open_at_video_location_summary),
+                      color = MaterialTheme.colorScheme.outline,
+                    )
+                  },
+                )
+              }
+
+              GroupedPreferenceCard(
+                color = cardColor, tonalElevation = 0.dp,
+                position = GroupPosition.MIDDLE,
+                highlightKey = R.string.pref_subtitles_custom_picker_folder_title,
+              ) {
+                Box(
+                  modifier =
+                    Modifier
+                      .fillMaxWidth()
+                      .clickable { customFolderPicker.launch(null) }
+                      .padding(vertical = 16.dp, horizontal = 16.dp),
+                ) {
+                  Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                  ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                      Text(
+                        stringResource(R.string.pref_subtitles_custom_picker_folder_title),
+                        style = MaterialTheme.typography.titleMedium,
+                      )
+                      Text(
+                        if (customSubtitleFolder.isBlank()) stringResource(R.string.not_set_video_default) else customSubtitleFolder,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                      )
+                    }
+                    if (customSubtitleFolder.isNotBlank()) {
+                      IconButton(onClick = { preferences.customSubtitleFolder.set("") }) {
+                        Icon(
+                          Icons.Default.Clear,
+                          contentDescription = null,
+                          tint = MaterialTheme.colorScheme.tertiary,
+                        )
+                      }
                     }
                   }
                 }
               }
 
-              PreferenceDivider()
-
-              // Directory picker preference with reload and clear icons on the right
-              Box(
-                modifier =
-                  Modifier
-                    .fillMaxWidth()
-                    .clickable { locationPicker.launch(null) }
-                    .padding(vertical = 16.dp, horizontal = 16.dp),
+              GroupedPreferenceCard(
+                color = cardColor, tonalElevation = 0.dp,
+                position = GroupPosition.LAST,
+                highlightKey = R.string.pref_subtitles_fonts_dir,
               ) {
-                Row(
-                  modifier = Modifier.fillMaxWidth(),
-                  verticalAlignment = Alignment.CenterVertically,
-                  horizontalArrangement = Arrangement.SpaceBetween,
+                Box(
+                  modifier =
+                    Modifier
+                      .fillMaxWidth()
+                      .clickable { locationPicker.launch(null) }
+                      .padding(vertical = 16.dp, horizontal = 16.dp),
                 ) {
-                  // Left side: Title + summary
-                  Column(
-                    modifier = Modifier.weight(1f),
+                  Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
                   ) {
-                    Text(
-                      stringResource(R.string.pref_subtitles_fonts_dir),
-                      style = MaterialTheme.typography.titleMedium,
-                    )
-                    if (fontsFolder.isBlank()) {
+                    Column(
+                      modifier = Modifier.weight(1f),
+                    ) {
                       Text(
-                        stringResource(R.string.not_set_system_fonts),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        stringResource(R.string.pref_subtitles_fonts_dir),
+                        style = MaterialTheme.typography.titleMedium,
                       )
-                    } else {
-                      if (availableFonts.isNotEmpty()) {
+                      if (fontsFolder.isBlank()) {
                         Text(
-                          stringResource(R.string.fonts_loaded, availableFonts.size),
-                          style = MaterialTheme.typography.bodySmall,
-                          color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                          stringResource(R.string.not_set_system_fonts),
+                          style = MaterialTheme.typography.bodyMedium,
+                          color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-                      }
-                    }
-                  }
-
-                  // Right side: Action icons
-                  if (fontsFolder.isNotBlank()) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                      // Refresh icon or loading spinner
-                      if (isLoadingFonts) {
-                        Box(
-                          modifier = Modifier.size(48.dp),
-                          contentAlignment = Alignment.Center,
-                        ) {
-                          CircularProgressIndicator(
-                            modifier = Modifier.size(24.dp),
-                            strokeWidth = 2.dp,
-                            color = MaterialTheme.colorScheme.primary,
+                      } else {
+                        if (availableFonts.isNotEmpty()) {
+                          Text(
+                            stringResource(R.string.fonts_loaded, availableFonts.size),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                           )
                         }
-                      } else {
+                      }
+                    }
+
+                    if (fontsFolder.isNotBlank()) {
+                      Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (isLoadingFonts) {
+                          Box(
+                            modifier = Modifier.size(48.dp),
+                            contentAlignment = Alignment.Center,
+                          ) {
+                            CircularProgressIndicator(
+                              modifier = Modifier.size(24.dp),
+                              strokeWidth = 2.dp,
+                              color = MaterialTheme.colorScheme.primary,
+                            )
+                          }
+                        } else {
+                          IconButton(
+                            onClick = {
+                              kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
+                                isLoadingFonts = true
+                                copyFontsFromDirectory(context, fileManager, fontsFolder)
+                                withContext(Dispatchers.Main) {
+                                  fontLoadTrigger++
+                                  isLoadingFonts = false
+                                }
+                              }
+                            },
+                          ) {
+                            Icon(
+                              Icons.Default.Refresh,
+                              contentDescription = stringResource(R.string.reload_fonts),
+                              tint = MaterialTheme.colorScheme.primary,
+                            )
+                          }
+                        }
+
                         IconButton(
                           onClick = {
-                            kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
-                              isLoadingFonts = true
-                              copyFontsFromDirectory(context, fileManager, fontsFolder)
-                              withContext(Dispatchers.Main) {
-                                fontLoadTrigger++
-                                isLoadingFonts = false
-                              }
-                            }
+                            preferences.fontsFolder.set("")
+                            fontLoadTrigger++
                           },
                         ) {
                           Icon(
-                            Icons.Default.Refresh,
-                            contentDescription = stringResource(R.string.reload_fonts),
-                            tint = MaterialTheme.colorScheme.primary,
+                            Icons.Default.Clear,
+                            contentDescription = stringResource(R.string.clear_font_directory),
+                            tint = MaterialTheme.colorScheme.tertiary,
                           )
                         }
-                      }
-
-                      // Clear icon (always visible when directory is set)
-                      IconButton(
-                        onClick = {
-                          preferences.fontsFolder.set("")
-                          fontLoadTrigger++
-                        },
-                      ) {
-                        Icon(
-                          Icons.Default.Clear,
-                          contentDescription = stringResource(R.string.clear_font_directory),
-                          tint = MaterialTheme.colorScheme.tertiary,
-                        )
                       }
                     }
                   }
@@ -472,293 +519,293 @@ object SubtitlesPreferencesScreen : Screen {
           }
 
           item {
-            PreferenceCard {
-              // Location display
-              Box(
-                modifier = Modifier
-                  .fillMaxWidth()
-                  .clickable { saveLocationPicker.launch(null) }
-                  .padding(vertical = 16.dp, horizontal = 16.dp),
+            var showClearDialog by remember { mutableStateOf(false) }
+            val scope = androidx.compose.runtime.rememberCoroutineScope()
+            val subdlLanguages by preferences.subdlLanguages.collectAsState()
+            var showAdvanced by remember { mutableStateOf(false) }
+
+            GroupedListColumn {
+              GroupedPreferenceCard(
+                color = cardColor, tonalElevation = 0.dp,
+                position = GroupPosition.FIRST,
+                highlightKey = R.string.pref_subtitles_wyzie_api_key_title,
               ) {
                 Column {
-                  Text(
-                    stringResource(R.string.pref_subtitles_save_location),
-                    style = MaterialTheme.typography.titleMedium,
+                  TextFieldPreference(
+                    value = wyzieApiKey,
+                    onValueChange = { newKey ->
+                      preferences.wyzieApiKey.set(newKey)
+                    },
+                    textToValue = { it.trim() },
+                    title = { Text(stringResource(R.string.pref_subtitles_wyzie_api_key_title)) },
+                    summary = {
+                      val summaryText = if (wyzieApiKey.isNotBlank()) {
+                        stringResource(R.string.pref_subtitles_wyzie_api_key_masked)
+                      } else {
+                        stringResource(R.string.pref_subtitles_wyzie_api_key_not_set)
+                      }
+                      Text(summaryText, color = MaterialTheme.colorScheme.outline)
+                    },
+                    textField = { value, onValueChange, _ ->
+                      SubtitleApiKeyField(
+                        value = value.text,
+                        onValueChange = { newText -> onValueChange(value.copy(text = newText)) },
+                      )
+                    },
                   )
-                  val folderPath = if (subtitleSaveFolder.isBlank()) {
-                    stringResource(R.string.not_set_video_default)
-                  } else {
-                    Uri.parse(subtitleSaveFolder).path ?: subtitleSaveFolder
+
+                  PreferenceDivider()
+                  
+                  Row(
+                    modifier = Modifier
+                      .fillMaxWidth()
+                      .padding(16.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                  ) {
+                    Text(
+                      text = "Subtitle Search provided by",
+                      style = MaterialTheme.typography.bodySmall,
+                      color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                      text = "sub.wyzie.io",
+                      style = MaterialTheme.typography.bodySmall,
+                      color = MaterialTheme.colorScheme.primary,
+                      fontWeight = FontWeight.Bold,
+                      modifier = Modifier.clickable {
+                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://sub.wyzie.io"))
+                        context.startActivity(intent)
+                      }
+                    )
                   }
-                  Text(
-                    text = folderPath,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.outline,
+                }
+              }
+
+              GroupedPreferenceCard(
+                color = cardColor, tonalElevation = 0.dp,
+                position = GroupPosition.MIDDLE,
+                highlightKey = R.string.pref_subtitles_save_location,
+              ) {
+                Box(
+                  modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { saveLocationPicker.launch(null) }
+                    .padding(vertical = 16.dp, horizontal = 16.dp),
+                ) {
+                  Column {
+                    Text(
+                      stringResource(R.string.pref_subtitles_save_location),
+                      style = MaterialTheme.typography.titleMedium,
+                    )
+                    val folderPath = if (subtitleSaveFolder.isBlank()) {
+                      stringResource(R.string.not_set_video_default)
+                    } else {
+                      Uri.parse(subtitleSaveFolder).path ?: subtitleSaveFolder
+                    }
+                    Text(
+                      text = folderPath,
+                      style = MaterialTheme.typography.bodyMedium,
+                      color = MaterialTheme.colorScheme.outline,
+                    )
+                  }
+                }
+              }
+
+              GroupedPreferenceCard(
+                color = cardColor, tonalElevation = 0.dp,
+                position = GroupPosition.MIDDLE,
+                highlightKey = listOf("Subtitle Sources", R.string.pref_subtitle_search_title),
+              ) {
+                MultiChoicePreference(
+                  title = { Text("Subtitle Sources") },
+                  summary = {
+                    val summaryText = if (wyzieSources.isEmpty() || wyzieSources.contains("all")) {
+                      "All"
+                    } else {
+                      wyzieSources.mapNotNull { WyzieSources.ALL[it] }.joinToString(", ")
+                    }
+                    Text(summaryText, color = MaterialTheme.colorScheme.outline)
+                  },
+                  values = WyzieSources.ALL,
+                  selectedValues = wyzieSources,
+                  onValuesChange = { preferences.wyzieSources.set(it) },
+                  hasAllOption = true
+                )
+              }
+
+              GroupedPreferenceCard(
+                color = cardColor, tonalElevation = 0.dp,
+                position = GroupPosition.MIDDLE,
+                highlightKey = R.string.pref_subtitles_subdl_languages,
+              ) {
+                MultiChoicePreference(
+                  title = { Text(stringResource(R.string.pref_subtitles_subdl_languages)) },
+                  summary = {
+                    val summaryText = if (subdlLanguages.isEmpty() || subdlLanguages.contains("all")) {
+                      stringResource(R.string.all_languages)
+                    } else {
+                      subdlLanguages.mapNotNull { WyzieLanguages.ALL[it] }.joinToString(", ")
+                    }
+                    Text(summaryText, color = MaterialTheme.colorScheme.outline)
+                  },
+                  values = WyzieLanguages.SORTED,
+                  selectedValues = subdlLanguages,
+                  onValuesChange = { preferences.subdlLanguages.set(it) },
+                  hasAllOption = true
+                )
+              }
+
+              GroupedPreferenceCard(
+                color = cardColor, tonalElevation = 0.dp,
+                position = GroupPosition.MIDDLE,
+                highlightKey = listOf("Advanced Search Filters", "Hearing-impaired friendly"),
+              ) {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                  Row(
+                    modifier = Modifier
+                      .fillMaxWidth()
+                      .clickable { showAdvanced = !showAdvanced }
+                      .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                  ) {
+                    Text(
+                      text = "Advanced Search Filters",
+                      style = MaterialTheme.typography.labelLarge,
+                      color = MaterialTheme.colorScheme.primary,
+                      fontWeight = FontWeight.Bold
+                    )
+                    Icon(
+                      imageVector = if (showAdvanced) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                      contentDescription = null,
+                      tint = MaterialTheme.colorScheme.primary
+                    )
+                  }
+                  
+                  if (showAdvanced) {
+                    Column(modifier = Modifier.padding(horizontal = 16.dp)) {
+                      SwitchPreference(
+                        value = wyzieHearingImpaired,
+                        onValueChange = { preferences.wyzieHearingImpaired.set(it) },
+                        title = { Text("Hearing-impaired friendly") },
+                        summary = { Text("Only show subtitles optimized for hearing impaired") }
+                      )
+
+                      PreferenceDivider()
+
+                      MultiChoicePreference(
+                        title = { Text("Preferred Formats") },
+                        summary = {
+                          val summaryText = if (wyzieFormats.isEmpty() || wyzieFormats.contains("all")) {
+                            "All"
+                          } else {
+                            wyzieFormats.mapNotNull { WyzieFormats.ALL[it] }.joinToString(", ")
+                          }
+                          Text(summaryText, color = MaterialTheme.colorScheme.outline)
+                        },
+                        values = WyzieFormats.ALL,
+                        selectedValues = wyzieFormats,
+                        onValuesChange = { preferences.wyzieFormats.set(it) },
+                        hasAllOption = true
+                      )
+
+                      PreferenceDivider()
+
+                      MultiChoicePreference(
+                        title = { Text("Preferred Encodings") },
+                        summary = {
+                          val summaryText = if (wyzieEncodings.isEmpty() || wyzieEncodings.contains("all")) {
+                            "All"
+                          } else {
+                            wyzieEncodings.mapNotNull { WyzieEncodings.ALL[it] }.joinToString(", ")
+                          }
+                          Text(summaryText, color = MaterialTheme.colorScheme.outline)
+                        },
+                        values = WyzieEncodings.ALL,
+                        selectedValues = wyzieEncodings,
+                        onValuesChange = { preferences.wyzieEncodings.set(it) },
+                        hasAllOption = true
+                      )
+                      
+                      Spacer(modifier = Modifier.size(16.dp))
+                    }
+                  }
+                }
+              }
+
+              GroupedPreferenceCard(
+                color = cardColor, tonalElevation = 0.dp,
+                position = GroupPosition.MIDDLE,
+                highlightKey = R.string.pref_subtitles_clear_downloads,
+              ) {
+                Preference(
+                  title = { Text(stringResource(R.string.pref_subtitles_clear_downloads), color = MaterialTheme.colorScheme.error) },
+                  summary = { Text(stringResource(R.string.pref_subtitles_clear_downloads_summary)) },
+                  onClick = { showClearDialog = true },
+                  enabled = subtitleSaveFolder.isNotBlank()
+                )
+
+                if (showClearDialog) {
+                  AlertDialog(
+                    onDismissRequest = { showClearDialog = false },
+                    title = { Text(stringResource(R.string.pref_subtitles_clear_downloads)) },
+                    text = { Text(stringResource(R.string.pref_subtitles_clear_downloads_confirmation)) },
+                    confirmButton = {
+                      TextButton(
+                        onClick = {
+                          showClearDialog = false
+                          scope.launch(Dispatchers.IO) {
+                            runCatching {
+                              val uri = Uri.parse(subtitleSaveFolder)
+                              val folder = DocumentFile.fromTreeUri(context, uri)
+                              folder?.listFiles()?.forEach { it.delete() }
+                              withContext(Dispatchers.Main) {
+                                android.widget.Toast.makeText(context, R.string.toast_subtitles_cleared, android.widget.Toast.LENGTH_SHORT).show()
+                              }
+                            }.onFailure { e ->
+                              withContext(Dispatchers.Main) {
+                                android.widget.Toast.makeText(context, "Error: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
+                              }
+                            }
+                          }
+                        }
+                      ) {
+                        Text(stringResource(R.string.delete), color = MaterialTheme.colorScheme.error)
+                      }
+                    },
+                    dismissButton = {
+                      TextButton(onClick = { showClearDialog = false }) {
+                        Text(stringResource(android.R.string.cancel))
+                      }
+                    }
                   )
                 }
               }
 
-              PreferenceDivider()
-
-              var showClearDialog by remember { mutableStateOf(false) }
-              val scope = androidx.compose.runtime.rememberCoroutineScope()
-
-              PreferenceDivider()
-
-              // Wyzie Sources
-              MultiChoicePreference(
-                title = { Text("Subtitle Sources") },
-                summary = {
-                  val summaryText = if (wyzieSources.isEmpty() || wyzieSources.contains("all")) {
-                    "All"
-                  } else {
-                    wyzieSources.mapNotNull { WyzieSources.ALL[it] }.joinToString(", ")
-                  }
-                  Text(summaryText, color = MaterialTheme.colorScheme.outline)
-                },
-                values = WyzieSources.ALL,
-                selectedValues = wyzieSources,
-                onValuesChange = { preferences.wyzieSources.set(it) },
-                hasAllOption = true
-              )
-
-              PreferenceDivider()
-
-              // Languages
-              val subdlLanguages by preferences.subdlLanguages.collectAsState()
-              MultiChoicePreference(
-                title = { Text(stringResource(R.string.pref_subtitles_subdl_languages)) },
-                summary = {
-                  val summaryText = if (subdlLanguages.isEmpty() || subdlLanguages.contains("all")) {
-                    stringResource(R.string.all_languages)
-                  } else {
-                    subdlLanguages.mapNotNull { WyzieLanguages.ALL[it] }.joinToString(", ")
-                  }
-                  Text(summaryText, color = MaterialTheme.colorScheme.outline)
-                },
-                values = WyzieLanguages.SORTED,
-                selectedValues = subdlLanguages,
-                onValuesChange = { preferences.subdlLanguages.set(it) },
-                hasAllOption = true
-              )
-
-              PreferenceDivider()
-
-              // Advanced Filters (Toggleable)
-              var showAdvanced by remember { mutableStateOf(false) }
-              Column(modifier = Modifier.fillMaxWidth()) {
+              GroupedPreferenceCard(position = GroupPosition.LAST, color = cardColor, tonalElevation = 0.dp) {
                 Row(
                   modifier = Modifier
                     .fillMaxWidth()
-                    .clickable { showAdvanced = !showAdvanced }
                     .padding(16.dp),
-                  verticalAlignment = Alignment.CenterVertically,
-                  horizontalArrangement = Arrangement.SpaceBetween
+                  horizontalArrangement = Arrangement.SpaceBetween,
+                  verticalAlignment = Alignment.CenterVertically
                 ) {
                   Text(
-                    text = "Advanced Search Filters",
-                    style = MaterialTheme.typography.labelLarge,
+                    text = "Subtitle Search provided by",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                  )
+                  Text(
+                    text = "sub.wyzie.io",
+                    style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.primary,
-                    fontWeight = FontWeight.Bold
-                  )
-                  Icon(
-                    imageVector = if (showAdvanced) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.clickable {
+                      context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://sub.wyzie.io")))
+                    }
                   )
                 }
-                
-                if (showAdvanced) {
-                  Column(modifier = Modifier.padding(horizontal = 16.dp)) {
-                    SwitchPreference(
-                      value = wyzieHearingImpaired,
-                      onValueChange = { preferences.wyzieHearingImpaired.set(it) },
-                      title = { Text("Hearing-impaired friendly") },
-                      summary = { Text("Only show subtitles optimized for hearing impaired") }
-                    )
-
-                    PreferenceDivider()
-
-                    MultiChoicePreference(
-                      title = { Text("Preferred Formats") },
-                      summary = {
-                        val summaryText = if (wyzieFormats.isEmpty() || wyzieFormats.contains("all")) {
-                          "All"
-                        } else {
-                          wyzieFormats.mapNotNull { WyzieFormats.ALL[it] }.joinToString(", ")
-                        }
-                        Text(summaryText, color = MaterialTheme.colorScheme.outline)
-                      },
-                      values = WyzieFormats.ALL,
-                      selectedValues = wyzieFormats,
-                      onValuesChange = { preferences.wyzieFormats.set(it) },
-                      hasAllOption = true
-                    )
-
-                    PreferenceDivider()
-
-                    MultiChoicePreference(
-                      title = { Text("Preferred Encodings") },
-                      summary = {
-                        val summaryText = if (wyzieEncodings.isEmpty() || wyzieEncodings.contains("all")) {
-                          "All"
-                        } else {
-                          wyzieEncodings.mapNotNull { WyzieEncodings.ALL[it] }.joinToString(", ")
-                        }
-                        Text(summaryText, color = MaterialTheme.colorScheme.outline)
-                      },
-                      values = WyzieEncodings.ALL,
-                      selectedValues = wyzieEncodings,
-                      onValuesChange = { preferences.wyzieEncodings.set(it) },
-                      hasAllOption = true
-                    )
-                    
-                    Spacer(modifier = Modifier.size(16.dp))
-                  }
-                }
-              }
-
-              PreferenceDivider()
-
-              Preference(
-                title = { Text(stringResource(R.string.pref_subtitles_clear_downloads), color = MaterialTheme.colorScheme.error) },
-                summary = { Text(stringResource(R.string.pref_subtitles_clear_downloads_summary)) },
-                onClick = { showClearDialog = true },
-                enabled = subtitleSaveFolder.isNotBlank()
-              )
-
-              if (showClearDialog) {
-                AlertDialog(
-                  onDismissRequest = { showClearDialog = false },
-                  title = { Text(stringResource(R.string.pref_subtitles_clear_downloads)) },
-                  text = { Text(stringResource(R.string.pref_subtitles_clear_downloads_confirmation)) },
-                  confirmButton = {
-                    TextButton(
-                      onClick = {
-                        showClearDialog = false
-                        scope.launch(Dispatchers.IO) {
-                          runCatching {
-                            val uri = Uri.parse(subtitleSaveFolder)
-                            val folder = DocumentFile.fromTreeUri(context, uri)
-                            folder?.listFiles()?.forEach { it.delete() }
-                            withContext(Dispatchers.Main) {
-                              android.widget.Toast.makeText(context, R.string.toast_subtitles_cleared, android.widget.Toast.LENGTH_SHORT).show()
-                            }
-                          }.onFailure { e ->
-                            withContext(Dispatchers.Main) {
-                              android.widget.Toast.makeText(context, "Error: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
-                            }
-                          }
-                        }
-                      }
-                    ) {
-                      Text(stringResource(R.string.delete), color = MaterialTheme.colorScheme.error)
-                    }
-                  },
-                  dismissButton = {
-                    TextButton(onClick = { showClearDialog = false }) {
-                      Text(stringResource(android.R.string.cancel))
-                    }
-                  }
-                )
-              }
-
-              PreferenceDivider()
-
-              TextFieldPreference(
-                value = wyzieApiKey,
-                onValueChange = preferences.wyzieApiKey::set,
-                textToValue = { it.trim() },
-                title = { Text(stringResource(R.string.pref_subtitles_wyzie_api_key_title)) },
-                summary = {
-                  val summaryText = if (wyzieApiKey.isNotBlank()) {
-                    stringResource(R.string.pref_subtitles_wyzie_api_key_masked)
-                  } else {
-                    stringResource(R.string.pref_subtitles_wyzie_api_key_not_set)
-                  }
-                  Text(summaryText, color = MaterialTheme.colorScheme.outline)
-                },
-                textField = { value, onValueChange, _ ->
-                  val uriHandler = LocalUriHandler.current
-                  val fullString = stringResource(R.string.pref_subtitles_wyzie_api_key_summary)
-                  val linkText = "sub.wyzie.io/redeem"
-                  
-                  val annotatedString = buildAnnotatedString {
-                      val startIndex = fullString.indexOf(linkText)
-                      if (startIndex >= 0) {
-                          append(fullString.substring(0, startIndex))
-                          pushStringAnnotation(tag = "URL", annotation = "https://$linkText")
-                          withStyle(style = SpanStyle(
-                              color = MaterialTheme.colorScheme.primary,
-                              textDecoration = TextDecoration.Underline,
-                              fontWeight = FontWeight.Bold
-                          )) {
-                              append(linkText)
-                          }
-                          pop()
-                          append(fullString.substring(startIndex + linkText.length))
-                      } else {
-                          append(fullString)
-                      }
-                  }
-
-                  Column(modifier = Modifier.padding(top = 8.dp)) {
-                    ClickableText(
-                        text = annotatedString,
-                        style = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurfaceVariant),
-                        onClick = { offset ->
-                            annotatedString.getStringAnnotations(tag = "URL", start = offset, end = offset)
-                                .firstOrNull()?.let { annotation ->
-                                    uriHandler.openUri(annotation.item)
-                                }
-                        }
-                    )
-                    
-                    Spacer(modifier = Modifier.height(16.dp))
-                    
-                    OutlinedTextField(
-                      value = value,
-                      onValueChange = onValueChange,
-                      modifier = Modifier.fillMaxWidth(),
-                      singleLine = true,
-                      placeholder = { Text(stringResource(R.string.pref_subtitles_wyzie_api_key_hint)) },
-                      shape = RoundedCornerShape(12.dp),
-                      colors = OutlinedTextFieldDefaults.colors(
-                          focusedBorderColor = MaterialTheme.colorScheme.primary,
-                          unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
-                          focusedContainerColor = MaterialTheme.colorScheme.surface,
-                          unfocusedContainerColor = MaterialTheme.colorScheme.surface
-                      )
-                    )
-                  }
-                },
-              )
-
-              PreferenceDivider()
-              
-              // Wyzie Tag
-              Row(
-                modifier = Modifier
-                  .fillMaxWidth()
-                  .padding(16.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-              ) {
-                Text(
-                  text = "Subtitle Search provided by",
-                  style = MaterialTheme.typography.bodySmall,
-                  color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Text(
-                  text = "sub.wyzie.io",
-                  style = MaterialTheme.typography.bodySmall,
-                  color = MaterialTheme.colorScheme.primary,
-                  fontWeight = FontWeight.Bold,
-                  modifier = Modifier.clickable {
-                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://sub.wyzie.io"))
-                    context.startActivity(intent)
-                  }
-                )
               }
             }
           }
@@ -843,6 +890,76 @@ fun MultiChoicePreference(
           Text(stringResource(android.R.string.ok))
         }
       }
+    )
+  }
+}
+
+/**
+ * The Wyzie API key input plus its "where do I get a key" link.
+ *
+ * Rendered as the first card of the subtitle search section, because without a key every
+ * online search fails: the app ships no key of its own.
+ */
+@Composable
+private fun SubtitleApiKeyField(
+  value: String,
+  onValueChange: (String) -> Unit,
+) {
+  val uriHandler = LocalUriHandler.current
+  val fullString = stringResource(R.string.pref_subtitles_wyzie_api_key_summary)
+  val linkText = "sub.wyzie.io/redeem"
+
+  val annotatedString = buildAnnotatedString {
+    val startIndex = fullString.indexOf(linkText)
+    if (startIndex >= 0) {
+      append(fullString.substring(0, startIndex))
+      pushStringAnnotation(tag = "URL", annotation = "https://$linkText")
+      withStyle(
+        style = SpanStyle(
+          color = MaterialTheme.colorScheme.primary,
+          textDecoration = TextDecoration.Underline,
+          fontWeight = FontWeight.Bold
+        )
+      ) {
+        append(linkText)
+      }
+      pop()
+      append(fullString.substring(startIndex + linkText.length))
+    } else {
+      append(fullString)
+    }
+  }
+
+  val hasKey = value.isNotBlank()
+
+  Column(modifier = Modifier.padding(top = 8.dp)) {
+    ClickableText(
+      text = annotatedString,
+      style = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurfaceVariant),
+      onClick = { offset ->
+        annotatedString.getStringAnnotations(tag = "URL", start = offset, end = offset)
+          .firstOrNull()?.let { annotation ->
+            uriHandler.openUri(annotation.item)
+          }
+      }
+    )
+
+    Spacer(modifier = Modifier.height(16.dp))
+
+    OutlinedTextField(
+      value = value,
+      onValueChange = onValueChange,
+      modifier = Modifier.fillMaxWidth(),
+      singleLine = true,
+      isError = !hasKey,
+      placeholder = { Text(stringResource(R.string.pref_subtitles_wyzie_api_key_hint)) },
+      shape = RoundedCornerShape(12.dp),
+      colors = OutlinedTextFieldDefaults.colors(
+        focusedBorderColor = MaterialTheme.colorScheme.primary,
+        unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
+        focusedContainerColor = MaterialTheme.colorScheme.surface,
+        unfocusedContainerColor = MaterialTheme.colorScheme.surface
+      )
     )
   }
 }

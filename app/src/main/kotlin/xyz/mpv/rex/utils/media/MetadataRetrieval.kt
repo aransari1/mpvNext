@@ -72,7 +72,7 @@ object MetadataRetrieval {
 
         // If video already has metadata (including FPS and subtitle info), return as-is
         if (video.width > 0 && video.height > 0 && video.duration > 0 && video.fps > 0f && video.subtitleCodec.isNotEmpty()) {
-            return@withContext video
+            return@withContext video.copy(subtitleIndicatorReady = true)
         }
 
         // Extract metadata
@@ -92,7 +92,8 @@ object MetadataRetrieval {
                     fps = metadata.fps,
                     resolution = MediaFormatter.formatResolutionWithFps(metadata.width, metadata.height, metadata.fps),
                     hasEmbeddedSubtitles = metadata.hasEmbeddedSubtitles,
-                    subtitleCodec = metadata.subtitleCodec
+                    subtitleCodec = metadata.subtitleCodec,
+                    subtitleIndicatorReady = true,
                 )
             } else {
                 video
@@ -143,6 +144,7 @@ object MetadataRetrieval {
                     ),
                     hasEmbeddedSubtitles = cached.hasEmbeddedSubtitles,
                     subtitleCodec = cached.subtitleCodec,
+                    subtitleIndicatorReady = true,
                     artist = if (cached.artist.isNotEmpty()) cached.artist else video.artist,
                     album = if (cached.album.isNotEmpty()) cached.album else video.album,
                 )
@@ -150,6 +152,22 @@ object MetadataRetrieval {
                 video
             }
         }
+    }
+
+    /**
+     * True when [video] still lacks metadata that the current preferences would display.
+     *
+     * This is the single definition of "needs enrichment": the caller deciding whether to run
+     * [enrichVideosIfNeeded] and [enrichVideosIfNeeded] itself both use it, so the decision to
+     * enrich and the set actually enriched can never disagree.
+     */
+    fun needsMetadata(
+        video: xyz.mpv.rex.domain.media.model.Video,
+        browserPreferences: BrowserPreferences,
+    ): Boolean {
+        if (video.duration <= 0L) return true
+        if (!isVideoMetadataNeeded(browserPreferences)) return false
+        return video.width == 0 || video.height == 0 || video.fps == 0f || video.subtitleCodec.isEmpty()
     }
 
     /**
@@ -167,7 +185,7 @@ object MetadataRetrieval {
         // Filter videos that need metadata extraction:
         // Always extract if duration is 0, or if chips are enabled and missing width/height/fps/subtitles
         val videosNeedingMetadata = videos.filter { video ->
-            video.duration <= 0L || (isMetadataNeeded && (video.width == 0 || video.height == 0 || video.fps == 0f || video.subtitleCodec.isEmpty()))
+            needsMetadata(video, browserPreferences)
         }
 
         if (videosNeedingMetadata.isEmpty()) {
@@ -202,11 +220,14 @@ object MetadataRetrieval {
                     resolution = MediaFormatter.formatResolutionWithFps(metadata.width, metadata.height, metadata.fps),
                     hasEmbeddedSubtitles = metadata.hasEmbeddedSubtitles,
                     subtitleCodec = metadata.subtitleCodec,
+                    subtitleIndicatorReady = true,
                     artist = if (metadata.artist.isNotEmpty()) metadata.artist else video.artist,
                     album = if (metadata.album.isNotEmpty()) metadata.album else video.album,
                 )
             } else {
-                video
+                // The metadata attempt is complete. Keep the independently discovered external
+                // indicator available even if MediaInfo could not produce embedded metadata.
+                video.copy(subtitleIndicatorReady = true)
             }
         }
     }
@@ -232,7 +253,7 @@ object MetadataRetrieval {
             // If video already has metadata (including FPS and subtitle info), emit as-is
             if (video.width > 0 && video.height > 0 && video.duration > 0 && 
                 video.fps > 0f && video.subtitleCodec.isNotEmpty()) {
-                emit(video)
+                emit(video.copy(subtitleIndicatorReady = true))
                 continue
             }
 
@@ -240,7 +261,7 @@ object MetadataRetrieval {
             try {
                 val file = File(video.path)
                 if (!file.exists()) {
-                    emit(video)
+                    emit(video.copy(subtitleIndicatorReady = true))
                     continue
                 }
 
@@ -255,15 +276,16 @@ object MetadataRetrieval {
                             fps = metadata.fps,
                             resolution = MediaFormatter.formatResolutionWithFps(metadata.width, metadata.height, metadata.fps),
                             hasEmbeddedSubtitles = metadata.hasEmbeddedSubtitles,
-                            subtitleCodec = metadata.subtitleCodec
+                            subtitleCodec = metadata.subtitleCodec,
+                            subtitleIndicatorReady = true,
                         )
                     )
                 } else {
-                    emit(video)
+                    emit(video.copy(subtitleIndicatorReady = true))
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error enriching video metadata: ${video.displayName}", e)
-                emit(video)
+                emit(video.copy(subtitleIndicatorReady = true))
             }
         }
     }
@@ -283,8 +305,8 @@ object MetadataRetrieval {
             return@withContext folder
         }
 
-        // If folder already has duration, return as-is
-        if (folder.totalDuration > 0) {
+        // If folder has no videos or already has video duration, return as-is
+        if (folder.videoCount == 0 || folder.videoDuration > 0L) {
             return@withContext folder
         }
 
@@ -311,9 +333,12 @@ object MetadataRetrieval {
             val metadataMap = metadataCache.getOrExtractMetadataBatch(fileTriples)
 
             // Calculate total duration
-            val totalDuration = metadataMap.values.sumOf { it.durationMs }
+            val videoDuration = metadataMap.values.sumOf { it.durationMs }
 
-            folder.copy(totalDuration = totalDuration)
+            folder.copy(
+                videoDuration = videoDuration,
+                totalDuration = videoDuration + folder.audioDuration,
+            )
         } catch (e: Exception) {
             Log.e(TAG, "Error enriching folder metadata: ${folder.name}", e)
             folder
@@ -337,7 +362,7 @@ object MetadataRetrieval {
         }
 
         // Filter folders that need metadata extraction
-        val foldersNeedingMetadata = folders.filter { it.totalDuration == 0L }
+        val foldersNeedingMetadata = folders.filter { it.videoCount > 0 && it.videoDuration == 0L }
 
         if (foldersNeedingMetadata.isEmpty()) {
             return@withContext folders

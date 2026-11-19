@@ -1,6 +1,8 @@
 package xyz.mpv.rex.ui.player.controls
 
+import android.content.res.Configuration
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
@@ -14,6 +16,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
 import xyz.mpv.rex.ui.player.Panels
 import xyz.mpv.rex.ui.player.controls.components.panels.AudioDelayPanel
@@ -27,32 +30,19 @@ fun PlayerPanels(
   onDismissRequest: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
-  AnimatedContent(
-    targetState = panelShown,
-    label = "panels",
-    contentAlignment = Alignment.CenterEnd,
-    contentKey = { it.name },
-    transitionSpec = {
-      fadeIn() + slideInHorizontally { it / 3 } togetherWith fadeOut() + slideOutHorizontally { it / 2 }
-    },
-    modifier = modifier,
-  ) { currentPanel ->
-    when (currentPanel) {
-      Panels.None -> {
-        Box(Modifier.fillMaxHeight())
-      }
-      Panels.SubtitleSettings -> {
-        SubtitleSettingsPanel(onDismissRequest)
-      }
-      Panels.SubtitleDelay -> {
-        SubtitleDelayPanel(onDismissRequest)
-      }
-      Panels.AudioDelay -> {
-        AudioDelayPanel(onDismissRequest)
-      }
-      Panels.VideoFilters -> {
-        VideoSettingsPanel(onDismissRequest)
-      }
+  when (panelShown) {
+    Panels.None -> {}
+    Panels.SubtitleSettings -> {
+      SubtitleSettingsPanel(onDismissRequest, modifier)
+    }
+    Panels.SubtitleDelay -> {
+      SubtitleDelayPanel(onDismissRequest, modifier)
+    }
+    Panels.AudioDelay -> {
+      AudioDelayPanel(onDismissRequest, modifier)
+    }
+    Panels.VideoFilters -> {
+      VideoSettingsPanel(onDismissRequest, modifier)
     }
   }
 }

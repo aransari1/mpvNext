@@ -14,13 +14,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -60,19 +57,13 @@ fun LoadingState(
       modifier = Modifier
         .fillMaxWidth()
         .padding(horizontal = 48.dp)
-        .padding(bottom = 80.dp), // Account for bottom navigation bar
+        .padding(bottom = 64.dp), // Account for bottom navigation bar
       horizontalAlignment = Alignment.CenterHorizontally,
       verticalArrangement = Arrangement.Center,
     ) {
       // Icon with Surface (same style as EmptyState)
-      Surface(
-        modifier =
-          Modifier
-            .size(96.dp)
-            .alpha(alpha),
-        shape = RoundedCornerShape(28.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerHighest,
-        tonalElevation = 0.dp,
+      StateIconSurface(
+        modifier = Modifier.alpha(alpha),
       ) {
         Icon(
           imageVector = icon,

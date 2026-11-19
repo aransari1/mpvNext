@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.PictureInPictureAlt
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
@@ -43,6 +44,8 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SearchBar
 import androidx.compose.material3.SearchBarDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberTopAppBarState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.res.stringResource
 import xyz.mpv.rex.R
@@ -58,6 +61,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.unit.dp
@@ -73,11 +77,14 @@ import xyz.mpv.rex.presentation.components.pullrefresh.PullRefreshBox
 import xyz.mpv.rex.ui.browser.cards.M3UVideoCard
 import xyz.mpv.rex.ui.browser.cards.VideoCard
 import xyz.mpv.rex.ui.browser.components.BrowserTopBar
+import xyz.mpv.rex.ui.browser.components.ContentSurfaceContainer
 import xyz.mpv.rex.ui.browser.components.UnifiedExplorerContent
 import xyz.mpv.rex.ui.browser.components.SelectionOverflowAction
+import xyz.mpv.rex.ui.browser.dialogs.DeleteConfirmationDialog
 import xyz.mpv.rex.ui.browser.selection.rememberSelectionManager
 import xyz.mpv.rex.ui.player.PlayerActivity
 import xyz.mpv.rex.ui.utils.LocalBackStack
+import xyz.mpv.rex.ui.utils.navigateBack
 import xyz.mpv.rex.utils.media.MediaInfoOps
 import xyz.mpv.rex.utils.media.MediaUtils
 import kotlinx.coroutines.launch
@@ -105,6 +112,7 @@ import sh.calvin.reorderable.rememberReorderableLazyListState
  */
 @Serializable
 data class PlaylistDetailScreen(val playlistId: Int) : Screen {
+
   @OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterialApi::class)
   @Composable
   override fun Content() {
@@ -124,9 +132,12 @@ data class PlaylistDetailScreen(val playlistId: Int) : Screen {
       )
 
     val playlist by viewModel.playlist.collectAsState()
+    val isAutoPlaylist = playlistId < 0
+    val isRecentlyAdded = playlistId == PlaylistViewModel.ID_RECENTLY_ADDED
     val videoItems by viewModel.videoItems.collectAsState()
     val videos = videoItems.map { it.video }
     val isLoading by viewModel.isLoading.collectAsState()
+    val hasLoaded by viewModel.hasLoaded.collectAsState()
     val uiSettings by viewModel.uiSettings.collectAsState()
     val isRefreshing = remember { mutableStateOf(false) }
 
@@ -164,8 +175,12 @@ data class PlaylistDetailScreen(val playlistId: Int) : Screen {
         items = filteredVideoItems,
         getId = { it.playlistItem.id },
         onDeleteItems = { itemsToDelete, _ ->
-          viewModel.removeVideosFromPlaylist(itemsToDelete)
-          Pair(itemsToDelete.size, 0)
+          if (isRecentlyAdded) {
+            viewModel.deleteVideos(itemsToDelete.map { it.video })
+          } else {
+            viewModel.removeVideosFromPlaylist(itemsToDelete)
+            Pair(itemsToDelete.size, 0)
+          }
         },
         onOperationComplete = { viewModel.refresh() },
       )
@@ -196,7 +211,20 @@ data class PlaylistDetailScreen(val playlistId: Int) : Screen {
       }
     }
 
+    val topAppBarState = rememberTopAppBarState()
+    val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior(topAppBarState)
+
     Scaffold(
+      modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
+      // Nested/pushed screens must set the screen tone themselves; it does not
+      // propagate from MainScreen across a NavDisplay boundary, and a nested
+      // Scaffold overrides it. surfaceContainer is what shows through the
+      // content surface's gaps and around its 24.dp corners.
+      containerColor = if (MaterialTheme.colorScheme.background == androidx.compose.ui.graphics.Color.Black) {
+        androidx.compose.ui.graphics.Color.Black
+      } else {
+        MaterialTheme.colorScheme.surfaceContainer
+      },
       topBar = {
         if (isSearching) {
           // Search mode - show search bar
@@ -244,6 +272,7 @@ data class PlaylistDetailScreen(val playlistId: Int) : Screen {
         } else {
           BrowserTopBar(
             title = playlist?.name ?: "Playlist",
+            scrollBehavior = scrollBehavior,
             isInSelectionMode = selectionManager.isInSelectionMode,
             selectedCount = selectionManager.selectedCount,
             totalCount = videos.size,
@@ -251,12 +280,13 @@ data class PlaylistDetailScreen(val playlistId: Int) : Screen {
               when {
                 isReorderMode -> isReorderMode = false
                 selectionManager.isInSelectionMode -> selectionManager.clear()
-                else -> backStack.removeLastOrNull()
+                else -> backStack.navigateBack()
               }
             },
             onCancelSelection = { selectionManager.clear() },
             isSingleSelection = selectionManager.isSingleSelection,
-            useRemoveIcon = true, // Show remove icon instead of delete for playlist
+            useRemoveIcon = !isRecentlyAdded, // Show remove icon for regular playlists, delete icon for recently added
+            deleteBeforeInfo = true,
             onInfoClick = {
               val selected = selectionManager.getSelectedItems()
               if (selectionManager.isSingleSelection) {
@@ -297,11 +327,42 @@ data class PlaylistDetailScreen(val playlistId: Int) : Screen {
                   },
                 ))
               }
+              if (!isAutoPlaylist && selectionManager.isSingleSelection) {
+                val selected = selectionManager.getSelectedItems().firstOrNull()
+                val isCurrentThumbnail = selected?.video?.path != null && selected.video.path == playlist?.customThumbnailPath
+                if (isCurrentThumbnail) {
+                  add(SelectionOverflowAction(
+                    icon = Icons.Filled.Image,
+                    label = "Reset playlist thumbnail",
+                    onClick = {
+                      coroutineScope.launch {
+                        viewModel.setPlaylistThumbnail(null)
+                        Toast.makeText(context, "Reset thumbnail to first video", Toast.LENGTH_SHORT).show()
+                        selectionManager.clear()
+                      }
+                    },
+                  ))
+                } else {
+                  add(SelectionOverflowAction(
+                    icon = Icons.Filled.Image,
+                    label = "Set as playlist thumbnail",
+                    onClick = {
+                      if (selected != null) {
+                        coroutineScope.launch {
+                          viewModel.setPlaylistThumbnail(selected.video.path)
+                          Toast.makeText(context, "Playlist thumbnail updated", Toast.LENGTH_SHORT).show()
+                          selectionManager.clear()
+                        }
+                      }
+                    },
+                  ))
+                }
+              }
             },
             onSelectAll = { selectionManager.selectAll() },
             onInvertSelection = { selectionManager.invertSelection() },
             onDeselectAll = { selectionManager.clear() },
-            onDeleteClick = { deleteDialogOpen.value = true },
+            onDeleteClick = if (isAutoPlaylist && !isRecentlyAdded) null else ({ deleteDialogOpen.value = true }),
             additionalActions = {
               when {
                 // Show done button when in reorder mode
@@ -333,8 +394,8 @@ data class PlaylistDetailScreen(val playlistId: Int) : Screen {
                     }
                     Spacer(modifier = Modifier.width(4.dp))
 
-                    // Reorder button (hide for M3U playlists)
-                    if (playlist?.isM3uPlaylist != true) {
+                    // Reorder button (hide for M3U playlists and auto playlists)
+                    if (playlist?.isM3uPlaylist != true && !isAutoPlaylist) {
                       IconButton(
                         onClick = { isReorderMode = true },
                       ) {
@@ -387,8 +448,8 @@ data class PlaylistDetailScreen(val playlistId: Int) : Screen {
                               videos = videos,
                               startIndex = startIndex,
                               context = context,
-                              launchSource = "playlist",
-                              playlistId = playlistId
+                              launchSource = if (isAutoPlaylist) "auto_playlist" else "playlist",
+                              playlistId = if (isAutoPlaylist) null else playlistId
                             )
                           }
                         }
@@ -462,8 +523,8 @@ data class PlaylistDetailScreen(val playlistId: Int) : Screen {
         PullRefreshBox(
           isRefreshing = isRefreshing,
           enabled = pullToRefreshEnabled,
-          listState = listState,
           modifier = Modifier.fillMaxSize().padding(padding),
+          headerScrollState = topAppBarState,
           onRefresh = {
             val isM3uPlaylist = playlist?.isM3uPlaylist == true
             if (isM3uPlaylist) {
@@ -482,7 +543,8 @@ data class PlaylistDetailScreen(val playlistId: Int) : Screen {
         ) {
           PlaylistVideoListContent(
             videoItems = filteredVideoItems,
-            isLoading = isLoading && videoItems.isEmpty(),
+            isLoading = isLoading,
+            hasLoaded = hasLoaded,
             uiSettings = uiSettings,
             selectionManager = selectionManager,
             isM3uPlaylist = playlist?.isM3uPlaylist == true,
@@ -509,8 +571,8 @@ data class PlaylistDetailScreen(val playlistId: Int) : Screen {
                       videos = videos,
                       startIndex = startIndex,
                       context = context,
-                      launchSource = "playlist",
-                      playlistId = playlistId
+                      launchSource = if (isAutoPlaylist) "auto_playlist" else "playlist",
+                      playlistId = if (isAutoPlaylist) null else playlistId
                     )
                   }
                 } else {
@@ -528,12 +590,23 @@ data class PlaylistDetailScreen(val playlistId: Int) : Screen {
       }
 
       // Dialogs
-      RemoveFromPlaylistDialog(
-        isOpen = deleteDialogOpen.value,
-        onDismiss = { deleteDialogOpen.value = false },
-        onConfirm = { selectionManager.deleteSelected() },
-        itemCount = selectionManager.selectedCount,
-      )
+      if (isRecentlyAdded) {
+        DeleteConfirmationDialog(
+          isOpen = deleteDialogOpen.value,
+          onDismiss = { deleteDialogOpen.value = false },
+          onConfirm = { selectionManager.deleteSelected() },
+          itemTypePluralRes = R.plurals.item_type_video_plural,
+          itemCount = selectionManager.selectedCount,
+          itemNames = selectionManager.getSelectedItems().map { it.video.displayName },
+        )
+      } else {
+        RemoveFromPlaylistDialog(
+          isOpen = deleteDialogOpen.value,
+          onDismiss = { deleteDialogOpen.value = false },
+          onConfirm = { selectionManager.deleteSelected() },
+          itemCount = selectionManager.selectedCount,
+        )
+      }
 
       // URL Dialog for M3U streams
       if (showUrlDialog) {
@@ -563,6 +636,7 @@ data class PlaylistDetailScreen(val playlistId: Int) : Screen {
 private fun PlaylistVideoListContent(
   videoItems: List<PlaylistVideoItem>,
   isLoading: Boolean,
+  hasLoaded: Boolean = !isLoading || videoItems.isNotEmpty(),
   uiSettings: UiSettings,
   selectionManager: xyz.mpv.rex.ui.browser.selection.SelectionManager<PlaylistVideoItem, Int>,
   isReorderMode: Boolean,
@@ -573,22 +647,28 @@ private fun PlaylistVideoListContent(
   modifier: Modifier = Modifier,
   isM3uPlaylist: Boolean = false,
 ) {
-  UnifiedExplorerContent(
-    items = videoItems,
-    isLoading = isLoading,
-    uiSettings = uiSettings,
-    isSelected = { selectionManager.isSelected(it) },
-    onClick = onVideoItemClick,
-    onLongClick = onVideoItemLongClick,
-    onToggleSelection = { selectionManager.toggle(it) },
+  ContentSurfaceContainer(
+    navigationBarHeight = xyz.mpv.rex.ui.browser.LocalNavigationBarHeight.current,
     modifier = modifier,
-    emptyTitle = stringResource(R.string.no_videos_in_playlist),
-    emptyMessage = stringResource(R.string.no_videos_in_playlist_desc),
-    isInSelectionMode = selectionManager.isInSelectionMode,
-    isReorderMode = isReorderMode,
-    onReorder = onReorder,
-    listState = listState
-  )
+  ) {
+    UnifiedExplorerContent(
+      items = videoItems,
+      isLoading = isLoading,
+      hasLoaded = hasLoaded,
+      uiSettings = uiSettings,
+      isSelected = { selectionManager.isSelected(it) },
+      onClick = onVideoItemClick,
+      onLongClick = onVideoItemLongClick,
+      onToggleSelection = { selectionManager.toggle(it) },
+      emptyTitle = stringResource(R.string.no_videos_in_playlist),
+      emptyMessage = stringResource(R.string.no_videos_in_playlist_desc),
+      isInSelectionMode = selectionManager.isInSelectionMode,
+      isReorderMode = isReorderMode,
+      onReorder = onReorder,
+      listState = listState,
+      useContentSurface = true,
+    )
+  }
 }
 
 @Composable

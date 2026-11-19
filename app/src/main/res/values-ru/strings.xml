@@ -30,9 +30,6 @@
 	<string name="pref_appearance_darkmode_dark">Тёмная</string>
 	<string name="pref_appearance_amoled_mode_title">Режим AMOLED Black</string>
 	<string name="pref_appearance_amoled_mode_summary">Использовать абсолютно чёрный фон для тёмных тем</string>
-	<string name="pref_appearance_material_you_title">Material You</string>
-	<string name="pref_appearance_material_you_summary">Включить динамические цвета</string>
-	<string name="pref_appearance_material_you_summary_disabled">Доступно только на Android 12 и выше</string>
 	<string name="pref_appearance_unlimited_name_lines_title">Показывать полные имена</string>
 	<string name="pref_appearance_unlimited_name_lines_summary">Показывать полные названия папок и видео без обрезки</string>
 	<string name="pref_appearance_enable_bounce_animation_title">Включить пружинящую анимацию</string>
@@ -50,8 +47,6 @@
 	<string name="pref_appearance_use_system_font_title">Использовать системный шрифт</string>
 	<string name="pref_appearance_use_system_font_summary">Использовать шрифт устройства по умолчанию вместо шрифта приложения</string>  
 	<string name="pref_appearance_category_file_browser">Файловый менеджер</string>
-	<string name="pref_appearance_show_hidden_files_title">Показывать скрытые файлы</string>
-	<string name="pref_appearance_show_hidden_files_summary">Показывать скрытые папки, начинающиеся с точки (.), включая android, data, системные папки и файлы .nomedia</string>
 	<string name="pref_appearance_show_unplayed_old_video_label_title">Показывать метку для новых невоспроизведённых видео</string>
 	<string name="pref_appearance_show_unplayed_old_video_label_summary">Отображать метку \"NEW\" на видео, добавленных в течение указанного количества дней, которые никогда не воспроизводились</string>
 	<string name="pref_appearance_unplayed_old_video_days_title">Порог дней для метки нового видео</string>
@@ -59,15 +54,6 @@
 	<string name="pref_appearance_category_thumbnails">Миниатюры</string>
 	<string name="pref_appearance_show_network_thumbnails_title">Показывать сетевые миниатюры (Экспериментально)</string>
 	<string name="pref_appearance_show_network_thumbnails_summary">Генерировать миниатюры для сетевых потоков (может увеличить использование данных в мобильных сетях)</string>
-	<string name="pref_appearance_thumbnail_strategy_title">Стратегия генерации миниатюр</string>
-	<string name="pref_appearance_thumbnail_strategy_summary">Выберите, как миниатюры извлекаются из видео</string>
-	<string name="pref_appearance_thumbnail_strategy_first_frame_title">Первый кадр</string>
-	<string name="pref_appearance_thumbnail_strategy_first_frame_summary">Самое быстрое извлечение. Используется кадр на 10-й секунде видео.</string>
-	<string name="pref_appearance_thumbnail_strategy_position_title">Кадр на позиции</string>
-	<string name="pref_appearance_thumbnail_strategy_position_summary">Требует больше ресурсов. Извлекает кадр дальше по видео, чтобы избежать пустых титульных экранов.</string>
-	<string name="pref_appearance_thumbnail_position_title">Позиция кадра миниатюры</string>
-	<string name="pref_appearance_thumbnail_position_summary">Извлекать миниатюру на %d%% длительности видео</string>
-	<string name="pref_appearance_thumbnail_position_reset">Сбросить позицию миниатюры к значению по умолчанию</string>
 	<string name="pref_appearance_theme_picker_label">Тема приложения</string>
 	<string name="pref_appearance_auto_scroll_title">Автопрокрутка к последнему воспроизведённому</string>
 	<string name="pref_appearance_auto_scroll_summary">Автоматически прокручивать к последнему воспроизведённому видео при открытии списков видео</string>
@@ -116,13 +102,8 @@
 	<!-- Player Preferences -->
 	<string name="pref_autoplay_title">Включить навигацию вперёд/назад</string>
 	<string name="pref_autoplay_summary">Показывать кнопки вперёд/назад для всех видео в папке</string>
-	<string name="pref_autoplay_next_video_title">Автовоспроизведение следующего видео</string>
-	<string name="pref_autoplay_next_video_summary">Автоматически воспроизводить следующее видео по окончании текущего</string>
 	<string name="pref_auto_pip_title">Авто-режим \"Картинка в картинке\"</string>
 	<string name="pref_auto_pip_summary">Автоматически переходить в режим PIP при нажатии \"Домой\" или \"Назад\"</string>
-	<string name="pref_player_resume_on_unlock_title">Возобновлять при разблокировке</string>
-	<string name="pref_player_resume_on_unlock_summary_on">Автоматически возобновлять видео после разблокировки, если оно воспроизводилось до блокировки экрана</string>
-	<string name="pref_player_resume_on_unlock_summary_off">Оставлять видео на паузе после разблокировки экрана</string>
 	<string name="pref_dynamic_speed_overlay_title">Динамический оверлей скорости</string>
 	<string name="pref_dynamic_speed_overlay_summary">Показывать оверлей для управления скоростью при долгом нажатии и свайпе</string>
 	<string name="pref_show_navigation_bar_title">Показывать панель навигации с элементами управления</string>
@@ -148,14 +129,10 @@
 
 	<string name="pref_layout_title">Расположение элементов</string>
 	<string name="pref_layout_summary">Настроить расположение кнопок плеера</string>
-	<string name="pref_layout_reset_default">Сбросить по умолчанию</string>
 	<string name="pref_layout_top_right_controls">Элементы управления сверху справа</string>
 	<string name="pref_layout_bottom_right_controls">Элементы управления снизу справа</string>
 	<string name="pref_layout_bottom_left_controls">Элементы управления снизу слева</string>
 	<string name="pref_layout_portrait_bottom_controls">Элементы управления снизу в портретной ориентации</string>
-	<string name="pref_layout_preview">Предпросмотр</string>
-	<string name="pref_layout_reset_title">Сбросить расположение?</string>
-	<string name="pref_layout_reset_summary">Все настроенные расположения элементов управления будут сброшены к позициям по умолчанию</string>
 
 	<string name="pref_player">Плеер</string>
 	<string name="pref_player_summary">Ориентация, жесты и управление</string>
@@ -170,7 +147,6 @@
 	<string name="pref_player_orientation_landscape">Альбомная</string>
 	<string name="pref_player_orientation_reverse_landscape">Альбомная (перевернутая)</string>
 	<string name="pref_player_orientation_sensor_landscape">Альбомная (сенсор)</string>
-	<string name="pref_player_save_position_on_quit">Сохранять позицию при выходе</string>
 	<string name="pref_player_section_mini_player">Мини-плеер</string>
 	<string name="pref_player_play_in_mini_player">Воспроизводить аудио в мини-плеере</string>
 	<string name="pref_player_play_in_mini_player_summary_on">Нажатие на аудиофайл запускает воспроизведение на нижней панели мини-плеера</string>
@@ -236,13 +212,16 @@
 	<string name="pref_gesture_enable_release_to_cancel_title">Включить "Отпустить для отмены"</string>
 	<string name="pref_gesture_enable_release_to_cancel_summary">Возвращать позицию воспроизведения при отпускании рядом с начальным местом перетаскивания</string>
 
-	<string name="pref_gesture_double_tap_custom_info">Вы можете привязать пользовательские действия к этим жестам в файле input.conf, используя следующие коды клавиш:\n\nВлево: MBTN_LEFT_DBL\nПо центру: MBTN_MID_DBL\nВправо: MBTN_RIGHT_DBL</string>
+	<string name="pref_gesture_double_tap_custom_info">Вы можете привязать пользовательские действия к этим жестам в файле input.conf, используя следующие коды клавиш:</string>
+	<string name="pref_gesture_double_tap_left">Влево</string>
+	<string name="pref_gesture_double_tap_center">По центру</string>
+	<string name="pref_gesture_double_tap_right">Вправо</string>
 
 	<string name="pref_gesture_media_title">Управление медиа</string>
 	<string name="pref_gesture_media_previous">Предыдущее</string>
 	<string name="pref_gesture_media_play">Воспроизведение/Пауза</string>
 	<string name="pref_gesture_media_next">Следующее</string>
-	<string name="pref_gesture_media_custom_info">Вы можете привязать пользовательские действия к управлению медиа в файле input.conf, используя следующие коды клавиш:\n\nПредыдущее: PREV\nВоспроизведение/Пауза: PLAYPAUSE\nСледующее: NEXT</string>
+	<string name="pref_gesture_media_custom_info">Вы можете привязать пользовательские действия к управлению медиа в файле input.conf, используя следующие коды клавиш:</string>
 
 	<string name="pref_gesture_view_title">Вид</string>
 	<string name="pref_gesture_tap_thumbnail_to_select_title">Нажатие на миниатюру для выбора</string>
@@ -582,7 +561,6 @@
 	<string name="pref_player_hide_osd_text_summary">Скрыть стандартный OSD-текст mpv во время перемотки видео или субтитров</string>
 	<string name="pref_player_keep_screen_on_when_paused_title">Не выключать экран при паузе</string>
 	<string name="pref_player_keep_screen_on_when_paused_summary">Предотвращает отключение экрана во время паузы</string>
-	<string name="pref_player_save_position_on_quit_summary">Запоминать место, на котором вы остановились</string>
 	<string name="pref_player_interaction_header">Взаимодействие с плеером</string>
 
 	<!-- Folders Preferences -->
@@ -654,10 +632,7 @@
 	<string name="export_complete">Экспорт завершен</string>
 	<string name="import_complete">Импорт завершен</string>
 	<string name="auto_picture_in_picture">Авто-режим "Картинка в картинке"</string>
-	<string name="dynamic_speed_overlay">Динамический оверлей скорости</string>
 	<string name="show_navigation_bar_with_controls">Показывать панель навигации с элементами управления</string>
-	<string name="enable_lua_scripts">Включить скрипты Lua</string>
-	<string name="manage_lua_scripts">Управление скриптами Lua</string>
 	<string name="rename_playlist">Переименовать плейлист</string>
 	<string name="create_playlist">Создать плейлист</string>
 	<string name="add_connection">Добавить подключение</string>
@@ -692,7 +667,6 @@
 	<string name="filter_presets">Пресеты фильтров</string>
 	<string name="no_storage_devices_found">Накопители не найдены</string>
 	<string name="no_folders_or_supported_files">Нет папок или поддерживаемых файлов</string>
-	<string name="hello_world">Привет, мир</string>
 
 	<!-- Browser Preferences -->
 	<string name="pref_show_audio_files_title">Показывать аудиофайлы</string>
@@ -784,7 +758,7 @@
 	<string name="no_video_folders_found_desc">Добавьте видео на ваше устройство, чтобы увидеть здесь папки</string>
 
 	<!-- File System Browser Screen Strings -->
-	<string name="search_in_all_storage_volumes">Поиск по всем накопителям…</string>
+	<string name="search_in_all_storage_volumes">Поиск во всех накопителях</string>
 	<string name="search_in_folder_placeholder">Поиск в %1$s…</string>
 	<string name="search_default_folder_name">папка</string>
 	<string name="empty_folder_title">Пустая папка</string>
@@ -1102,11 +1076,6 @@
 	<!-- Appearance Preferences Screen -->
 	<string name="pref_appearance_network_thumbnails_dialog_title">Включить сетевые миниатюры?</string>
 	<string name="pref_appearance_network_thumbnails_dialog_message">Генерация миниатюр для сетевых потоков (M3U/HTTP) может значительно увеличить использование данных в фоне и время загрузки. Продолжить?</string>
-	<string name="pref_appearance_thumbnail_strategy_dialog_title">Изменить стратегию миниатюр?</string>
-	<string name="pref_appearance_thumbnail_strategy_dialog_message">Изменение стратегии извлечения очистит текущий кэш миниатюр. Новые миниатюры будут генерироваться автоматически во время просмотра.</string>
-	<string name="pref_appearance_thumbnail_position_dialog_title">Обновить позицию миниатюры?</string>
-	<string name="pref_appearance_thumbnail_position_reset_confirm">Сбросить миниатюру на %1$d%% длительности видео.</string>
-	<string name="pref_appearance_thumbnail_position_dialog_message">Изменение позиции извлечения очистит текущий сохраненный кэш миниатюр. Новые миниатюры будут генерироваться автоматически при просмотре.</string>
 
 	<!-- Control Layout Editor Screen -->
 	<string name="control_layout_edit_title_top_right">Редактировать сверху справа</string>
@@ -1140,9 +1109,6 @@
 	<string name="tree_view">Вид деревом</string>
 
 	<string name="pref_player_general">Общие</string>
-	<string name="pref_player_autoplay_next_video">Автовоспроизведение следующего видео</string>
-	<string name="pref_player_autoplay_next_video_summary_on">Автоматически воспроизводить следующее видео по окончании текущего</string>
-	<string name="pref_player_autoplay_next_video_summary_off">Оставаться на текущем видео после его окончания</string>
 	<string name="pref_player_playlist_mode_summary_on">Показывать кнопки вперёд/назад для всех видео в папке</string>
 	<string name="pref_player_playlist_mode_summary_off">Воспроизводить видео по одному (выберите несколько для плейлиста)</string>
 	<string name="pref_player_keep_screen_on_when_paused_summary_on">Экран остается включённым, пока видео на паузе</string>
@@ -1308,4 +1274,40 @@
 	<string name="filter_preset_neon_pop_desc">Яркие неоновые цвета с резким контуром</string>
 	<string name="filter_preset_deep_black">Глубокий чёрный</string>
 	<string name="filter_preset_deep_black_desc">Улучшенный чёрный цвет для OLED-дисплеев</string>
+    <string name="pref_player_resume_playback_title">Возобновить воспроизведение</string>
+    <string name="welcome_title">Добро пожаловать в mpvRex</string>
+    <string name="welcome_subtitle">Ваш современный, мощный и настраиваемый медиаплеер.</string>
+    <string name="welcome_language_section_title">Предпочитаемый язык</string>
+    <string name="welcome_language_section_desc">Выберите отображаемый язык</string>
+    <string name="welcome_grant_permission">Предоставить разрешение</string>
+    <string name="welcome_get_started">Начать</string>
+    <string name="welcome_skip_permission">Продолжить без доступа к хранилищу</string>
+    <string name="storage_access_granted">Доступ к хранилищу предоставлен</string>
+    <string name="storage_access_granted_desc">Разрешение предоставлено. mpvRex готов обнаруживать и воспроизводить ваши медиафайлы.</string>
+    <string name="community_already_joined">Уже присоединился</string>
+    <string name="community_never_show_again">Больше не показывать</string>
+    <string name="community_not_now">Не сейчас</string>
+    <string name="community_already_joined_message">Ссылки сообщества также можно найти в разделе «Настройки» → «О приложении».</string>
+    <string name="player_resume_prompt_title">Возобновить воспроизведение?</string>
+    <string name="pref_player_resume_playback_summary">Выберите, как открываются ранее просмотренные видео</string>
+    <string name="pref_player_resume_mode_always">Всегда возобновлять</string>
+    <string name="pref_player_resume_mode_always_summary">Автоматическое возобновление с последней сохраненной позиции</string>
+    <string name="pref_player_resume_mode_ask">Спрашивай каждый раз</string>
+    <string name="pref_player_resume_mode_ask_summary">Предложить возобновить или начать заново</string>
+    <string name="pref_player_resume_mode_never">Всегда начинать заново</string>
+    <string name="pref_player_resume_mode_never_summary">Всегда начинать воспроизведение с 00:00</string>
+    <string name="player_resume_prompt_message">Ранее вы просмотрели до %1$s.</string>
+    <string name="player_resume_prompt_message_with_duration">Ранее вы просмотрели до %1$s из %2$s.</string>
+    <string name="player_resume_action_resume">Возобновить</string>
+    <string name="player_resume_action_start_over">Начать заново</string>
+    <string name="player_resumed_from_pill">Возобновлено с %1$s</string>
+    <string name="player_restart_action">Перезапустить</string>
+    <string name="pref_player_remember_long_press_speed_title">Запоминать настроенную скорость</string>
+    <string name="pref_player_remember_long_press_speed_summary">Использовать последнюю выбранную свайпом скорость для последующих длительных нажатий</string>
+    <string name="pref_subtitles_force_ltr_title">Принудительно использовать направление слева направо</string>
+    <string name="pref_subtitles_force_ltr_summary">Принудительно использовать направление слева направо для субтитров с направлением справа налево</string>
+    <string name="generic_off">Выкл.</string>
+    <string name="system_default">Системный язык</string>
+    <string name="pref_appearance_language_title">Язык приложения</string>
+    <string name="pref_appearance_language_summary">Изменить язык интерфейса приложения</string>
 </resources>

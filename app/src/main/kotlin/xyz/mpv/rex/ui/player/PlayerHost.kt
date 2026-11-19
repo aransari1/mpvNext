@@ -20,6 +20,8 @@ interface PlayerHost {
   val hostWindowManager: WindowManager
   val hostContentResolver: ContentResolver
   var hostRequestedOrientation: Int
+  val isInPictureInPictureMode: Boolean
+    get() = false
   
   fun requestAudioFocus(): Boolean
   fun abandonAudioFocus()

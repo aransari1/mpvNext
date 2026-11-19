@@ -51,19 +51,26 @@ import xyz.mpv.rex.preferences.allPlayerButtons
 import xyz.mpv.rex.preferences.preference.Preference
 import xyz.mpv.rex.preferences.preference.deleteAndGet
 import xyz.mpv.rex.presentation.Screen
+import xyz.mpv.rex.presentation.components.CollapsibleHeaderScreen
 import xyz.mpv.rex.presentation.components.ConfirmDialog
 import xyz.mpv.rex.ui.preferences.components.PlayerButtonChip
 import xyz.mpv.rex.ui.utils.LocalBackStack
+import xyz.mpv.rex.ui.utils.navigateBack
 import kotlinx.serialization.Serializable
 import me.zhanghai.compose.preference.ProvidePreferenceLocals
 import org.koin.compose.koinInject
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyGridState
+import xyz.mpv.rex.presentation.MotionStyle
 
 @Serializable
 data class ControlLayoutEditorScreen(
   val region: ControlRegion,
 ) : Screen {
+  /** Settings keep the app's original full horizontal push. */
+  override val motion: MotionStyle
+    get() = MotionStyle.Default
+
   @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
   @Composable
   override fun Content() {
@@ -130,10 +137,12 @@ data class ControlLayoutEditorScreen(
             .filter(String::isNotBlank)
             .filter { it !in onBothScreens }
             .mapNotNull { try { PlayerButton.valueOf(it) } catch (_: Exception) { null } }
+            .filter { it != PlayerButton.MORE_OPTIONS }
         } else {
           prefToEdit.get().split(',')
             .filter(String::isNotBlank)
             .mapNotNull { try { PlayerButton.valueOf(it) } catch (_: Exception) { null } }
+            .filter { region != ControlRegion.PORTRAIT_BOTTOM || it != PlayerButton.MORE_OPTIONS }
         }
       )
     }
@@ -164,32 +173,30 @@ data class ControlLayoutEditorScreen(
         onConfirm = {
           isReset = true
           prefToEdit.deleteAndGet()
-          backstack.removeLastOrNull()
+          backstack.navigateBack()
         },
         onCancel = { showResetDialog = false },
       )
     }
 
-    Scaffold(
-      topBar = {
-        TopAppBar(
-          title = { Text(text = title) },
-          navigationIcon = {
-            IconButton(onClick = backstack::removeLastOrNull) {
-              Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = stringResource(R.string.control_layout_back))
-            }
-          },
-          actions = {
-            IconButton(onClick = { showResetDialog = true }) {
-              Icon(Icons.Outlined.Restore, contentDescription = stringResource(R.string.control_layout_reset_to_default))
-            }
-          },
-        )
+    CollapsibleHeaderScreen(
+      title = title,
+      showBackButton = true,
+      onBackClick = backstack::navigateBack,
+      actions = {
+        IconButton(onClick = { showResetDialog = true }) {
+          Icon(Icons.Outlined.Restore, contentDescription = stringResource(R.string.control_layout_reset_to_default))
+        }
       },
-    ) { padding ->
+    ) { contentModifier ->
       ProvidePreferenceLocals {
         val gridState = rememberLazyGridState()
-        val availableButtons = remember { allPlayerButtons.filter { it != PlayerButton.NONE } }
+        val availableButtons = remember(region) {
+          allPlayerButtons.filter {
+            it != PlayerButton.NONE &&
+              ((region != ControlRegion.PORTRAIT_BOTTOM && region != ControlRegion.MORE_SHEET) || it != PlayerButton.MORE_OPTIONS)
+          }
+        }
         val reorderableState = rememberReorderableLazyGridState(gridState) { from, to ->
           val fromKey = from.key as? PlayerButton
           val toKey = to.key as? PlayerButton
@@ -208,9 +215,7 @@ data class ControlLayoutEditorScreen(
           contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
           verticalArrangement = Arrangement.spacedBy(4.dp),
           horizontalArrangement = Arrangement.spacedBy(4.dp),
-          modifier = Modifier
-            .fillMaxSize()
-            .padding(padding)
+          modifier = contentModifier.fillMaxSize()
         ) {
           item(span = { GridItemSpan(maxLineSpan) }) {
             Text(

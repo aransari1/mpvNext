@@ -13,6 +13,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -32,10 +33,12 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Warning
 import androidx.core.content.ContextCompat
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -58,10 +61,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import xyz.mpv.rex.R
 import xyz.mpv.rex.domain.media.model.Video
 import xyz.mpv.rex.utils.media.MediaFormatter
 import java.io.File
@@ -209,7 +214,7 @@ fun WebShareSheet(
   val qrBitmap = remember(shareState.serverUrl) {
     shareState.serverUrl?.let { url ->
       try {
-        QrCodeGenerator.generateQrBitmap(url, sizePx = 400).asImageBitmap()
+        QrCodeGenerator.generateQrBitmap(url, sizePx = 512).asImageBitmap()
       } catch (e: Exception) {
         null
       }
@@ -222,53 +227,93 @@ fun WebShareSheet(
       onDismiss()
     },
     sheetState = sheetState,
-    containerColor = MaterialTheme.colorScheme.surface,
-    shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+    dragHandle = {
+      Box(
+        modifier = Modifier
+          .padding(vertical = 12.dp)
+          .size(width = 32.dp, height = 4.dp)
+          .background(
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+            shape = MaterialTheme.shapes.extraLarge,
+          )
+      )
+    },
   ) {
     Column(
       modifier = Modifier
         .fillMaxWidth()
-        .padding(horizontal = 20.dp)
-        .padding(bottom = 24.dp)
+        .padding(horizontal = 24.dp)
+        .padding(bottom = 32.dp)
         .verticalScroll(rememberScrollState()),
       horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-      // Header
-      Column(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalAlignment = Alignment.Start,
+      // Normalized Header with Icon Container & Typography
+      Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        modifier = Modifier
+          .fillMaxWidth()
+          .padding(bottom = 6.dp),
       ) {
-        Text(
-          text = "Web Share",
-          style = MaterialTheme.typography.titleLarge,
-          fontWeight = FontWeight.Bold,
-          color = MaterialTheme.colorScheme.onSurface,
-        )
-        Text(
-          text = "${shareState.files.size} ${if (shareState.files.size == 1) "file" else "files"} • $totalSizeFormatted",
-          style = MaterialTheme.typography.bodySmall,
-          color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        Box(
+          modifier = Modifier
+            .size(40.dp)
+            .background(
+              color = MaterialTheme.colorScheme.primaryContainer,
+              shape = MaterialTheme.shapes.medium,
+            ),
+          contentAlignment = Alignment.Center,
+        ) {
+          Icon(
+            imageVector = Icons.Filled.Share,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+          )
+        }
+        Column(modifier = Modifier.weight(1f)) {
+          Text(
+            text = stringResource(R.string.web_share_title),
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onSurface,
+          )
+          val fileCountText = if (shareState.files.size == 1) {
+            stringResource(R.string.web_share_file)
+          } else {
+            stringResource(R.string.web_share_files)
+          }
+          Text(
+            text = "${shareState.files.size} $fileCountText • $totalSizeFormatted",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+          )
+        }
       }
 
       Spacer(modifier = Modifier.height(14.dp))
 
-      // 1. QR Code Card (Enlarged to 172.dp)
-      if (qrBitmap != null) {
-        Surface(
-          shape = RoundedCornerShape(16.dp),
-          color = Color.White,
-          shadowElevation = 3.dp,
-          modifier = Modifier.size(172.dp),
+      // 1. QR Code Card (Scaled up for enhanced readability and scanning)
+      Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = Color.White,
+        shadowElevation = 2.dp,
+        modifier = Modifier.size(200.dp),
+      ) {
+        Box(
+          contentAlignment = Alignment.Center,
+          modifier = Modifier.padding(8.dp),
         ) {
-          Box(
-            contentAlignment = Alignment.Center,
-            modifier = Modifier.padding(8.dp),
-          ) {
+          if (qrBitmap != null) {
             Image(
               bitmap = qrBitmap,
-              contentDescription = "Scan QR Code",
-              modifier = Modifier.size(156.dp),
+              contentDescription = stringResource(R.string.web_share_qr_desc),
+              modifier = Modifier.size(184.dp),
+            )
+          } else {
+            CircularProgressIndicator(
+              modifier = Modifier.size(36.dp),
+              strokeWidth = 3.dp,
+              color = MaterialTheme.colorScheme.primary,
             )
           }
         }
@@ -276,9 +321,9 @@ fun WebShareSheet(
 
       // Notification Permission Banner (placed below QR code if not granted on Android 13+)
       if (!hasNotificationPermission && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        Spacer(modifier = Modifier.height(10.dp))
+        Spacer(modifier = Modifier.height(12.dp))
         Surface(
-          shape = RoundedCornerShape(12.dp),
+          shape = MaterialTheme.shapes.medium,
           color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f),
           modifier = Modifier.fillMaxWidth(),
         ) {
@@ -302,13 +347,13 @@ fun WebShareSheet(
               )
               Column {
                 Text(
-                  text = "Enable Notifications",
+                  text = stringResource(R.string.web_share_enable_notifications_title),
                   style = MaterialTheme.typography.bodyMedium,
                   fontWeight = FontWeight.SemiBold,
                   color = MaterialTheme.colorScheme.onSurface,
                 )
                 Text(
-                  text = "Keep sharing in background & reopen anytime",
+                  text = stringResource(R.string.web_share_enable_notifications_desc),
                   style = MaterialTheme.typography.bodySmall,
                   color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -319,11 +364,11 @@ fun WebShareSheet(
               onClick = {
                 notificationPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
               },
-              shape = RoundedCornerShape(8.dp),
+              shape = MaterialTheme.shapes.small,
               contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
             ) {
               Text(
-                text = "Allow",
+                text = stringResource(R.string.web_share_allow),
                 style = MaterialTheme.typography.labelMedium,
                 fontWeight = FontWeight.Bold,
               )
@@ -334,9 +379,9 @@ fun WebShareSheet(
 
       Spacer(modifier = Modifier.height(12.dp))
 
-      // 2. Require Security Token Row (Placed below QR Code)
+      // 2. Require Security Token Row
       Surface(
-        shape = RoundedCornerShape(12.dp),
+        shape = MaterialTheme.shapes.medium,
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
         modifier = Modifier.fillMaxWidth(),
       ) {
@@ -360,13 +405,17 @@ fun WebShareSheet(
             )
             Column {
               Text(
-                text = "Require Security Token",
+                text = stringResource(R.string.web_share_require_token_title),
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.onSurface,
               )
               Text(
-                text = if (shareState.isTokenEnabled) "Requires ?t= token to view files" else "Open access (fast & easy)",
+                text = if (shareState.isTokenEnabled) {
+                  stringResource(R.string.web_share_require_token_enabled_desc)
+                } else {
+                  stringResource(R.string.web_share_require_token_disabled_desc)
+                },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
               )
@@ -407,7 +456,7 @@ fun WebShareSheet(
       if (shareState.receivedFiles.isNotEmpty()) {
         Spacer(modifier = Modifier.height(10.dp))
         Surface(
-          shape = RoundedCornerShape(12.dp),
+          shape = MaterialTheme.shapes.medium,
           color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f),
           modifier = Modifier.fillMaxWidth(),
         ) {
@@ -421,13 +470,13 @@ fun WebShareSheet(
               horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
               Text(
-                text = "📥 Received (${shareState.receivedFiles.size})",
+                text = "📥 ${stringResource(R.string.web_share_received_title, shareState.receivedFiles.size)}",
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSecondaryContainer,
               )
               Text(
-                text = "• Download/REX Player",
+                text = "• ${stringResource(R.string.web_share_received_path)}",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.75f),
               )
@@ -444,12 +493,11 @@ fun WebShareSheet(
         }
       }
 
-      Spacer(modifier = Modifier.height(10.dp))
-
-      // 3. URL Display & Copy Pill
+      // 4. URL Display & Copy Pill
       shareState.serverUrl?.let { url ->
+        Spacer(modifier = Modifier.height(10.dp))
         Surface(
-          shape = RoundedCornerShape(10.dp),
+          shape = MaterialTheme.shapes.medium,
           color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
           modifier = Modifier.fillMaxWidth(),
         ) {
@@ -473,13 +521,13 @@ fun WebShareSheet(
                 val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                 clipboard.setPrimaryClip(ClipData.newPlainText("Web Share Link", url))
                 copied = true
-                Toast.makeText(context, "Link copied to clipboard", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, context.getString(R.string.web_share_link_copied), Toast.LENGTH_SHORT).show()
               },
               modifier = Modifier.size(32.dp),
             ) {
               Icon(
                 imageVector = if (copied) Icons.Default.Check else Icons.Default.ContentCopy,
-                contentDescription = "Copy Link",
+                contentDescription = stringResource(R.string.web_share_copy_link),
                 tint = if (copied) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.size(18.dp),
               )
@@ -490,7 +538,7 @@ fun WebShareSheet(
 
       // No network warning banner if applicable
       if (shareState.networkType == WebShareManager.NetworkType.NONE) {
-        Spacer(modifier = Modifier.height(6.dp))
+        Spacer(modifier = Modifier.height(8.dp))
         Row(
           verticalAlignment = Alignment.CenterVertically,
           horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -502,28 +550,28 @@ fun WebShareSheet(
             modifier = Modifier.size(16.dp),
           )
           Text(
-            text = "Turn on Hotspot or connect to Wi-Fi to share",
+            text = stringResource(R.string.web_share_no_network),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.error,
           )
         }
       }
 
-      Spacer(modifier = Modifier.height(10.dp))
+      Spacer(modifier = Modifier.height(12.dp))
 
-      // 4. Guidance Steps
+      // 5. Guidance Steps
       Column(
         modifier = Modifier
           .fillMaxWidth()
           .padding(horizontal = 4.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
       ) {
         Row(
           verticalAlignment = Alignment.CenterVertically,
           horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
           Surface(
-            shape = RoundedCornerShape(4.dp),
+            shape = MaterialTheme.shapes.extraSmall,
             color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
             modifier = Modifier.size(18.dp),
           ) {
@@ -537,7 +585,7 @@ fun WebShareSheet(
             }
           }
           Text(
-            text = "Connect receiving phone to this Hotspot or Wi-Fi",
+            text = stringResource(R.string.web_share_step_1),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
           )
@@ -548,7 +596,7 @@ fun WebShareSheet(
           horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
           Surface(
-            shape = RoundedCornerShape(4.dp),
+            shape = MaterialTheme.shapes.extraSmall,
             color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
             modifier = Modifier.size(18.dp),
           ) {
@@ -562,16 +610,16 @@ fun WebShareSheet(
             }
           }
           Text(
-            text = "Scan QR code or type URL in any browser",
+            text = stringResource(R.string.web_share_step_2),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
           )
         }
       }
 
-      Spacer(modifier = Modifier.height(14.dp))
+      Spacer(modifier = Modifier.height(16.dp))
 
-      // 5. Stop Sharing Button
+      // 6. Stop Sharing Button
       Button(
         onClick = {
           WebShareManager.stopSharing(context)
@@ -581,11 +629,11 @@ fun WebShareSheet(
           containerColor = MaterialTheme.colorScheme.errorContainer,
           contentColor = MaterialTheme.colorScheme.onErrorContainer,
         ),
-        shape = RoundedCornerShape(10.dp),
-        modifier = Modifier.fillMaxWidth().height(44.dp),
+        shape = MaterialTheme.shapes.medium,
+        modifier = Modifier.fillMaxWidth().height(48.dp),
       ) {
         Text(
-          text = "Stop Sharing",
+          text = stringResource(R.string.web_share_stop_sharing),
           fontWeight = FontWeight.SemiBold,
           fontSize = 14.sp,
         )

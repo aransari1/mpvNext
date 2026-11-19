@@ -107,6 +107,7 @@ fun PlaylistActionSheet(
         colors = CardDefaults.cardColors(
           containerColor = MaterialTheme.colorScheme.surfaceVariant,
         ),
+        shape = MaterialTheme.shapes.extraLarge,
       ) {
         Row(
           modifier = Modifier
@@ -144,6 +145,7 @@ fun PlaylistActionSheet(
         colors = CardDefaults.cardColors(
           containerColor = MaterialTheme.colorScheme.surfaceVariant,
         ),
+        shape = MaterialTheme.shapes.extraLarge,
       ) {
         Row(
           modifier = Modifier

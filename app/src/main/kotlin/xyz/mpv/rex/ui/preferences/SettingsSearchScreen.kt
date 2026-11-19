@@ -15,7 +15,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -36,7 +36,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -49,17 +48,26 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import xyz.mpv.rex.R
 import xyz.mpv.rex.presentation.Screen
+import xyz.mpv.rex.presentation.components.CollapsibleHeaderScreen
 import xyz.mpv.rex.ui.utils.LocalBackStack
+import xyz.mpv.rex.ui.utils.navigateBack
 import kotlinx.serialization.Serializable
+import xyz.mpv.rex.presentation.MotionStyle
 
 @Serializable
 object SettingsSearchScreen : Screen {
+  /** Settings keep the app's original full horizontal push. */
+  override val motion: MotionStyle
+    get() = MotionStyle.Default
+
     @OptIn(ExperimentalMaterial3Api::class)
     @Composable
     override fun Content() {
@@ -68,50 +76,31 @@ object SettingsSearchScreen : Screen {
         val keyboardController = LocalSoftwareKeyboardController.current
         val focusRequester = remember { FocusRequester() }
 
-        var searchQuery by rememberSaveable { mutableStateOf("") }
+        var searchQuery by rememberSaveable(stateSaver = TextFieldValue.Saver) {
+            mutableStateOf(TextFieldValue(""))
+        }
 
-        val searchResults by remember(searchQuery) {
-            derivedStateOf {
-                SearchablePreferences.search(searchQuery) { resId ->
-                    context.getString(resId)
-                }
+        val searchResults = remember(searchQuery.text) {
+            SearchablePreferences.search(searchQuery.text) { resId ->
+                context.getString(resId)
             }
         }
 
-        // Auto-focus the search field
+        // Auto-focus the search field and position cursor at the end (right side) of text
         LaunchedEffect(Unit) {
             focusRequester.requestFocus()
+            if (searchQuery.text.isNotEmpty()) {
+                searchQuery = searchQuery.copy(
+                    selection = TextRange(searchQuery.text.length)
+                )
+            }
         }
 
-        Scaffold(
-            topBar = {
-                TopAppBar(
-                    title = {
-                        Text(
-                            text = stringResource(R.string.settings_search_title),
-                            style = MaterialTheme.typography.headlineSmall,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = MaterialTheme.colorScheme.primary,
-                        )
-                    },
-                    navigationIcon = {
-                        IconButton(onClick = backstack::removeLastOrNull) {
-                            Icon(
-                                Icons.AutoMirrored.Outlined.ArrowBack,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.secondary,
-                            )
-                        }
-                    },
-                )
-            },
-        ) { padding ->
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding)
-            ) {
-                // Search field
+        CollapsibleHeaderScreen(
+            title = stringResource(R.string.settings_search_title),
+            showBackButton = true,
+            onBackClick = backstack::navigateBack,
+            headerContent = {
                 OutlinedTextField(
                     value = searchQuery,
                     onValueChange = { searchQuery = it },
@@ -134,11 +123,11 @@ object SettingsSearchScreen : Screen {
                     },
                     trailingIcon = {
                         AnimatedVisibility(
-                            visible = searchQuery.isNotEmpty(),
+                            visible = searchQuery.text.isNotEmpty(),
                             enter = fadeIn(),
                             exit = fadeOut(),
                         ) {
-                            IconButton(onClick = { searchQuery = "" }) {
+                            IconButton(onClick = { searchQuery = TextFieldValue("") }) {
                                 Icon(
                                     imageVector = Icons.Outlined.Clear,
                                     contentDescription = "Clear",
@@ -160,11 +149,13 @@ object SettingsSearchScreen : Screen {
                         onSearch = { keyboardController?.hide() }
                     ),
                 )
-
-                Spacer(modifier = Modifier.height(8.dp))
-
+            },
+        ) { contentModifier ->
+            Box(
+                modifier = contentModifier.fillMaxSize()
+            ) {
                 // Results
-                if (searchQuery.isBlank()) {
+                if (searchQuery.text.isBlank()) {
                     // Show hint when no search query
                     Box(
                         modifier = Modifier.fillMaxSize(),
@@ -212,14 +203,18 @@ object SettingsSearchScreen : Screen {
                         modifier = Modifier.fillMaxSize(),
                         contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = navBarHeight + 16.dp),
                     ) {
-                        itemsIndexed(
+                        items(
                             items = searchResults,
-                            key = { index, pref -> "${pref.titleRes}_${pref.category}_${pref.screen}_$index".hashCode() }
-                        ) { _, preference ->
+                            key = { pref -> "${pref.titleRes ?: pref.title}_${pref.category}_${pref.screen}" }
+                        ) { preference ->
                             SearchResultItem(
                                 preference = preference,
                                 onClick = {
                                     keyboardController?.hide()
+                                    PreferenceHighlightManager.requestHighlight(
+                                        key = preference.titleRes ?: preference.title,
+                                        targetIndex = preference.targetIndex
+                                    )
                                     backstack.add(preference.screen)
                                 }
                             )

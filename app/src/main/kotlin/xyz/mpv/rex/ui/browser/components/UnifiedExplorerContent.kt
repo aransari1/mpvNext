@@ -1,15 +1,31 @@
 package xyz.mpv.rex.ui.browser.components
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.ui.graphics.graphicsLayer
+import kotlinx.coroutines.delay
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material.icons.filled.Search
@@ -18,7 +34,13 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import xyz.mpv.rex.domain.media.model.Video
 import xyz.mpv.rex.domain.media.model.VideoFolder
@@ -30,6 +52,7 @@ import xyz.mpv.rex.ui.browser.cards.FolderCard
 import xyz.mpv.rex.ui.browser.cards.PlaylistCard
 import xyz.mpv.rex.ui.browser.cards.VideoCard
 import xyz.mpv.rex.ui.browser.videolist.VideoWithPlaybackInfo
+import xyz.mpv.rex.utils.sort.PinnedSortUtils
 import xyz.mpv.rex.preferences.UiSettings
 import org.koin.compose.koinInject
 import xyz.mpv.rex.preferences.BrowserPreferences
@@ -39,20 +62,25 @@ import xyz.mpv.rex.ui.browser.states.EmptyState
 import xyz.mpv.rex.preferences.preference.collectAsState
 import xyz.mpv.rex.presentation.components.pullrefresh.PullRefreshBox
 import xyz.mpv.rex.ui.browser.LocalNavigationBarHeight
+import xyz.mpv.rex.ui.browser.LocalMiniPlayerActive
+import xyz.mpv.rex.ui.browser.miniplayer.MiniPlayerDefaults
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
 import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.ui.res.stringResource
+import androidx.compose.material3.TopAppBarState
 import xyz.mpv.rex.R
 import androidx.compose.foundation.layout.fillMaxHeight
 
 val LocalLastPlayedVideoPathsInFolder = compositionLocalOf<Set<String>> { emptySet() }
 val LocalRecentlyPlayedFilePaths = compositionLocalOf<Set<String>> { emptySet() }
 
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun <T> UnifiedExplorerContent(
   items: List<T>,
   isLoading: Boolean,
+  hasLoaded: Boolean = !isLoading || items.isNotEmpty(),
   uiSettings: UiSettings,
   isSelected: (T) -> Boolean,
   onClick: (T) -> Unit,
@@ -65,6 +93,8 @@ fun <T> UnifiedExplorerContent(
   onThumbClick: ((T) -> Unit)? = null,
   isRefreshing: MutableState<Boolean>? = null,
   onRefresh: (suspend () -> Unit)? = null,
+  /** Collapsing header above this content; a pull refreshes only once it is expanded. */
+  headerScrollState: TopAppBarState? = null,
   isInSelectionMode: Boolean = false,
   recentlyPlayedFilePath: String? = null,
   recentlyPlayedFilePaths: Set<String> = emptySet(),
@@ -79,8 +109,14 @@ fun <T> UnifiedExplorerContent(
   showSections: Boolean = false,
   isReorderMode: Boolean = false,
   onReorder: ((Int, Int) -> Unit)? = null,
+  /** Paths of pinned entries; when non-empty and [showSections] is set they render in a "Pinned" section on top. */
+  pinnedPaths: List<String> = emptyList(),
   listState: LazyListState? = null,
   gridState: LazyGridState? = null,
+  useContentSurface: Boolean = false,
+  /** List and section branches keep the scaffold-coloured 3.dp gaps
+    *  instead of the white-sheet backplate (media view & tree view opt in). */
+  keepListGaps: Boolean = false,
 ) {
   val browserPreferences = koinInject<BrowserPreferences>()
   val gesturePreferences = koinInject<GesturePreferences>()
@@ -98,9 +134,7 @@ fun <T> UnifiedExplorerContent(
     val isFolder = remember(items) {
       items.firstOrNull()?.let {
         it is VideoFolder || 
-        it is FileSystemItem.Folder ||
-        it is PlaylistWithCount ||
-        it is RecentlyPlayedItem.PlaylistItem
+        it is FileSystemItem.Folder
       } ?: false
     }
     if (isFolder) {
@@ -112,37 +146,123 @@ fun <T> UnifiedExplorerContent(
 
   val tapThumbnailToSelect by gesturePreferences.tapThumbnailToSelect.collectAsState()
   val showSubtitleIndicator by browserPreferences.showSubtitleIndicator.collectAsState()
+  val showAudioFiles by browserPreferences.showAudioFiles.collectAsState()
   val navigationBarHeight = LocalNavigationBarHeight.current
 
-  if (isLoading && items.isEmpty()) {
-    Box(
-      modifier = modifier
-        .fillMaxSize()
-        .padding(bottom = 80.dp),
-      contentAlignment = Alignment.Center,
-    ) {
-      CircularProgressIndicator(
-        modifier = Modifier.size(48.dp),
-        color = MaterialTheme.colorScheme.primary,
-      )
+  val animatedBottomPadding by animateDpAsState(
+    targetValue = if (isInSelectionMode) {
+      navigationBarHeight + 88.dp
+    } else {
+      navigationBarHeight + 16.dp
+    },
+    animationSpec = spring(
+      dampingRatio = Spring.DampingRatioLowBouncy,
+      stiffness = Spring.StiffnessMediumLow
+    ),
+    label = "explorerBottomContentPadding"
+  )
+
+  val wasInitiallyEmpty = remember { items.isEmpty() }
+
+  // Delay the spinner so fast loads (<300ms) show a clean background rather than a jarring flash.
+  var showSpinner by remember { mutableStateOf(false) }
+  LaunchedEffect(isLoading, items.isEmpty()) {
+    if (isLoading && items.isEmpty()) {
+      delay(300L)
+      showSpinner = true
+    } else {
+      showSpinner = false
     }
-  } else if (items.isEmpty()) {
-    Box(
-      modifier = modifier.fillMaxSize(),
-      contentAlignment = Alignment.Center,
-    ) {
-      EmptyState(
-        icon = emptyIcon,
-        title = emptyTitle,
-        message = emptyMessage,
+  }
+
+  if (items.isEmpty()) {
+    if (hasLoaded && !showSpinner) {
+      val emptyAlpha by animateFloatAsState(
+        targetValue = 1f,
+        animationSpec = tween(durationMillis = 120),
+        label = "explorerEmptyAlpha"
       )
+      if (useContentSurface) {
+        Surface(
+          modifier = modifier
+            .fillMaxSize()
+            .graphicsLayer { alpha = emptyAlpha },
+          shape = RoundedCornerShape(20.dp),
+          color = if (MaterialTheme.colorScheme.background == androidx.compose.ui.graphics.Color.Black) {
+            androidx.compose.ui.graphics.Color.Black
+          } else {
+            MaterialTheme.colorScheme.surface
+          },
+        ) {
+          Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center,
+          ) {
+            EmptyState(
+              icon = emptyIcon,
+              title = emptyTitle,
+              message = emptyMessage,
+            )
+          }
+        }
+      } else {
+        Box(
+          modifier = modifier
+            .fillMaxSize()
+            .graphicsLayer { alpha = emptyAlpha },
+          contentAlignment = Alignment.Center,
+        ) {
+          EmptyState(
+            icon = emptyIcon,
+            title = emptyTitle,
+            message = emptyMessage,
+          )
+        }
+      }
+    } else {
+      Box(
+        modifier = modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center,
+      ) {
+        AnimatedVisibility(
+          visible = showSpinner,
+          enter = fadeIn(tween(durationMillis = 150)),
+          exit = fadeOut(tween(durationMillis = 100)),
+        ) {
+          Box(
+            modifier = Modifier
+              .fillMaxSize()
+              .padding(bottom = 64.dp),
+            contentAlignment = Alignment.Center,
+          ) {
+            // Expressive loading indicator: morphs between organic MaterialShapes
+            // (SoftBurst, Cookie9Sided, Pentagon, Pill, ...) instead of spinning one arc.
+            LoadingIndicator(
+              modifier = Modifier.size(48.dp),
+              color = MaterialTheme.colorScheme.primary,
+            )
+          }
+        }
+      }
     }
   } else {
+    val contentAlpha = remember { Animatable(if (wasInitiallyEmpty) 0f else 1f) }
+    LaunchedEffect(Unit) {
+      if (contentAlpha.value < 1f) {
+        contentAlpha.animateTo(1f, animationSpec = tween(durationMillis = 120, easing = LinearEasing))
+      }
+    }
+
+    val safeItems = remember(items) {
+      items.distinctBy { getItemId(it) }
+    }
+    // O(1) pin lookups for the card badges, rebuilt only when pins change.
+    val pinnedPathSet = remember(pinnedPaths) { pinnedPaths.toHashSet() }
     val listState = listState ?: rememberLazyListState()
     val gridState = gridState ?: rememberLazyGridState()
 
-    val lastPlayedVideoPathsInFolder = remember(items, recentlyPlayedPaths, recentlyPlayedFilePaths) {
-      val pathsInItems = items.mapNotNull { item ->
+    val lastPlayedVideoPathsInFolder = remember(safeItems, recentlyPlayedPaths, recentlyPlayedFilePaths) {
+      val pathsInItems = safeItems.mapNotNull { item ->
         when (item) {
           is Video -> item.path
           is VideoWithPlaybackInfo -> item.video.path
@@ -176,9 +296,9 @@ fun <T> UnifiedExplorerContent(
     }
 
     val hasAutoScrolled = rememberSaveable(inputs = arrayOf(recentlyPlayedFilePath ?: "")) { mutableStateOf(false) }
-    LaunchedEffect(recentlyPlayedFilePath, items, autoScrollToLastPlayed) {
-      if (autoScrollToLastPlayed && recentlyPlayedFilePath != null && items.isNotEmpty() && !hasAutoScrolled.value) {
-        val lastPlayedIndex = items.indexOfFirst { item ->
+    LaunchedEffect(recentlyPlayedFilePath, safeItems, autoScrollToLastPlayed) {
+      if (autoScrollToLastPlayed && recentlyPlayedFilePath != null && safeItems.isNotEmpty() && !hasAutoScrolled.value) {
+        val lastPlayedIndex = safeItems.indexOfFirst { item ->
           when (item) {
             is Video -> item.path == recentlyPlayedFilePath
             is VideoWithPlaybackInfo -> item.video.path == recentlyPlayedFilePath
@@ -204,17 +324,24 @@ fun <T> UnifiedExplorerContent(
         if (lastPlayedIndex != -1) {
           hasAutoScrolled.value = true
           if (showSections) {
-            val matchedItem = items[lastPlayedIndex]
-            val isFolder = matchedItem is VideoFolder || matchedItem is FileSystemItem.Folder
-            val folderItems = items.filter { it is VideoFolder || it is FileSystemItem.Folder }
-            val videoItems = items.filter { it is Video || it is VideoWithPlaybackInfo || it is FileSystemItem.VideoFile || it is RecentlyPlayedItem.VideoItem }
+            val matchedItem = safeItems[lastPlayedIndex]
 
+            // Pinned entries stay inside their normal Folders/Media sections
+            // (sorted to the front), so the index math is just "sections above
+            // + offset within this section".
+            val gridMode = mediaLayoutMode == MediaLayoutMode.GRID
+            val folderCols = if (isLandscape) folderGridColumnsLandscape else folderGridColumnsPortrait
+            val videoCols = if (isLandscape) videoGridColumnsLandscape else videoGridColumnsPortrait
+            val sorted = PinnedSortUtils.sortPinnedFirst(safeItems, pinnedPaths) { pinnedKeyOf(it) ?: "" }
+            val folderItems = sorted.filter { it is VideoFolder || it is FileSystemItem.Folder }
+            val videoItems = sorted.filter { it is Video || it is VideoWithPlaybackInfo || it is FileSystemItem.VideoFile || it is RecentlyPlayedItem.VideoItem }
+
+            val isFolder = matchedItem is VideoFolder || matchedItem is FileSystemItem.Folder
             val targetIndex = if (isFolder) {
               val folderIndex = folderItems.indexOf(matchedItem)
               if (folderIndex != -1) {
-                if (mediaLayoutMode == MediaLayoutMode.GRID) {
-                  val folderGridColumns = if (isLandscape) folderGridColumnsLandscape else folderGridColumnsPortrait
-                  1 + (folderIndex / folderGridColumns)
+                if (gridMode) {
+                  1 + (folderIndex / folderCols)
                 } else {
                   1 + folderIndex
                 }
@@ -223,18 +350,15 @@ fun <T> UnifiedExplorerContent(
               val videoIndex = videoItems.indexOf(matchedItem)
               if (videoIndex != -1) {
                 if (folderItems.isNotEmpty()) {
-                  if (mediaLayoutMode == MediaLayoutMode.GRID) {
-                    val folderGridColumns = if (isLandscape) folderGridColumnsLandscape else folderGridColumnsPortrait
-                    val videoGridColumns = if (isLandscape) videoGridColumnsLandscape else videoGridColumnsPortrait
-                    val numFolderRows = (folderItems.size + folderGridColumns - 1) / folderGridColumns
-                    numFolderRows + 3 + (videoIndex / videoGridColumns)
+                  if (gridMode) {
+                    val numFolderRows = (folderItems.size + folderCols - 1) / folderCols
+                    numFolderRows + 3 + (videoIndex / videoCols)
                   } else {
                     folderItems.size + 3 + videoIndex
                   }
                 } else {
-                  if (mediaLayoutMode == MediaLayoutMode.GRID) {
-                    val videoGridColumns = if (isLandscape) videoGridColumnsLandscape else videoGridColumnsPortrait
-                    1 + (videoIndex / videoGridColumns)
+                  if (gridMode) {
+                    1 + (videoIndex / videoCols)
                   } else {
                     1 + videoIndex
                   }
@@ -253,287 +377,485 @@ fun <T> UnifiedExplorerContent(
       }
     }
 
+    val verticalGapDp = if (useContentSurface) 3.dp else 2.dp
+
+    // Viewport height of the list, and the height one card occupies. Together
+    // they size the content-surface filler to exactly the space left below the
+    // last card. Using fillParentMaxHeight() alone would give the filler the
+    // whole viewport, making even a 3-folder list scrollable.
+    var listViewportHeightPx by remember { mutableIntStateOf(0) }
+    var cardHeightPx by remember { mutableIntStateOf(0) }
+    val measureCard = Modifier.onGloballyPositioned { coordinates ->
+      // Cards differ slightly (1 vs 2 title lines); the tallest is used so the
+      // filler never overruns the bottom edge.
+      val height = coordinates.size.height
+      if (height > cardHeightPx) cardHeightPx = height
+    }
+    val gapPx = with(LocalDensity.current) { verticalGapDp.roundToPx() }
+    val itemCount = safeItems.size
+    // Grid mode packs `columns` cards into each row, so the vertical space they
+    // occupy is rows × cardHeight, not itemCount × cardHeight. Counting cards
+    // as rows made `leftover` collapse to 0 for any list of more than a row,
+    // which pinned the filler to the selection reserve and left the sheet
+    // stopping short of the container's bottom edge.
+    val isGridSurface = useContentSurface && mediaLayoutMode == MediaLayoutMode.GRID
+    val rowCount = if (isGridSurface) {
+      (itemCount + columns - 1) / columns
+    } else {
+      itemCount
+    }
+    // Rows plus their gaps, plus the gap between the last row and the filler.
+    val cardsHeightPx = cardHeightPx * rowCount + gapPx * rowCount
+    val leftoverPx = (listViewportHeightPx - cardsHeightPx).coerceAtLeast(0)
+    // Keep a fixed strip at the end even when the list already fills the
+    // screen: it lets the last card scroll clear of the selection action bar
+    // that appears over it. Matches the reserve used by animatedBottomPadding
+    // in selection mode (navigationBarHeight + 88.dp vs + 16.dp).
+    val isMiniPlayerActive = LocalMiniPlayerActive.current
+    val minReserveDp = if (isMiniPlayerActive) MiniPlayerDefaults.TotalCompactOffset + 8.dp else (88.dp - 16.dp)
+    val selectionReservePx = with(LocalDensity.current) { minReserveDp.roundToPx() }
+    val fillerHeightPx = maxOf(leftoverPx, selectionReservePx)
+
+    // The painted face of the content surface in surface mode: card colour. Gaps
+    // between/around cards show whatever is behind the list; with the backplate
+    // that is this colour (white in light theme, black in AMOLED). Without it
+    // the Scaffold tone (surfaceContainer) shows through instead.
+    val contentSurfaceSheetColor = if (MaterialTheme.colorScheme.background == Color.Black) {
+      Color.Black
+    } else {
+      MaterialTheme.colorScheme.surface
+    }
     val contentBlock: @Composable BoxScope.() -> Unit = {
       if (showSections) {
-        val folderItems = items.filter { it is VideoFolder || it is FileSystemItem.Folder }
-        val videoItems = items.filter { it is Video || it is VideoWithPlaybackInfo || it is FileSystemItem.VideoFile || it is RecentlyPlayedItem.VideoItem }
+        // Pinned entries stay inside their normal Folders/Media sections but are
+        // sorted to the front in pin order, mirroring the album/video-list views.
+        val (folderItems, videoItems) = remember(safeItems, pinnedPaths) {
+          val sorted = PinnedSortUtils.sortPinnedFirst(safeItems, pinnedPaths) { pinnedKeyOf(it) ?: "" }
+          sorted.filter { it is VideoFolder || it is FileSystemItem.Folder } to
+            sorted.filter { it is Video || it is VideoWithPlaybackInfo || it is FileSystemItem.VideoFile || it is RecentlyPlayedItem.VideoItem }
+        }
 
         val folderGridColumns = if (isLandscape) folderGridColumnsLandscape else folderGridColumnsPortrait
         val videoGridColumns = if (isLandscape) videoGridColumnsLandscape else videoGridColumnsPortrait
 
-        LazyColumn(
-          state = listState,
-          modifier = Modifier.fillMaxSize(),
-          contentPadding = PaddingValues(
-            start = 8.dp,
-            end = 8.dp,
-            top = 8.dp,
-            bottom = navigationBarHeight + 16.dp
-          ),
-          verticalArrangement = Arrangement.spacedBy(2.dp)
+        // The list must be composed whether the backplate paints or not — only
+        // the background is conditional. White sheet behind the sectioned list;
+        // tree view no longer opts out; the lattice opt-outs (media view,
+        // folder view) are all plain-list or grid screens, not sections.
+        Box(
+          modifier = Modifier
+            .fillMaxSize()
+            .then(
+              if (useContentSurface && !keepListGaps) {
+                Modifier.background(contentSurfaceSheetColor)
+              } else {
+                Modifier
+              }
+            )
         ) {
-          // --- FOLDERS SECTION ---
-          if (folderItems.isNotEmpty()) {
-            item(key = "folders_header") {
-              SectionHeader(title = stringResource(R.string.folders_count, folderItems.size))
-            }
+          LazyColumn(
+            state = listState,
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(
+              start = if (useContentSurface) 0.dp else 8.dp,
+              end = if (useContentSurface) 0.dp else 8.dp,
+              top = if (useContentSurface) 0.dp else 8.dp,
+              bottom = if (useContentSurface) {
+                if (isMiniPlayerActive) MiniPlayerDefaults.TotalCompactOffset else 0.dp
+              } else {
+                animatedBottomPadding
+              }
+            ),
+            verticalArrangement = if (useContentSurface) Arrangement.spacedBy(3.dp) else Arrangement.spacedBy(2.dp)
+          ) {
+            // --- FOLDERS SECTION ---
+            if (folderItems.isNotEmpty()) {
+              item(key = "folders_header") {
+                SectionHeader(title = stringResource(R.string.folders_count, folderItems.size))
+              }
 
-            if (mediaLayoutMode == MediaLayoutMode.GRID) {
-              val chunkedFolders = folderItems.chunked(folderGridColumns)
-              items(
-                items = chunkedFolders,
-                key = { chunk -> "folder_row_${getItemId(chunk.first())}" }
-              ) { rowItems ->
-                Row(
-                  modifier = Modifier.fillMaxWidth(),
-                  horizontalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                  for (item in rowItems) {
-                    Box(modifier = Modifier.weight(1f)) {
-                      val effectiveOnClick = {
-                        if (isInSelectionMode) {
-                          onToggleSelection(item)
-                        } else {
-                          onClick(item)
+              if (mediaLayoutMode == MediaLayoutMode.GRID) {
+                val chunkedFolders = folderItems.chunked(folderGridColumns)
+                itemsIndexed(
+                  items = chunkedFolders,
+                  key = { index, chunk -> "folder_row_${index}_${getItemId(chunk.first())}" }
+                ) { _, rowItems ->
+                  Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                  ) {
+                    for (item in rowItems) {
+                      Box(modifier = Modifier.weight(1f)) {
+                        val effectiveOnClick = {
+                          if (isInSelectionMode) {
+                            onToggleSelection(item)
+                          } else {
+                            onClick(item)
+                          }
                         }
-                      }
-                      val effectiveOnThumbClick = if (onThumbClick != null) {
-                        { onThumbClick(item) }
-                      } else if (tapThumbnailToSelect && mediaLayoutMode != MediaLayoutMode.GRID && !isInSelectionMode) {
-                        { onToggleSelection(item) }
-                      } else {
-                        null
-                      }
+                        val effectiveOnThumbClick = if (onThumbClick != null) {
+                          { onThumbClick(item) }
+                        } else if (tapThumbnailToSelect && mediaLayoutMode != MediaLayoutMode.GRID && !isInSelectionMode) {
+                          { onToggleSelection(item) }
+                        } else {
+                          null
+                        }
 
-                      ExplorerItemCard(
-                        item = item,
-                        isSelected = isSelected(item),
-                        showSubtitleIndicator = showSubtitleIndicator,
-                        isGridMode = true,
-                        columns = folderGridColumns,
-                        uiSettings = uiSettings,
-                        onClick = effectiveOnClick,
-                        onLongClick = { onLongClick(item) },
-                        onThumbClick = effectiveOnThumbClick,
-                        recentlyPlayedFilePath = recentlyPlayedFilePath,
-                        recentlyPlayedPaths = recentlyPlayedPaths,
-                        playedFolderPaths = playedFolderPaths,
-                        newVideoIds = newVideoIds,
-                        watchedVideoIds = watchedVideoIds,
-                        videoPlaybackProgress = videoPlaybackProgress,
-                        showSections = showSections
-                      )
+                        ExplorerItemCard(
+                          item = item,
+                          isSelected = isSelected(item),
+                          showSubtitleIndicator = showSubtitleIndicator,
+                          isGridMode = true,
+                          columns = folderGridColumns,
+                          shape = if (useContentSurface) RoundedCornerShape(4.dp) else null,
+                          uiSettings = uiSettings,
+                          onClick = effectiveOnClick,
+                          onLongClick = { onLongClick(item) },
+                          onThumbClick = effectiveOnThumbClick,
+                          recentlyPlayedFilePath = recentlyPlayedFilePath,
+                          recentlyPlayedPaths = recentlyPlayedPaths,
+                          playedFolderPaths = playedFolderPaths,
+                          newVideoIds = newVideoIds,
+                          watchedVideoIds = watchedVideoIds,
+                          videoPlaybackProgress = videoPlaybackProgress,
+                          showSections = showSections,
+                          showAudioFiles = showAudioFiles,
+                          pinnedPathSet = pinnedPathSet,
+                        )
+                      }
+                    }
+                    val emptySlots = folderGridColumns - rowItems.size
+                    repeat(emptySlots) {
+                      Spacer(modifier = Modifier.weight(1f))
                     }
                   }
-                  val emptySlots = folderGridColumns - rowItems.size
-                  repeat(emptySlots) {
-                    Spacer(modifier = Modifier.weight(1f))
-                  }
                 }
-              }
-            } else {
-              // List Mode
-              items(
-                items = folderItems,
-                key = { getItemId(it) }
-              ) { item ->
-                val effectiveOnClick = {
-                  if (isInSelectionMode) {
-                    onToggleSelection(item)
-                  } else {
-                    onClick(item)
-                  }
-                }
-                val effectiveOnThumbClick = if (onThumbClick != null) {
-                  { onThumbClick(item) }
-                } else if (tapThumbnailToSelect && mediaLayoutMode != MediaLayoutMode.GRID && !isInSelectionMode) {
-                  { onToggleSelection(item) }
-                } else {
-                  null
-                }
-
-                ExplorerItemCard(
-                  item = item,
-                  isSelected = isSelected(item),
-                  showSubtitleIndicator = showSubtitleIndicator,
-                  isGridMode = false,
-                  columns = 1,
-                  uiSettings = uiSettings,
-                  onClick = effectiveOnClick,
-                  onLongClick = { onLongClick(item) },
-                  onThumbClick = effectiveOnThumbClick,
-                  recentlyPlayedFilePath = recentlyPlayedFilePath,
-                  recentlyPlayedPaths = recentlyPlayedPaths,
-                  playedFolderPaths = playedFolderPaths,
-                  newVideoIds = newVideoIds,
-                  watchedVideoIds = watchedVideoIds,
-                  videoPlaybackProgress = videoPlaybackProgress,
-                  showSections = showSections
-                )
-              }
-            }
-          }
-
-          // Section Spacer
-          if (folderItems.isNotEmpty() && videoItems.isNotEmpty()) {
-            item(key = "section_divider") {
-              Spacer(modifier = Modifier.height(4.dp))
-            }
-          }
-
-          // --- MEDIA SECTION ---
-          if (videoItems.isNotEmpty()) {
-            item(key = "media_header") {
-              SectionHeader(title = stringResource(R.string.media_count, videoItems.size))
-            }
-
-            if (mediaLayoutMode == MediaLayoutMode.GRID) {
-              val chunkedVideos = videoItems.chunked(videoGridColumns)
-              items(
-                items = chunkedVideos,
-                key = { chunk -> "video_row_${getItemId(chunk.first())}" }
-              ) { rowItems ->
-                Row(
-                  modifier = Modifier.fillMaxWidth(),
-                  horizontalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                  for (item in rowItems) {
-                    Box(modifier = Modifier.weight(1f)) {
-                      val effectiveOnClick = {
-                        if (isInSelectionMode) {
-                          onToggleSelection(item)
-                        } else {
-                          onClick(item)
-                        }
-                      }
-                      val effectiveOnThumbClick = if (onThumbClick != null) {
-                        { onThumbClick(item) }
-                      } else if (tapThumbnailToSelect && mediaLayoutMode != MediaLayoutMode.GRID && !isInSelectionMode) {
-                        { onToggleSelection(item) }
-                      } else {
-                        null
-                      }
-
-                      ExplorerItemCard(
-                        item = item,
-                        isSelected = isSelected(item),
-                        showSubtitleIndicator = showSubtitleIndicator,
-                        isGridMode = true,
-                        columns = videoGridColumns,
-                        uiSettings = uiSettings,
-                        onClick = effectiveOnClick,
-                        onLongClick = { onLongClick(item) },
-                        onThumbClick = effectiveOnThumbClick,
-                        recentlyPlayedFilePath = recentlyPlayedFilePath,
-                        recentlyPlayedPaths = recentlyPlayedPaths,
-                        playedFolderPaths = playedFolderPaths,
-                        newVideoIds = newVideoIds,
-                        watchedVideoIds = watchedVideoIds,
-                        videoPlaybackProgress = videoPlaybackProgress,
-                        showSections = showSections
-                      )
+              } else {
+                // List Mode
+                itemsIndexed(
+                  items = folderItems,
+                  key = { _, it -> getItemId(it) }
+                ) { index, item ->
+                  val effectiveOnClick = {
+                    if (isInSelectionMode) {
+                      onToggleSelection(item)
+                    } else {
+                      onClick(item)
                     }
                   }
-                  val emptySlots = videoGridColumns - rowItems.size
-                  repeat(emptySlots) {
-                    Spacer(modifier = Modifier.weight(1f))
+                  val effectiveOnThumbClick = if (onThumbClick != null) {
+                    { onThumbClick(item) }
+                  } else if (tapThumbnailToSelect && mediaLayoutMode != MediaLayoutMode.GRID && !isInSelectionMode) {
+                    { onToggleSelection(item) }
+                  } else {
+                    null
                   }
+
+                  val cardShape = if (useContentSurface) {
+                    RoundedCornerShape(2.dp)
+                  } else null
+
+                  ExplorerItemCard(
+                    item = item,
+                    isSelected = isSelected(item),
+                    showSubtitleIndicator = showSubtitleIndicator,
+                    isGridMode = false,
+                    columns = 1,
+                    uiSettings = uiSettings,
+                    onClick = effectiveOnClick,
+                    onLongClick = { onLongClick(item) },
+                    onThumbClick = effectiveOnThumbClick,
+                    recentlyPlayedFilePath = recentlyPlayedFilePath,
+                    recentlyPlayedPaths = recentlyPlayedPaths,
+                    playedFolderPaths = playedFolderPaths,
+                    newVideoIds = newVideoIds,
+                    watchedVideoIds = watchedVideoIds,
+                    videoPlaybackProgress = videoPlaybackProgress,
+                    showSections = showSections,
+                    showAudioFiles = showAudioFiles,
+                    pinnedPathSet = pinnedPathSet,
+                    shape = cardShape,
+                  )
                 }
               }
-            } else {
-              // List Mode
-              items(
-                items = videoItems,
-                key = { getItemId(it) }
-              ) { item ->
-                val effectiveOnClick = {
-                  if (isInSelectionMode) {
-                    onToggleSelection(item)
-                  } else {
-                    onClick(item)
+            }
+
+            // Section Spacer
+            if (folderItems.isNotEmpty() && videoItems.isNotEmpty()) {
+              item(key = "section_divider") {
+                Spacer(modifier = Modifier.height(4.dp))
+              }
+            }
+
+            // --- MEDIA SECTION ---
+            if (videoItems.isNotEmpty()) {
+              item(key = "media_header") {
+                SectionHeader(title = stringResource(R.string.media_count, videoItems.size))
+              }
+
+              if (mediaLayoutMode == MediaLayoutMode.GRID) {
+                val chunkedVideos = videoItems.chunked(videoGridColumns)
+                itemsIndexed(
+                  items = chunkedVideos,
+                  key = { index, chunk -> "video_row_${index}_${getItemId(chunk.first())}" }
+                ) { _, rowItems ->
+                  Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                  ) {
+                    for (item in rowItems) {
+                      Box(modifier = Modifier.weight(1f)) {
+                        val effectiveOnClick = {
+                          if (isInSelectionMode) {
+                            onToggleSelection(item)
+                          } else {
+                            onClick(item)
+                          }
+                        }
+                        val effectiveOnThumbClick = if (onThumbClick != null) {
+                          { onThumbClick(item) }
+                        } else if (tapThumbnailToSelect && mediaLayoutMode != MediaLayoutMode.GRID && !isInSelectionMode) {
+                          { onToggleSelection(item) }
+                        } else {
+                          null
+                        }
+
+                        ExplorerItemCard(
+                          item = item,
+                          isSelected = isSelected(item),
+                          showSubtitleIndicator = showSubtitleIndicator,
+                          isGridMode = true,
+                          columns = videoGridColumns,
+                          shape = if (useContentSurface) RoundedCornerShape(4.dp) else null,
+                          uiSettings = uiSettings,
+                          onClick = effectiveOnClick,
+                          onLongClick = { onLongClick(item) },
+                          onThumbClick = effectiveOnThumbClick,
+                          recentlyPlayedFilePath = recentlyPlayedFilePath,
+                          recentlyPlayedPaths = recentlyPlayedPaths,
+                          playedFolderPaths = playedFolderPaths,
+                          newVideoIds = newVideoIds,
+                          watchedVideoIds = watchedVideoIds,
+                          videoPlaybackProgress = videoPlaybackProgress,
+                          showSections = showSections,
+                          showAudioFiles = showAudioFiles,
+                          pinnedPathSet = pinnedPathSet,
+                        )
+                      }
+                    }
+                    val emptySlots = videoGridColumns - rowItems.size
+                    repeat(emptySlots) {
+                      Spacer(modifier = Modifier.weight(1f))
+                    }
                   }
                 }
-                val effectiveOnThumbClick = if (onThumbClick != null) {
-                  { onThumbClick(item) }
-                } else if (tapThumbnailToSelect && mediaLayoutMode != MediaLayoutMode.GRID && !isInSelectionMode) {
-                  { onToggleSelection(item) }
-                } else {
-                  null
-                }
+              } else {
+                // List Mode
+                itemsIndexed(
+                  items = videoItems,
+                  key = { _, it -> getItemId(it) }
+                ) { index, item ->
+                  val effectiveOnClick = {
+                    if (isInSelectionMode) {
+                      onToggleSelection(item)
+                    } else {
+                      onClick(item)
+                    }
+                  }
+                  val effectiveOnThumbClick = if (onThumbClick != null) {
+                    { onThumbClick(item) }
+                  } else if (tapThumbnailToSelect && mediaLayoutMode != MediaLayoutMode.GRID && !isInSelectionMode) {
+                    { onToggleSelection(item) }
+                  } else {
+                    null
+                  }
 
-                ExplorerItemCard(
-                  item = item,
-                  isSelected = isSelected(item),
-                  showSubtitleIndicator = showSubtitleIndicator,
-                  isGridMode = false,
-                  columns = 1,
-                  uiSettings = uiSettings,
-                  onClick = effectiveOnClick,
-                  onLongClick = { onLongClick(item) },
-                  onThumbClick = effectiveOnThumbClick,
-                  recentlyPlayedFilePath = recentlyPlayedFilePath,
-                  recentlyPlayedPaths = recentlyPlayedPaths,
-                  playedFolderPaths = playedFolderPaths,
-                  newVideoIds = newVideoIds,
-                  watchedVideoIds = watchedVideoIds,
-                  videoPlaybackProgress = videoPlaybackProgress,
-                  showSections = showSections
-                )
+                  val cardShape = if (useContentSurface) {
+                    RoundedCornerShape(2.dp)
+                  } else null
+
+                  ExplorerItemCard(
+                    item = item,
+                    isSelected = isSelected(item),
+                    showSubtitleIndicator = showSubtitleIndicator,
+                    isGridMode = false,
+                    columns = 1,
+                    uiSettings = uiSettings,
+                    onClick = effectiveOnClick,
+                    onLongClick = { onLongClick(item) },
+                    onThumbClick = effectiveOnThumbClick,
+                    recentlyPlayedFilePath = recentlyPlayedFilePath,
+                    recentlyPlayedPaths = recentlyPlayedPaths,
+                    playedFolderPaths = playedFolderPaths,
+                    newVideoIds = newVideoIds,
+                    watchedVideoIds = watchedVideoIds,
+                    videoPlaybackProgress = videoPlaybackProgress,
+                    showSections = showSections,
+                    showAudioFiles = showAudioFiles,
+                    pinnedPathSet = pinnedPathSet,
+                    shape = cardShape,
+                  )
+                }
               }
             }
           }
         }
       } else if (mediaLayoutMode == MediaLayoutMode.GRID) {
-        LazyVerticalGrid(
-          columns = GridCells.Fixed(columns),
-          state = gridState,
-          modifier = Modifier.fillMaxSize(),
-          contentPadding = PaddingValues(
-            start = 8.dp,
-            end = 8.dp,
-            top = 8.dp,
-            bottom = navigationBarHeight + 16.dp
-          ),
-          horizontalArrangement = Arrangement.spacedBy(4.dp),
-          verticalArrangement = Arrangement.spacedBy(4.dp)
+        // Grid surface mode paints the whole sheet in the card colour: the
+        // user wants grid gaps white, not the scaffold tone showing through.
+        // A backplate colours the horizontal and vertical gaps and the empty
+        // cells of a partial row in one go. Deliberate exception to the
+        // contrast rule — LIST gaps keep the scaffold tone.
+        val gridSheetColor = contentSurfaceSheetColor
+        Box(
+          modifier = Modifier
+            .fillMaxSize()
+            .background(gridSheetColor)
         ) {
-          items(
-            items = items,
-            key = { getItemId(it) }
-          ) { item ->
-            val effectiveOnClick = {
-              if (isInSelectionMode) {
-                onToggleSelection(item)
+          LazyVerticalGrid(
+            columns = GridCells.Fixed(columns),
+            state = gridState,
+            modifier = Modifier
+              .fillMaxSize()
+              // Same reason as the list path: the filler is sized from the
+              // viewport, and without this the grid branch never measures it.
+              .onGloballyPositioned { listViewportHeightPx = it.size.height },
+            contentPadding = PaddingValues(
+              start = if (useContentSurface) 0.dp else 8.dp,
+              end = if (useContentSurface) 0.dp else 8.dp,
+              top = if (useContentSurface) 0.dp else 8.dp,
+              bottom = if (useContentSurface) {
+                if (isMiniPlayerActive) MiniPlayerDefaults.TotalCompactOffset else 0.dp
               } else {
-                onClick(item)
+                animatedBottomPadding
+              }
+            ),
+            // Surface mode contracts the gaps and lets the tile go full height so
+            // the grid sets the row height; the cards then fill it and stay equal.
+            horizontalArrangement = if (useContentSurface) Arrangement.spacedBy(3.dp) else Arrangement.spacedBy(4.dp),
+            verticalArrangement = if (useContentSurface) Arrangement.spacedBy(3.dp) else Arrangement.spacedBy(4.dp)
+          ) {
+            if (!useContentSurface) {
+              items(
+                items = safeItems,
+                key = { getItemId(it) }
+              ) { item ->
+                val effectiveOnClick = {
+                  if (isInSelectionMode) {
+                    onToggleSelection(item)
+                  } else {
+                    onClick(item)
+                  }
+                }
+                val effectiveOnThumbClick = if (onThumbClick != null) {
+                  { onThumbClick(item) }
+                } else if (tapThumbnailToSelect && mediaLayoutMode != MediaLayoutMode.GRID && !isInSelectionMode) {
+                  { onToggleSelection(item) }
+                } else {
+                  null
+                }
+
+                ExplorerItemCard(
+                  item = item,
+                  isSelected = isSelected(item),
+                  showSubtitleIndicator = showSubtitleIndicator,
+                  isGridMode = true,
+                  columns = columns,
+                  uiSettings = uiSettings,
+                  onClick = effectiveOnClick,
+                  onLongClick = { onLongClick(item) },
+                  onThumbClick = effectiveOnThumbClick,
+                  recentlyPlayedFilePath = recentlyPlayedFilePath,
+                  recentlyPlayedPaths = recentlyPlayedPaths,
+                  playedFolderPaths = playedFolderPaths,
+                  newVideoIds = newVideoIds,
+                  watchedVideoIds = watchedVideoIds,
+                  videoPlaybackProgress = videoPlaybackProgress,
+                  showSections = showSections,
+                  showAudioFiles = showAudioFiles,
+                  pinnedPathSet = pinnedPathSet,
+                )
+              }
+            } else {
+              // Surface mode: rows of exactly `columns` tiles, each a full-width
+              // span. A tile spanning several cells is not measured by the grid
+              // for row height, so the tiles cannot size the row themselves —
+              // rows would collapse. Spanning the row keeps the grid in charge.
+              val surfaceCardShape = RoundedCornerShape(4.dp)
+              safeItems.chunked(columns).forEachIndexed { rowIndex, rowItems ->
+                item(
+                  key = "surface_row_$rowIndex",
+                  span = { GridItemSpan(maxLineSpan) },
+                ) {
+                  Row(modifier = Modifier.fillMaxWidth()) {
+                    rowItems.forEachIndexed { columnIndex, item ->
+                      if (rowItems.size > 1) {
+                        Box(modifier = Modifier.width(3.dp))
+                      }
+                      val effectiveOnClick = {
+                        if (isInSelectionMode) {
+                          onToggleSelection(item)
+                        } else {
+                          onClick(item)
+                        }
+                      }
+                      val effectiveOnThumbClick = if (onThumbClick != null) {
+                        { onThumbClick(item) }
+                      } else if (tapThumbnailToSelect && !isInSelectionMode) {
+                        { onToggleSelection(item) }
+                      } else {
+                        null
+                      }
+
+                      Box(
+                        modifier = Modifier
+                          .weight(1f)
+                          .onGloballyPositioned { coordinates ->
+                            val height = coordinates.size.height
+                            if (height > cardHeightPx) cardHeightPx = height
+                          },
+                      ) {
+                        ExplorerItemCard(
+                          item = item,
+                          isSelected = isSelected(item),
+                          showSubtitleIndicator = showSubtitleIndicator,
+                          isGridMode = true,
+                          columns = columns,
+                          uiSettings = uiSettings,
+                          onClick = effectiveOnClick,
+                          onLongClick = { onLongClick(item) },
+                          onThumbClick = effectiveOnThumbClick,
+                          recentlyPlayedFilePath = recentlyPlayedFilePath,
+                          recentlyPlayedPaths = recentlyPlayedPaths,
+                          playedFolderPaths = playedFolderPaths,
+                          newVideoIds = newVideoIds,
+                          watchedVideoIds = watchedVideoIds,
+                          videoPlaybackProgress = videoPlaybackProgress,
+                          showSections = showSections,
+                          showAudioFiles = showAudioFiles,
+                          pinnedPathSet = pinnedPathSet,
+                          shape = surfaceCardShape,
+                        )
+                      }
+                      // Pad the final row so a partial row keeps its column widths.
+                      if (columnIndex == rowItems.lastIndex) {
+                        repeat(columns - rowItems.size) {
+                          Box(modifier = Modifier.width(3.dp))
+                          Box(modifier = Modifier.weight(1f))
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+
+              item(
+                key = "content_surface_filler",
+                span = { GridItemSpan(maxLineSpan) },
+              ) {
+                ContentSurfaceFiller(heightPx = fillerHeightPx)
               }
             }
-            val effectiveOnThumbClick = if (onThumbClick != null) {
-              { onThumbClick(item) }
-            } else if (tapThumbnailToSelect && mediaLayoutMode != MediaLayoutMode.GRID && !isInSelectionMode) {
-              { onToggleSelection(item) }
-            } else {
-              null
-            }
-
-            ExplorerItemCard(
-              item = item,
-              isSelected = isSelected(item),
-              showSubtitleIndicator = showSubtitleIndicator,
-              isGridMode = true,
-              columns = columns,
-              uiSettings = uiSettings,
-              onClick = effectiveOnClick,
-              onLongClick = { onLongClick(item) },
-              onThumbClick = effectiveOnThumbClick,
-              recentlyPlayedFilePath = recentlyPlayedFilePath,
-              recentlyPlayedPaths = recentlyPlayedPaths,
-              playedFolderPaths = playedFolderPaths,
-              newVideoIds = newVideoIds,
-              watchedVideoIds = watchedVideoIds,
-              videoPlaybackProgress = videoPlaybackProgress,
-              showSections = showSections
-            )
           }
         }
       } else {
@@ -543,95 +865,144 @@ fun <T> UnifiedExplorerContent(
           }
         }
 
-        LazyColumn(
-          state = listState,
-          modifier = Modifier.fillMaxSize(),
-          contentPadding = PaddingValues(
-            start = 8.dp,
-            end = 8.dp,
-            top = 8.dp,
-            bottom = navigationBarHeight + 16.dp
-          ),
-          verticalArrangement = Arrangement.spacedBy(2.dp)
-        ) {
-          items(
-            items = items,
-            key = { getItemId(it) }
-          ) { item ->
-            val effectiveOnClick = {
-              if (isInSelectionMode) {
-                onToggleSelection(item)
+        // The list must be composed whether the backplate paints or not — only
+        // the background is conditional. White sheet behind the plain list,
+        // except media view and folder view, which pass keepListGaps = true
+        // and keep the grey 3.dp lattice.
+        Box(
+          modifier = Modifier
+            .fillMaxSize()
+            .then(
+              if (useContentSurface && !keepListGaps) {
+                Modifier.background(contentSurfaceSheetColor)
               } else {
-                onClick(item)
+                Modifier
               }
-            }
-            val effectiveOnThumbClick = if (onThumbClick != null) {
-              { onThumbClick(item) }
-            } else if (tapThumbnailToSelect && mediaLayoutMode != MediaLayoutMode.GRID && !isInSelectionMode) {
-              { onToggleSelection(item) }
-            } else {
-              null
-            }
-
-            if (isReorderMode) {
-              ReorderableItem(reorderState, key = getItemId(item)) { _ ->
-                Row(
-                  modifier = Modifier.fillMaxWidth(),
-                  verticalAlignment = Alignment.CenterVertically
-                ) {
-                  Box(modifier = Modifier.weight(1f)) {
-                    ExplorerItemCard(
-                      item = item,
-                      isSelected = isSelected(item),
-                      showSubtitleIndicator = showSubtitleIndicator,
-                      isGridMode = false,
-                      columns = 1,
-                      uiSettings = uiSettings,
-                      onClick = effectiveOnClick,
-                      onLongClick = { onLongClick(item) },
-                      onThumbClick = effectiveOnThumbClick,
-                      recentlyPlayedFilePath = recentlyPlayedFilePath,
-                      recentlyPlayedPaths = recentlyPlayedPaths,
-                      playedFolderPaths = playedFolderPaths,
-                      newVideoIds = newVideoIds,
-                      watchedVideoIds = watchedVideoIds,
-                      videoPlaybackProgress = videoPlaybackProgress,
-                      showSections = showSections
-                    )
-                  }
-                  IconButton(
-                    onClick = { },
-                    modifier = Modifier
-                      .size(48.dp)
-                      .draggableHandle(),
-                  ) {
-                    Icon(
-                      imageVector = Icons.Filled.DragHandle,
-                      contentDescription = stringResource(R.string.drag_to_reorder),
-                      tint = MaterialTheme.colorScheme.primary,
-                    )
-                  }
+            )
+        ) {
+          LazyColumn(
+            state = listState,
+            modifier = Modifier
+              .fillMaxSize()
+              .onGloballyPositioned { listViewportHeightPx = it.size.height },
+            contentPadding = PaddingValues(
+              start = if (useContentSurface) 0.dp else 8.dp,
+              end = if (useContentSurface) 0.dp else 8.dp,
+              top = if (useContentSurface) 0.dp else 8.dp,
+              bottom = if (useContentSurface) {
+                if (isMiniPlayerActive) MiniPlayerDefaults.TotalCompactOffset else 0.dp
+              } else {
+                animatedBottomPadding
+              }
+            ),
+            verticalArrangement = if (useContentSurface) Arrangement.spacedBy(3.dp) else Arrangement.spacedBy(2.dp)
+          ) {
+            itemsIndexed(
+              items = safeItems,
+              key = { _, item -> getItemId(item) }
+            ) { index, item ->
+              val effectiveOnClick = {
+                if (isInSelectionMode) {
+                  onToggleSelection(item)
+                } else {
+                  onClick(item)
                 }
               }
-            } else {
-              ExplorerItemCard(
-                item = item,
-                isSelected = isSelected(item),
-                showSubtitleIndicator = showSubtitleIndicator,
-                isGridMode = false,
-                columns = 1,
-                uiSettings = uiSettings,
-                onClick = effectiveOnClick,
-                onLongClick = { onLongClick(item) },
-                onThumbClick = effectiveOnThumbClick,
-                recentlyPlayedFilePath = recentlyPlayedFilePath,
-                recentlyPlayedPaths = recentlyPlayedPaths,
-                playedFolderPaths = playedFolderPaths,
-                newVideoIds = newVideoIds,
-                watchedVideoIds = watchedVideoIds,
-                videoPlaybackProgress = videoPlaybackProgress,
-                showSections = showSections
-              )
+              val effectiveOnThumbClick = if (onThumbClick != null) {
+                { onThumbClick(item) }
+              } else if (tapThumbnailToSelect && mediaLayoutMode != MediaLayoutMode.GRID && !isInSelectionMode) {
+                { onToggleSelection(item) }
+              } else {
+                null
+              }
+
+              val cardShape = if (useContentSurface) {
+                RoundedCornerShape(2.dp)
+              } else null
+
+              if (isReorderMode) {
+                ReorderableItem(reorderState, key = getItemId(item)) { _ ->
+                  Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                  ) {
+                    Box(modifier = Modifier.weight(1f)) {
+                      ExplorerItemCard(
+                        item = item,
+                        isSelected = isSelected(item),
+                        showSubtitleIndicator = showSubtitleIndicator,
+                        isGridMode = false,
+                        columns = 1,
+                        uiSettings = uiSettings,
+                        onClick = effectiveOnClick,
+                        onLongClick = { onLongClick(item) },
+                        onThumbClick = effectiveOnThumbClick,
+                        recentlyPlayedFilePath = recentlyPlayedFilePath,
+                        recentlyPlayedPaths = recentlyPlayedPaths,
+                        playedFolderPaths = playedFolderPaths,
+                        newVideoIds = newVideoIds,
+                        watchedVideoIds = watchedVideoIds,
+                        videoPlaybackProgress = videoPlaybackProgress,
+                        showSections = showSections,
+                        showAudioFiles = showAudioFiles,
+                        pinnedPathSet = pinnedPathSet,
+                        shape = cardShape,
+                      )
+                    }
+                    IconButton(
+                      onClick = { },
+                      modifier = Modifier
+                        .size(48.dp)
+                        .draggableHandle(),
+                    ) {
+                      Icon(
+                        imageVector = Icons.Filled.DragHandle,
+                        contentDescription = stringResource(R.string.drag_to_reorder),
+                        tint = MaterialTheme.colorScheme.primary,
+                      )
+                    }
+                  }
+                }
+              } else {
+                Box(modifier = measureCard) {
+                  ExplorerItemCard(
+                    item = item,
+                    isSelected = isSelected(item),
+                    showSubtitleIndicator = showSubtitleIndicator,
+                    isGridMode = false,
+                    columns = 1,
+                    uiSettings = uiSettings,
+                    onClick = effectiveOnClick,
+                    onLongClick = { onLongClick(item) },
+                    onThumbClick = effectiveOnThumbClick,
+                    recentlyPlayedFilePath = recentlyPlayedFilePath,
+                    recentlyPlayedPaths = recentlyPlayedPaths,
+                    playedFolderPaths = playedFolderPaths,
+                    newVideoIds = newVideoIds,
+                    watchedVideoIds = watchedVideoIds,
+                    videoPlaybackProgress = videoPlaybackProgress,
+                    showSections = showSections,
+                    showAudioFiles = showAudioFiles,
+                    pinnedPathSet = pinnedPathSet,
+                    shape = cardShape,
+                  )
+                }
+              }
+            }
+
+            if (useContentSurface && !showSections) {
+              // Filler card: occupies the space left below the last item, or a
+              // fixed strip when the list fills the screen. The strip keeps the
+              // last card scrollable clear of the selection action bar, and the
+              // leftover keeps the surface reaching the container's rounded
+              // bottom edge.
+              //
+              // Section mode mixes headers, spacers and grid rows into the same
+              // list, so the uniform "cards + gaps" height math does not apply;
+              // it is skipped there rather than guessing.
+              item(key = "content_surface_filler") {
+                ContentSurfaceFiller(heightPx = fillerHeightPx)
+              }
             }
           }
         }
@@ -645,7 +1016,14 @@ fun <T> UnifiedExplorerContent(
           modifier = Modifier
             .align(Alignment.CenterEnd)
             .fillMaxHeight()
-            .padding(top = 8.dp, bottom = navigationBarHeight + 16.dp),
+            .padding(
+              top = 8.dp,
+              bottom = if (useContentSurface) {
+                if (isMiniPlayerActive) MiniPlayerDefaults.TotalCompactOffset + 16.dp else 16.dp
+              } else {
+                animatedBottomPadding
+              }
+            ),
           thumbColor = MaterialTheme.colorScheme.primary,
         )
       }
@@ -659,12 +1037,18 @@ fun <T> UnifiedExplorerContent(
         PullRefreshBox(
           isRefreshing = isRefreshing,
           onRefresh = onRefresh,
-          modifier = modifier.fillMaxSize(),
-          listState = listState,
+          modifier = modifier
+            .fillMaxSize()
+            .graphicsLayer { alpha = contentAlpha.value },
+          headerScrollState = headerScrollState,
           content = contentBlock
         )
       } else {
-        Box(modifier = modifier.fillMaxSize()) {
+        Box(
+          modifier = modifier
+            .fillMaxSize()
+            .graphicsLayer { alpha = contentAlpha.value }
+        ) {
           contentBlock()
         }
       }
@@ -674,17 +1058,43 @@ fun <T> UnifiedExplorerContent(
 
 private fun <T> getItemId(item: T): String {
   return when (item) {
-    is VideoFolder -> item.bucketId
-    is Video -> item.path
-    is VideoWithPlaybackInfo -> item.video.path
-    is PlaylistWithCount -> item.playlist.id.toString()
-    is RecentlyPlayedItem.VideoItem -> item.video.path
-    is RecentlyPlayedItem.PlaylistItem -> item.playlist.id.toString()
-    is FileSystemItem.Folder -> item.path
-    is FileSystemItem.VideoFile -> item.path
-    is PlaylistVideoItem -> item.playlistItem.id.toString()
-    else -> item.hashCode().toString()
+    is VideoFolder -> "folder_${item.bucketId.ifBlank { item.path }}"
+    is Video -> "video_${item.path.ifBlank { item.uri.toString() }}"
+    is VideoWithPlaybackInfo -> "video_${item.video.path.ifBlank { item.video.uri.toString() }}"
+    is PlaylistWithCount -> "playlist_${item.playlist.id}"
+    is RecentlyPlayedItem.VideoItem -> "recent_video_${item.video.path.ifBlank { item.video.uri.toString() }}"
+    is RecentlyPlayedItem.PlaylistItem -> "recent_playlist_${item.playlist.id}"
+    is FileSystemItem.Folder -> "fs_folder_${item.path}"
+    is FileSystemItem.VideoFile -> "fs_video_${item.path.ifBlank { item.video.uri.toString() }}"
+    is PlaylistVideoItem -> "playlist_item_${item.playlistItem.id}"
+    else -> "item_${item.hashCode()}"
   }
+}
+
+/**
+ * Empty card that closes off the content surface in surface mode.
+ *
+ * Takes exactly [heightPx]: either the space left below the last card (so a
+ * short list reaches the container's bottom edge and keeps its rounded corners
+ * visible) or a fixed strip when the list already fills the screen (so the last
+ * card can scroll clear of the selection action bar). Not using
+ * fillParentMaxHeight(), which would give it the whole viewport height and add
+ * unwanted scroll range to every list.
+ */
+@Composable
+private fun ContentSurfaceFiller(heightPx: Int) {
+  val containerColor = if (MaterialTheme.colorScheme.background == Color.Black) {
+    Color.Black
+  } else {
+    MaterialTheme.colorScheme.surface
+  }
+  Box(
+    modifier = Modifier
+      .fillMaxWidth()
+      .height(with(LocalDensity.current) { heightPx.toDp() })
+      .clip(RoundedCornerShape(2.dp))
+      .background(containerColor)
+  )
 }
 
 @Composable
@@ -705,9 +1115,17 @@ private fun <T> ExplorerItemCard(
   watchedVideoIds: Set<Long> = emptySet(),
   videoPlaybackProgress: Map<Long, Float> = emptyMap(),
   showSections: Boolean = false,
+  showAudioFiles: Boolean = true,
+  pinnedPathSet: Set<String> = emptySet(),
+  shape: Shape? = null,
 ) {
   val lastPlayedVideoPathsInFolder = LocalLastPlayedVideoPathsInFolder.current
   val recentlyPlayedFilePaths = LocalRecentlyPlayedFilePaths.current
+  // Derived once here so every card type (folder or video) shows the pin badge.
+  val isPinned = remember(item, pinnedPathSet) {
+    val path = pinnedKeyOf(item)
+    path != null && path in pinnedPathSet
+  }
   when (item) {
     is VideoFolder -> {
       val isRecentlyPlayed = recentlyPlayedFilePaths.any { path ->
@@ -718,7 +1136,7 @@ private fun <T> ExplorerItemCard(
         }
       }
       val isNeverPlayed = item.path !in playedFolderPaths
-      val isWatched = (item.videoCount > 0 || item.audioCount > 0) && item.unwatchedVideoCount == 0
+      val isWatched = item.activeCount(showAudioFiles) > 0 && item.unwatchedVideoCount == 0
 
       FolderCard(
         folder = item,
@@ -732,7 +1150,9 @@ private fun <T> ExplorerItemCard(
         onThumbClick = onThumbClick,
         isGridMode = isGridMode,
         gridColumns = columns,
-        newVideoCount = item.newCount
+        newVideoCount = item.newCount,
+        isPinned = isPinned,
+        shape = shape,
       )
     }
     is Video -> {
@@ -752,7 +1172,9 @@ private fun <T> ExplorerItemCard(
         showSubtitleIndicator = showSubtitleIndicator,
         isOldAndUnplayed = isOldAndUnplayed,
         isWatched = isWatched,
-        isRecentlyPlayed = isRecentlyPlayed
+        isRecentlyPlayed = isRecentlyPlayed,
+        isPinned = isPinned,
+        shape = shape,
       )
     }
     is VideoWithPlaybackInfo -> {
@@ -772,7 +1194,9 @@ private fun <T> ExplorerItemCard(
         isWatched = item.isWatched,
         isOldAndUnplayed = item.isOldAndUnplayed,
         isNeverPlayed = item.isNeverPlayed,
-        isRecentlyPlayed = isRecentlyPlayed
+        isRecentlyPlayed = isRecentlyPlayed,
+        isPinned = isPinned,
+        shape = shape,
       )
     }
     is PlaylistWithCount -> {
@@ -786,6 +1210,7 @@ private fun <T> ExplorerItemCard(
         onThumbClick = onThumbClick,
         isGridMode = isGridMode,
         gridColumns = columns,
+        mostRecentVideoPath = item.firstItemPath,
       )
     }
     is RecentlyPlayedItem.VideoItem -> {
@@ -803,7 +1228,9 @@ private fun <T> ExplorerItemCard(
         showSubtitleIndicator = showSubtitleIndicator,
         progressPercentage = item.progress,
         isWatched = item.isWatched,
-        isRecentlyPlayed = isRecentlyPlayed
+        isRecentlyPlayed = isRecentlyPlayed,
+        isPinned = isPinned,
+        shape = shape,
       )
     }
     is RecentlyPlayedItem.PlaylistItem -> {
@@ -817,6 +1244,7 @@ private fun <T> ExplorerItemCard(
         onThumbClick = onThumbClick,
         isGridMode = isGridMode,
         gridColumns = columns,
+        mostRecentVideoPath = item.mostRecentVideoPath,
       )
     }
     is FileSystemItem.Folder -> {
@@ -828,6 +1256,10 @@ private fun <T> ExplorerItemCard(
         audioCount = item.audioCount,
         totalSize = item.totalSize,
         totalDuration = item.totalDuration,
+        videoSize = item.videoSize,
+        audioSize = item.audioSize,
+        videoDuration = item.videoDuration,
+        audioDuration = item.audioDuration,
         lastModified = item.lastModified / 1000,
         newCount = item.newCount,
         unwatchedVideoCount = item.unwatchedVideoCount,
@@ -840,7 +1272,7 @@ private fun <T> ExplorerItemCard(
         }
       }
       val isNeverPlayed = item.path !in playedFolderPaths
-      val isWatched = (item.videoCount > 0 || item.audioCount > 0) && item.unwatchedVideoCount == 0
+      val isWatched = item.activeCount(showAudioFiles) > 0 && item.unwatchedVideoCount == 0
 
       FolderCard(
         folder = folderModel,
@@ -854,7 +1286,9 @@ private fun <T> ExplorerItemCard(
         onThumbClick = onThumbClick,
         isGridMode = isGridMode,
         gridColumns = columns,
-        newVideoCount = item.newCount
+        newVideoCount = item.newCount,
+        isPinned = isPinned,
+        shape = shape,
       )
     }
     is FileSystemItem.VideoFile -> {
@@ -876,7 +1310,9 @@ private fun <T> ExplorerItemCard(
         isOldAndUnplayed = isOldAndUnplayed,
         isWatched = isWatched,
         isNeverPlayed = videoPlaybackProgress[item.video.id] == null,
-        isRecentlyPlayed = isRecentlyPlayed
+        isRecentlyPlayed = isRecentlyPlayed,
+        isPinned = isPinned,
+        shape = shape,
       )
     }
     is PlaylistVideoItem -> {
@@ -889,7 +1325,8 @@ private fun <T> ExplorerItemCard(
         onThumbClick = onThumbClick,
         isGridMode = isGridMode,
         gridColumns = columns,
-        showSubtitleIndicator = showSubtitleIndicator
+        showSubtitleIndicator = showSubtitleIndicator,
+        shape = shape,
       )
     }
   }
@@ -907,3 +1344,21 @@ private fun SectionHeader(title: String, modifier: Modifier = Modifier) {
       .padding(horizontal = 8.dp, vertical = 12.dp)
   )
 }
+
+/**
+ * Path used for pinning lookups, or null for item types that can't be pinned
+ * (playlists, recently played rows, ...). Both [VideoFolder] and [FileSystemItem]
+ * are identified by their absolute path, which is what the repository stores.
+ *
+ * Internal (not private) so the media-badge wiring can be unit tested.
+ */
+internal fun <T> pinnedKeyOf(item: T): String? =
+  when (item) {
+    is VideoFolder -> item.path.ifBlank { item.bucketId }
+    is FileSystemItem.Folder -> item.path
+    is FileSystemItem.VideoFile -> item.path.ifBlank { item.video.path }
+    is Video -> item.path.ifBlank { item.uri.toString() }
+    is VideoWithPlaybackInfo -> item.video.path.ifBlank { item.video.uri.toString() }
+    is RecentlyPlayedItem.VideoItem -> item.video.path.ifBlank { item.video.uri.toString() }
+    else -> null
+  }

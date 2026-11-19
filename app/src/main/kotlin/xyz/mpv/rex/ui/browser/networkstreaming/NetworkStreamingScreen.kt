@@ -1,47 +1,50 @@
 package xyz.mpv.rex.ui.browser.networkstreaming
 
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.calculateEndPadding
+import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ContentPaste
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.SignalWifiConnectedNoInternet4
 import androidx.compose.material.icons.rounded.SignalWifiStatusbarConnectedNoInternet4
-import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberTopAppBarState
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.res.stringResource
 import xyz.mpv.rex.R
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -54,7 +57,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -62,17 +67,19 @@ import xyz.mpv.rex.domain.network.NetworkConnection
 import xyz.mpv.rex.preferences.preference.collectAsState
 import xyz.mpv.rex.presentation.Screen
 import xyz.mpv.rex.ui.browser.components.BrowserTopBar
+import xyz.mpv.rex.ui.browser.components.ContentSurfaceContainer
 import xyz.mpv.rex.ui.browser.cards.NetworkConnectionCard
 import xyz.mpv.rex.ui.browser.dialogs.AddConnectionSheet
 import xyz.mpv.rex.ui.browser.dialogs.EditConnectionSheet
-import xyz.mpv.rex.ui.browser.states.EmptyState
 import xyz.mpv.rex.ui.preferences.PreferencesScreen
 import xyz.mpv.rex.ui.utils.LocalBackStack
+import xyz.mpv.rex.ui.utils.navigateBack
 import xyz.mpv.rex.utils.media.MediaUtils
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import org.koin.compose.koinInject
 import xyz.mpv.rex.preferences.FolderViewMode
+import android.widget.Toast
 
 @Serializable
 object NetworkStreamingScreen : Screen {
@@ -131,14 +138,39 @@ object NetworkStreamingScreen : Screen {
       }
     }
 
+    val canNavigateBack = remember { backstack.size > 1 }
+
+    androidx.activity.compose.BackHandler(enabled = canNavigateBack) {
+      backstack.navigateBack()
+    }
+
+    val contentSurfaceScaffoldColor = if (MaterialTheme.colorScheme.background == Color.Black) {
+      Color.Black
+    } else {
+      MaterialTheme.colorScheme.surfaceContainer
+    }
+    val contentSurfaceSheetColor = if (MaterialTheme.colorScheme.background == Color.Black) {
+      Color.Black
+    } else {
+      MaterialTheme.colorScheme.surface
+    }
+
+    val topAppBarState = rememberTopAppBarState()
+    val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior(topAppBarState)
+
     Scaffold(
+        modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
+        // The tab renders inside MainScreen's Scaffold, but setting the tone here
+        // too keeps it identical whether it is a tab or pushed.
+        containerColor = contentSurfaceScaffoldColor,
         topBar = {
           BrowserTopBar(
             title = stringResource(R.string.network),
+            scrollBehavior = scrollBehavior,
             isInSelectionMode = false,
             selectedCount = 0,
             totalCount = 0,
-            onBackClick = null, // No back button for network screen (root tab)
+            onBackClick = if (canNavigateBack) { { backstack.navigateBack() } } else null,
             onCancelSelection = { },
           onSortClick = null,
           // Search functionality disabled for production
@@ -158,7 +190,8 @@ object NetworkStreamingScreen : Screen {
       },
       floatingActionButton = {
         val navigationBarHeight = xyz.mpv.rex.ui.browser.LocalNavigationBarHeight.current
-        if (isFabVisible) {
+        val isMiniPlayerActive = xyz.mpv.rex.ui.browser.LocalMiniPlayerActive.current
+        if (isFabVisible && !isMiniPlayerActive) {
           ExtendedFloatingActionButton(
             onClick = { showAddSheet = true },
             icon = { Icon(Icons.Filled.Add, contentDescription = null) },
@@ -168,194 +201,267 @@ object NetworkStreamingScreen : Screen {
         }
       },
     ) { padding ->
-      LazyColumn(
-        state = listState,
-        modifier = Modifier
-          .fillMaxSize()
-          .padding(padding),
-        contentPadding = PaddingValues(
-          start = 16.dp, 
-          end = 16.dp, 
-          top = 16.dp, 
-          bottom = navigationBarHeight
+      // The Scaffold's padding carries the header and the system insets; the
+      // container owns the horizontal inset and the bottom gap, so only the
+      // top/horizontal insets are passed through.
+      ContentSurfaceContainer(
+        navigationBarHeight = navigationBarHeight,
+        modifier = Modifier.padding(
+          PaddingValues(
+            start = padding.calculateStartPadding(LocalLayoutDirection.current),
+            top = padding.calculateTopPadding(),
+            end = padding.calculateEndPadding(LocalLayoutDirection.current),
+            bottom = 0.dp,
+          )
         ),
       ) {
-          // Section 1: Stream Link
-          item {
-            StreamLinkSection(
-              onPlayLink = { url ->
-                val currentList = playedLinks.toMutableList()
-                currentList.remove(url)
-                currentList.add(0, url)
-                val cappedList = if (currentList.size > 20) currentList.take(20) else currentList
-                browserPreferences.playedNetworkLinks.set(cappedList.joinToString("\n"))
+        // The sheet paints the card colour; rows sit on a flat fill rather than
+        // floating as grouped boxes.
+        Box(
+          modifier = Modifier
+            .fillMaxSize()
+            .background(contentSurfaceSheetColor),
+        ) {
+          LazyColumn(
+            state = listState,
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(
+              start = 8.dp,
+              end = 8.dp,
+              top = 4.dp,
+              bottom = 8.dp,
+            ),
+            verticalArrangement = Arrangement.spacedBy(3.dp),
+          ) {
+            // Section 1: Stream Link
+            item(key = "stream_link") {
+              StreamLinkSection(
+                onPlayLink = { url ->
+                  val currentList = playedLinks.toMutableList()
+                  currentList.remove(url)
+                  currentList.add(0, url)
+                  val cappedList = if (currentList.size > 20) currentList.take(20) else currentList
+                  browserPreferences.playedNetworkLinks.set(cappedList.joinToString("\n"))
 
-                MediaUtils.playFile(url, context, "network_stream")
-              },
-            )
-          }
-
-          // Section 1b: Played Links History Section
-          if (playedLinks.isNotEmpty()) {
-            item {
-              Spacer(modifier = Modifier.height(24.dp))
-              Text(
-                text = stringResource(R.string.network_recent_links),
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(vertical = 4.dp),
+                  MediaUtils.playFile(url, context, "network_stream")
+                },
               )
             }
 
-            items(playedLinks) { link ->
-              Card(
-                modifier = Modifier
-                  .fillMaxWidth()
-                  .padding(vertical = 4.dp)
-                  .clickable {
-                    // Play link and move to top
-                    val currentList = playedLinks.toMutableList()
-                    currentList.remove(link)
-                    currentList.add(0, link)
-                    browserPreferences.playedNetworkLinks.set(currentList.joinToString("\n"))
-                    MediaUtils.playFile(link, context, "network_stream")
-                  },
-                colors = CardDefaults.cardColors(
-                  containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-                ),
-              ) {
+            // Section 1b: Played Links History Section
+            if (playedLinks.isNotEmpty()) {
+              item(key = "recent_links_header") {
                 Row(
-                  modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                  modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
                   verticalAlignment = Alignment.CenterVertically,
-                  horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                  SurfaceSectionHeader(
+                    title = stringResource(R.string.network_recent_links),
+                    modifier = Modifier.weight(1f),
+                  )
+                  TextButton(
+                    onClick = { browserPreferences.playedNetworkLinks.set("") },
+                    modifier = Modifier.padding(end = 12.dp),
+                  ) {
+                    Text(stringResource(R.string.network_clear_all_links))
+                  }
+                }
+              }
+
+              item(key = "recent_links_list") {
+                Column(
+                  modifier = Modifier.fillMaxWidth(),
+                  verticalArrangement = Arrangement.spacedBy(3.dp),
+                ) {
+                  val clipboardManager =
+                    context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+
+                  playedLinks.forEachIndexed { index, link ->
+                    Surface(
+                      shape = RoundedCornerShape(2.dp),
+                      color = if (MaterialTheme.colorScheme.background == Color.Black) {
+                        Color.Black
+                      } else {
+                        MaterialTheme.colorScheme.surface
+                      },
+                    ) {
+                      @OptIn(ExperimentalFoundationApi::class)
+                      Row(
+                        modifier = Modifier
+                          .fillMaxWidth()
+                          .combinedClickable(
+                            onClick = {
+                              // Play link and move to top
+                              val currentList = playedLinks.toMutableList()
+                              currentList.remove(link)
+                              currentList.add(0, link)
+                              browserPreferences.playedNetworkLinks.set(currentList.joinToString("\n"))
+                              MediaUtils.playFile(link, context, "network_stream")
+                            },
+                            onLongClick = {
+                              // Copy link to clipboard
+                              clipboardManager?.setPrimaryClip(
+                                android.content.ClipData.newPlainText("link", link)
+                              )
+                              Toast.makeText(
+                                context,
+                                context.getString(R.string.copied_to_clipboard),
+                                Toast.LENGTH_SHORT,
+                              ).show()
+                            },
+                          )
+                          .padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                      ) {
+                        Surface(
+                          shape = CircleShape,
+                          color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                          modifier = Modifier.size(36.dp),
+                        ) {
+                          Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                              imageVector = Icons.Filled.Link,
+                              contentDescription = null,
+                              tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                              modifier = Modifier.size(18.dp),
+                            )
+                          }
+                        }
+                        Column(
+                          modifier = Modifier
+                            .weight(1f)
+                            .padding(horizontal = 12.dp),
+                          verticalArrangement = Arrangement.spacedBy(2.dp),
+                        ) {
+                          Text(
+                            text = android.net.Uri.parse(link).lastPathSegment
+                              ?.takeIf { it.isNotBlank() } ?: link,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                          )
+                          Text(
+                            text = link,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                          )
+                        }
+                        IconButton(
+                          onClick = {
+                            val currentList = playedLinks.toMutableList()
+                            currentList.remove(link)
+                            browserPreferences.playedNetworkLinks.set(currentList.joinToString("\n"))
+                          },
+                          modifier = Modifier.size(28.dp),
+                        ) {
+                          Icon(
+                            imageVector = Icons.Filled.Close,
+                            contentDescription = stringResource(R.string.network_remove_link_action),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(16.dp),
+                          )
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+
+            // Section 2: Local Network header
+            item(key = "local_network_header") {
+              SurfaceSectionHeader(title = stringResource(R.string.network_local_network))
+            }
+
+            // Show empty state or connection list
+            if (connections.isEmpty()) {
+              item(key = "connections_empty") {
+                Surface(
+                  shape = RoundedCornerShape(2.dp),
+                  color = if (MaterialTheme.colorScheme.background == Color.Black) {
+                    Color.Black
+                  } else {
+                    MaterialTheme.colorScheme.surface
+                  },
+                  modifier = Modifier.fillMaxWidth(),
                 ) {
                   Row(
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier
+                      .fillMaxWidth()
+                      .padding(16.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(14.dp),
                   ) {
-                    Icon(
-                      imageVector = Icons.Filled.Link,
-                      contentDescription = null,
-                      tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                      modifier = Modifier.size(20.dp)
-                    )
-                    Text(
-                      text = link,
-                      style = MaterialTheme.typography.bodyMedium,
-                      color = MaterialTheme.colorScheme.onSurface,
-                      maxLines = 1,
-                      overflow = TextOverflow.Ellipsis,
-                    )
-                  }
-
-                  IconButton(
-                    onClick = {
-                      val currentList = playedLinks.toMutableList()
-                      currentList.remove(link)
-                      browserPreferences.playedNetworkLinks.set(currentList.joinToString("\n"))
-                    },
-                    modifier = Modifier.size(24.dp)
-                  ) {
-                    Icon(
-                      imageVector = Icons.Filled.Close,
-                      contentDescription = stringResource(R.string.network_remove_link_action),
-                      tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                      modifier = Modifier.size(16.dp)
-                    )
+                    Surface(
+                      shape = CircleShape,
+                      color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                      modifier = Modifier.size(42.dp),
+                    ) {
+                      Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                          imageVector = Icons.Rounded.SignalWifiStatusbarConnectedNoInternet4,
+                          contentDescription = null,
+                          tint = MaterialTheme.colorScheme.outline,
+                          modifier = Modifier.size(24.dp),
+                        )
+                      }
+                    }
+                    Column {
+                      Text(
+                        text = stringResource(R.string.network_empty_title),
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                      )
+                      Text(
+                        text = stringResource(R.string.network_empty_description),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.outline,
+                      )
+                    }
                   }
                 }
               }
-            }
-          }
-
-          // Section 2: Local Network header
-          item {
-            Spacer(modifier = Modifier.height(24.dp))
-            Text(
-              text = stringResource(R.string.network_local_network),
-              style = MaterialTheme.typography.titleLarge,
-              fontWeight = FontWeight.Bold,
-              color = MaterialTheme.colorScheme.primary,
-              modifier = Modifier.padding(vertical = 8.dp),
-            )
-          }
-
-          // Show empty state or connection list
-          if (connections.isEmpty()) {
-            item {
-              Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                  containerColor = MaterialTheme.colorScheme.surfaceContainer,
-                ),
-              ) {
-                Column(
-                  modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(24.dp),
-                  horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                  Icon(
-                    imageVector = Icons.Rounded.SignalWifiStatusbarConnectedNoInternet4,
-                    contentDescription = null,
-                    modifier = Modifier.size(48.dp),
-                    tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
-                  )
-                  Spacer(modifier = Modifier.height(16.dp))
-                  Text(
-                    text = stringResource(R.string.network_empty_title),
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface, // a
-                  )
-                  Spacer(modifier = Modifier.height(8.dp))
-                  Text(
-                    text = stringResource(R.string.network_empty_description),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center,
-                  )
-                }
+            } else {
+              itemsIndexed(connections, key = { _, item -> item.id }) { index, connection ->
+                val status = connectionStatuses[connection.id]
+                NetworkConnectionCard(
+                  connection = connection,
+                  onConnect = { conn ->
+                    viewModel.connect(conn)
+                  },
+                  onDisconnect = { conn -> viewModel.disconnect(conn) },
+                  onEdit = { conn -> editingConnection = conn },
+                  onDelete = { conn -> viewModel.deleteConnection(conn) },
+                  onBrowse = { conn ->
+                    // Navigate to browser screen if connected
+                    if (status?.isConnected == true) {
+                      backstack.add(
+                        NetworkBrowserScreen(
+                          connectionId = conn.id,
+                          connectionName = conn.name,
+                          currentPath = "/",  // Always start at root - conn.path is already included in connection
+                        ),
+                      )
+                    }
+                  },
+                  onAutoConnectChange = { conn, autoConnect ->
+                    viewModel.updateConnection(conn.copy(autoConnect = autoConnect))
+                  },
+                  isConnected = status?.isConnected ?: false,
+                  isConnecting = status?.isConnecting ?: false,
+                  error = status?.error,
+                  shape = RoundedCornerShape(2.dp),
+                )
               }
-            }
-          } else {
-            items(connections, key = { it.id }) { connection ->
-              val status = connectionStatuses[connection.id]
-              NetworkConnectionCard(
-                connection = connection,
-                onConnect = { conn ->
-                  viewModel.connect(conn)
-                },
-                onDisconnect = { conn -> viewModel.disconnect(conn) },
-                onEdit = { conn -> editingConnection = conn },
-                onDelete = { conn -> viewModel.deleteConnection(conn) },
-                onBrowse = { conn ->
-                  // Navigate to browser screen if connected
-                  if (status?.isConnected == true) {
-                    backstack.add(
-                      NetworkBrowserScreen(
-                        connectionId = conn.id,
-                        connectionName = conn.name,
-                        currentPath = "/",  // Always start at root - conn.path is already included in connection
-                      ),
-                    )
-                  }
-                },
-                onAutoConnectChange = { conn, autoConnect ->
-                  viewModel.updateConnection(conn.copy(autoConnect = autoConnect))
-                },
-                isConnected = status?.isConnected ?: false,
-                isConnecting = status?.isConnecting ?: false,
-                error = status?.error,
-                modifier = Modifier.padding(bottom = 16.dp),
-              )
             }
           }
         }
+      }
 
       // Add Connection Sheet
       AddConnectionSheet(
@@ -390,104 +496,93 @@ private fun StreamLinkSection(
   val context = LocalContext.current
   var linkUrl by rememberSaveable { mutableStateOf("") }
 
+  fun pasteFromClipboard(): String? {
+    val clipboardManager =
+      context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+    val clipData = clipboardManager?.primaryClip
+    if (clipData != null && clipData.itemCount > 0) {
+      val text = clipData.getItemAt(0).text?.toString() ?: ""
+      if (text.isNotBlank()) {
+        return text
+      }
+    }
+    return null
+  }
+
   Column(
     modifier = Modifier.fillMaxWidth(),
   ) {
-    Text(
-      text = stringResource(R.string.stream_link),
-      style = MaterialTheme.typography.titleLarge,
-      fontWeight = FontWeight.Bold,
-      color = MaterialTheme.colorScheme.primary,
-      modifier = Modifier.padding(vertical = 8.dp),
-    )
-    Card(
-      modifier = Modifier.fillMaxWidth(),
-      colors = CardDefaults.cardColors(
-        containerColor = MaterialTheme.colorScheme.surfaceContainer,
-      ),
-    ) {
-      Column(
-        modifier = Modifier.padding(16.dp),
-      ) {
-        OutlinedTextField(
-          value = linkUrl,
-          onValueChange = { linkUrl = it },
-          label = { Text(stringResource(R.string.video_url)) },
-          placeholder = {
-            Text(
-              text = stringResource(R.string.video_url_placeholder),
-              color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-          },
-          leadingIcon = {
-            Icon(
-              imageVector = Icons.Filled.Link,
-              contentDescription = null,
-              tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-          },
-          modifier = Modifier.fillMaxWidth(),
-          singleLine = true,
-        )
-        Row(
-          modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 12.dp),
-          horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
-        ) {
-          FilledTonalButton(
-            onClick = {
-              val clipboardManager =
-                context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
-              val clipData = clipboardManager?.primaryClip
-              if (clipData != null && clipData.itemCount > 0) {
-                val text = clipData.getItemAt(0).text?.toString() ?: ""
-                if (text.isNotBlank()) {
-                  linkUrl = text
-                }
-              }
-            },
-            colors = ButtonDefaults.filledTonalButtonColors(
-              containerColor = MaterialTheme.colorScheme.secondaryContainer,
-              contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
-            ),
-          ) {
-            Icon(
-              imageVector = Icons.Filled.ContentPaste,
-              contentDescription = null,
-              modifier = Modifier.padding(end = 8.dp),
-            )
-            Text(
-              text = stringResource(R.string.paste),
-              fontWeight = FontWeight.Bold,
-            )
-          }
+    SurfaceSectionHeader(title = stringResource(R.string.stream_link))
 
-          FilledTonalButton(
-            onClick = {
-              if (linkUrl.isNotBlank()) {
-                onPlayLink(linkUrl)
-                linkUrl = ""
-              }
-            },
-            enabled = linkUrl.isNotBlank(),
-            colors = ButtonDefaults.filledTonalButtonColors(
-              containerColor = MaterialTheme.colorScheme.primaryContainer,
-              contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-            ),
-          ) {
-            Icon(
-              imageVector = Icons.Filled.PlayArrow,
-              contentDescription = null,
-              modifier = Modifier.padding(end = 8.dp),
-            )
-            Text(
-              text = stringResource(R.string.play),
-              fontWeight = FontWeight.Bold,
-            )
+    // Single M3E row: text input + one combined Paste/Play action
+    Row(
+      modifier = Modifier.fillMaxWidth(),
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+      OutlinedTextField(
+        value = linkUrl,
+        onValueChange = { linkUrl = it },
+        placeholder = {
+          Text(
+            text = stringResource(R.string.network_stream_link_hint),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+          )
+        },
+        leadingIcon = {
+          Icon(
+            imageVector = Icons.Filled.Link,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+          )
+        },
+        modifier = Modifier.weight(1f),
+        singleLine = true,
+        shape = MaterialTheme.shapes.large,
+      )
+
+      // One button, two jobs: paste when empty, play when filled
+      FilledTonalButton(
+        onClick = {
+          if (linkUrl.isBlank()) {
+            pasteFromClipboard()?.let { linkUrl = it }
+          } else {
+            onPlayLink(linkUrl)
+            linkUrl = ""
           }
-        }
+        },
+        modifier = Modifier.height(56.dp),
+        shape = MaterialTheme.shapes.large,
+        colors = ButtonDefaults.filledTonalButtonColors(
+          containerColor = MaterialTheme.colorScheme.primaryContainer,
+          contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+        ),
+      ) {
+        Icon(
+          imageVector = if (linkUrl.isBlank()) Icons.Filled.ContentPaste else Icons.Filled.PlayArrow,
+          contentDescription = stringResource(
+            if (linkUrl.isBlank()) R.string.paste else R.string.play
+          ),
+        )
       }
     }
   }
+}
+
+/**
+ * Section label on the content surface. Matches the header used by
+ * `UnifiedExplorerContent`, which is private to that file; the grouped-preference
+ * header's 22.dp side padding belongs to the old 16.dp-margin cards.
+ */
+@Composable
+private fun SurfaceSectionHeader(title: String, modifier: Modifier = Modifier) {
+  Text(
+    text = title,
+    style = MaterialTheme.typography.titleMedium,
+    color = MaterialTheme.colorScheme.primary,
+    fontWeight = FontWeight.Bold,
+    modifier = modifier
+      .fillMaxWidth()
+      .padding(horizontal = 8.dp, vertical = 12.dp),
+  )
 }

@@ -36,15 +36,19 @@ class SubtitlesPreferences(
 
   val justification = preferenceStore.getEnum("sub_justify", SubtitleJustification.Auto)
   val subPos = preferenceStore.getInt("sub_pos", 100)
+  val secondarySubPos = preferenceStore.getInt("secondary_sub_pos", 10)
+  val secondarySubScale = preferenceStore.getFloat("secondary_sub_scale", 1f)
 
   val overrideAssSubs = preferenceStore.getBoolean("sub_override_ass")
   val scaleByWindow = preferenceStore.getBoolean("sub_scale_by_window", true)
   val forceLtr = preferenceStore.getBoolean("sub_force_ltr", false)
+  val subtitleEncoding = preferenceStore.getString("sub_encoding", "auto")
 
   val defaultSubDelay = preferenceStore.getInt("sub_default_delay")
   val defaultSubSpeed = preferenceStore.getFloat("sub_default_speed", 1f)
   
   val pickerPath = preferenceStore.getString("sub_picker_path")
+  val fontPickerPath = preferenceStore.getString("sub_font_picker_path")
   val customSubtitleFolder = preferenceStore.getString("sub_custom_folder", "")
   val openPickerAtVideoLocation = preferenceStore.getBoolean("sub_open_at_video_location", false)
   

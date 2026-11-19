@@ -21,8 +21,11 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -59,6 +62,9 @@ abstract class BaseBrowserViewModel<T>(
   protected val _isLoading = MutableStateFlow(true)
   val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
+  protected val _hasLoaded = MutableStateFlow(false)
+  val hasLoaded: StateFlow<Boolean> = _hasLoaded.asStateFlow()
+
   /**
    * Observable recently played file path for highlighting
    */
@@ -89,6 +95,15 @@ abstract class BaseBrowserViewModel<T>(
   abstract fun loadData()
 
   init {
+    // Initial load tracking: mark as loaded as soon as initial load finishes or items are populated
+    viewModelScope.launch {
+      combine(_isLoading, _items) { loading, currentItems ->
+        !loading || currentItems.isNotEmpty()
+      }.filter { it }.first().let {
+        _hasLoaded.value = true
+      }
+    }
+
     // Reactive Synchronization:
     // Observe media library structural changes (file operations), debouncing triggers
     // to prevent redundant reload storms.
@@ -132,6 +147,16 @@ abstract class BaseBrowserViewModel<T>(
               }
             }
           }
+          loadData()
+        }
+    }
+
+    viewModelScope.launch(Dispatchers.Main) {
+      browserPreferences.showAudioFiles.changes()
+        .drop(1)
+        .collectLatest {
+          Log.d("BaseBrowserViewModel", "showAudioFiles changed to $it")
+          MediaFileRepository.clearCache()
           loadData()
         }
     }
@@ -185,9 +210,10 @@ abstract class BaseBrowserViewModel<T>(
     val oldPath = video.path
     val result = StorageOps.renameVideo(getApplication(), video, newDisplayName)
 
-    // Invalidate cache for old path
+    // Invalidate metadata/cache state tied to the pre-rename location.
     result.onSuccess {
       metadataCache.invalidateVideo(oldPath)
+      MediaFileRepository.clearCache()
     }
 
     return result

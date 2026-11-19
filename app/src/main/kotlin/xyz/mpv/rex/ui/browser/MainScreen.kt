@@ -3,34 +3,40 @@ package xyz.mpv.rex.ui.browser
 import android.annotation.SuppressLint
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.border
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.PlaylistPlay
+import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.outlined.VideoLibrary
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarDefaults
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.material3.ShortNavigationBar
+import androidx.compose.material3.ShortNavigationBarDefaults
+import androidx.compose.material3.ShortNavigationBarItem
+import androidx.compose.material3.ShortNavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
@@ -40,13 +46,16 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import xyz.mpv.rex.R
+import xyz.mpv.rex.ui.icons.RexIcon
+import xyz.mpv.rex.ui.icons.RexIcons
 import xyz.mpv.rex.preferences.AppearancePreferences
 import xyz.mpv.rex.preferences.BrowserPreferences
 import xyz.mpv.rex.preferences.preference.collectAsState
@@ -57,8 +66,10 @@ import xyz.mpv.rex.ui.browser.networkstreaming.NetworkStreamingScreen
 import xyz.mpv.rex.ui.browser.playlist.PlaylistScreen
 import xyz.mpv.rex.ui.browser.recentlyplayed.RecentlyPlayedScreen
 import xyz.mpv.rex.ui.browser.shorts.ShortsScreen
+import xyz.mpv.rex.ui.browser.you.YouScreen
 import xyz.mpv.rex.ui.browser.selection.SelectionManager
 import xyz.mpv.rex.ui.browser.miniplayer.MiniPlayer
+import xyz.mpv.rex.ui.browser.miniplayer.MiniPlayerDefaults
 import xyz.mpv.rex.ui.browser.miniplayer.MiniPlayerStateManager
 import androidx.compose.foundation.layout.Column
 import androidx.compose.runtime.collectAsState
@@ -68,6 +79,8 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.serialization.Serializable
 import org.koin.compose.koinInject
+import xyz.mpv.rex.ui.motion.RexMotion
+import xyz.mpv.rex.ui.motion.RexPress
 
 @Serializable
 object MainScreen : Screen {
@@ -95,6 +108,18 @@ object MainScreen : Screen {
   
   private val _shouldHideNavigationBar = MutableStateFlow(false)
   val shouldHideNavigationBar = _shouldHideNavigationBar.asStateFlow()
+
+  /**
+   * Height of the navigation bar + device inset currently painted under the browser, as seen by
+   * anything composed *outside* this screen — in practice the mini player sheet, which lives in the
+   * activity window so its page can cover pushed screens and therefore cannot read this tree's
+   * composition locals.
+   *
+   * `null` means "no answer": this screen has not composed yet, or has been pushed over. The sheet
+   * then docks on the window edge instead of on a bar that may not be painted.
+   */
+  private val _miniPlayerBottomChromeHeight = MutableStateFlow<Dp?>(null)
+  val miniPlayerBottomChromeHeight = _miniPlayerBottomChromeHeight.asStateFlow()
   
   private val _isBrowserBottomBarVisible = MutableStateFlow(false)
   val isBrowserBottomBarVisible = _isBrowserBottomBarVisible.asStateFlow()
@@ -160,59 +185,94 @@ object MainScreen : Screen {
     }
 
     val context = LocalContext.current
-    val density = LocalDensity.current
+    val haptic = LocalHapticFeedback.current
     val browserPreferences = koinInject<BrowserPreferences>()
+    val appearancePreferences = koinInject<AppearancePreferences>()
     val miniPlayerStateManager = koinInject<MiniPlayerStateManager>()
     val miniPlayerState by miniPlayerStateManager.state.collectAsState()
     val isShortsEnabled by browserPreferences.enableShorts.collectAsState()
+    val enableTabYou by browserPreferences.enableTabYou.collectAsState()
     val enableTabRecents by browserPreferences.enableTabRecents.collectAsState()
     val enableTabPlaylists by browserPreferences.enableTabPlaylists.collectAsState()
     val enableTabNetwork by browserPreferences.enableTabNetwork.collectAsState()
+    val bottomNavOrder by browserPreferences.bottomNavOrder.collectAsState()
+    val motionPreset by appearancePreferences.navigationMotionStyle.collectAsState()
+    val customProfileImagePath by appearancePreferences.customProfileImagePath.collectAsState()
+
+    val customAvatarBitmap = remember(customProfileImagePath) {
+      if (customProfileImagePath.isNotBlank()) {
+        val file = java.io.File(customProfileImagePath)
+        if (file.exists()) {
+          try {
+            android.graphics.BitmapFactory.decodeFile(file.absolutePath)?.asImageBitmap()
+          } catch (e: Exception) {
+            null
+          }
+        } else null
+      } else null
+    }
 
     val homeLabel = stringResource(R.string.home)
     val shortsLabel = stringResource(R.string.shorts)
+    val youLabel = stringResource(R.string.you)
     val recentsLabel = stringResource(R.string.recents)
     val playlistsLabel = stringResource(R.string.playlists)
     val networkLabel = stringResource(R.string.network)
 
     val visibleTabs = remember(
-      isShortsEnabled, enableTabRecents, enableTabPlaylists, enableTabNetwork,
-      homeLabel, shortsLabel, recentsLabel, playlistsLabel, networkLabel
+      isShortsEnabled, enableTabYou, enableTabRecents, enableTabPlaylists, enableTabNetwork,
+      bottomNavOrder,
+      homeLabel, shortsLabel, youLabel, recentsLabel, playlistsLabel, networkLabel
     ) {
-      buildList {
+      val rawTabs = buildList {
         add(
-          VisibleTab("home", homeLabel, Icons.Filled.Home) {
+          VisibleTab("home", homeLabel, Icons.Filled.Home, RexIcons.Home) {
             FolderListScreen.Content()
           }
         )
         if (isShortsEnabled) {
           add(
-            VisibleTab("shorts", shortsLabel, Icons.Outlined.VideoLibrary) {
+            VisibleTab("shorts", shortsLabel, Icons.Outlined.VideoLibrary, RexIcons.VideoLibrary) {
               ShortsScreen().Content()
             }
           )
         }
-        if (enableTabRecents) {
-          add(
-            VisibleTab("recents", recentsLabel, Icons.Filled.History) {
-              RecentlyPlayedScreen.Content()
-            }
-          )
-        }
-        if (enableTabPlaylists) {
-          add(
-            VisibleTab("playlists", playlistsLabel, Icons.AutoMirrored.Filled.PlaylistPlay) {
-              PlaylistScreen.Content()
-            }
-          )
+        if (!enableTabYou) {
+          if (enableTabRecents) {
+            add(
+              VisibleTab("recents", recentsLabel, Icons.Filled.History, RexIcons.History) {
+                RecentlyPlayedScreen.Content()
+              }
+            )
+          }
+          if (enableTabPlaylists) {
+            add(
+              VisibleTab("playlists", playlistsLabel, Icons.AutoMirrored.Filled.PlaylistPlay, RexIcons.PlaylistPlay) {
+                PlaylistScreen.Content()
+              }
+            )
+          }
         }
         if (enableTabNetwork) {
           add(
-            VisibleTab("network", networkLabel, Icons.Filled.Language) {
+            VisibleTab("network", networkLabel, Icons.Filled.Language, RexIcons.Language) {
               NetworkStreamingScreen.Content()
             }
           )
         }
+        if (enableTabYou) {
+          add(
+            VisibleTab("you", youLabel, Icons.Filled.AccountCircle, RexIcons.Person) {
+              YouScreen.Content()
+            }
+          )
+        }
+      }
+
+      val orderList = browserPreferences.getBottomNavOrder()
+      rawTabs.sortedBy { tab ->
+        val idx = orderList.indexOf(tab.id)
+        if (idx == -1) Int.MAX_VALUE else idx
       }
     }
 
@@ -223,17 +283,46 @@ object MainScreen : Screen {
       }
     }
 
-    // Intercept back button when on Shorts tab to return to previous tab
+    // Intercept back button when on Shorts tab to return to Home or previous tab
     val shortsIdx = visibleTabs.indexOfFirst { it.id == "shorts" }
+    val homeIdx = visibleTabs.indexOfFirst { it.id == "home" }
     androidx.activity.compose.BackHandler(enabled = shortsIdx != -1 && selectedTab == shortsIdx) {
-      selectedTab = previousTab
+      val targetTab = when {
+        previousTab != shortsIdx && previousTab in visibleTabs.indices -> previousTab
+        homeIdx != -1 -> homeIdx
+        else -> visibleTabs.indices.firstOrNull { it != shortsIdx } ?: 0
+      }
+      selectedTab = targetTab
     }
+
 
     // Shared state (across the app) collected reactively via StateFlow
     val isInSelectionMode by _isInSelectionModeShared.collectAsState()
     val hideNavigationBar by _shouldHideNavigationBar.collectAsState()
     val rawSelectionManager by _sharedVideoSelectionManager.collectAsState()
     val videoSelectionManager = rawSelectionManager as? SelectionManager<*, *>
+
+    // Publish the navigation bar's real height to the activity, because the mini player sheet is
+    // composed *beside* this screen (in MainActivity's window, so it can cover pushed screens) and
+    // cannot see this tree's composition locals. This mirrors the `isNavBarVisible` used by the
+    // Scaffold below: no bar on Shorts, in selection mode, or when there is only one tab.
+    //
+    // Zero when there is no bar, so the sheet docks on the window edge rather than leaving a 64 dp
+    // gap above a navigation bar that is not being painted.
+    val navBarVisibleForSheet =
+      !hideNavigationBar && !(isShortsEnabled && shortsIdx != -1 && selectedTab == shortsIdx) &&
+        visibleTabs.size > 1
+    val navBarInsetForSheet =
+      ShortNavigationBarDefaults.windowInsets.asPaddingValues().calculateBottomPadding()
+    LaunchedEffect(navBarVisibleForSheet, navBarInsetForSheet) {
+      _miniPlayerBottomChromeHeight.value =
+        if (navBarVisibleForSheet) 64.dp + navBarInsetForSheet else navBarInsetForSheet
+    }
+    // While this screen is pushed over (or not composed), it publishes nothing; the activity then
+    // falls back to treating the bar as absent rather than guessing.
+    DisposableEffect(Unit) {
+      onDispose { _miniPlayerBottomChromeHeight.value = null }
+    }
 
     // Update persistent state whenever tab changes
     LaunchedEffect(selectedTab) {
@@ -253,7 +342,6 @@ object MainScreen : Screen {
     }
 
     // Community Hub auto-popup: Phase 1 (initial 1 min test threshold) / Phase 2 (15 days after "Already joined")
-    val appearancePreferences = koinInject<AppearancePreferences>()
     val isCommunityPromptPermanentlyDismissed by appearancePreferences.communityPromptDismissedPermanently.collectAsState()
     val firstOpenTimestamp by appearancePreferences.communityFirstAppOpenTimestamp.collectAsState()
     val alreadyJoinedTimestamp by appearancePreferences.communityAlreadyJoinedTimestamp.collectAsState()
@@ -306,6 +394,12 @@ object MainScreen : Screen {
     // Scaffold with bottom navigation bar
     Scaffold(
       modifier = Modifier.fillMaxSize(),
+      // The screen tone behind the content surface. The cards are painted in
+      // `surface` and the gaps between them only read as gaps because this
+      // backdrop is the darker `surfaceContainer`; leaving the Scaffold on the
+      // default `background` made the filled sheet sit on an almost identical
+      // tone.
+      containerColor = MaterialTheme.colorScheme.surfaceContainer,
       bottomBar = {
         // Animated bottom navigation bar with slide animations
         // Also hide if Shorts tab is active (index 1 when enabled, index -1 when disabled)
@@ -314,116 +408,106 @@ object MainScreen : Screen {
         
         AnimatedVisibility(
             visible = !hideNavigationBar && !isShortsTabActive && visibleTabs.size > 1,
-            enter = slideInVertically(
-              animationSpec = tween(durationMillis = 300),
-              initialOffsetY = { fullHeight -> fullHeight }
-            ),
-            exit = slideOutVertically(
-              animationSpec = tween(durationMillis = 300),
-              targetOffsetY = { fullHeight -> fullHeight }
-            )
+            // Dock expand: the navigation bar grows out of the bottom edge it is anchored to.
+            enter = RexMotion.dockEnter(LocalContext.current),
+            exit = RexMotion.dockExit(LocalContext.current)
           ) {
-            NavigationBar(
-              modifier = Modifier
-                .clip(
-                  RoundedCornerShape(
-                    topStart = 28.dp,
-                    topEnd = 28.dp,
-                    bottomStart = 0.dp,
-                    bottomEnd = 0.dp
-                  )
-                ),
-              containerColor = if (isShortsTabActive) Color.Transparent else NavigationBarDefaults.containerColor,
+            val navBarBottomInset = ShortNavigationBarDefaults.windowInsets.asPaddingValues().calculateBottomPadding()
+            // The expressive navigation bar animates a pill behind the selected item and swaps the
+            // icon for its filled variant, instead of cross-fading a fixed rounded rectangle.
+            ShortNavigationBar(
+              modifier = Modifier.height(64.dp + navBarBottomInset),
+              containerColor = if (isShortsTabActive) Color.Transparent else MaterialTheme.colorScheme.surfaceContainer,
               contentColor = if (isShortsTabActive) Color.White else MaterialTheme.colorScheme.onSurface,
             ) {
               val itemColors = if (isShortsTabActive) {
-                NavigationBarItemDefaults.colors(
+                ShortNavigationBarItemDefaults.colors(
                   selectedIconColor = Color.White,
                   selectedTextColor = Color.White,
                   unselectedIconColor = Color.White.copy(alpha = 0.7f),
                   unselectedTextColor = Color.White.copy(alpha = 0.7f),
-                  indicatorColor = Color.White.copy(alpha = 0.2f)
+                  selectedIndicatorColor = Color.White.copy(alpha = 0.2f),
                 )
               } else {
-                NavigationBarItemDefaults.colors()
+                ShortNavigationBarItemDefaults.colors(
+                  selectedIconColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                  selectedTextColor = MaterialTheme.colorScheme.onSurface,
+                  selectedIndicatorColor = MaterialTheme.colorScheme.secondaryContainer,
+                  unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                  unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
               }
 
               visibleTabs.forEachIndexed { index, tab ->
-                NavigationBarItem(
-                  icon = { Icon(tab.icon, contentDescription = tab.label) },
+                val isSelected = selectedTab == index
+                val isYouTabWithCustomAvatar = tab.id == "you" && customAvatarBitmap != null
+                val interactionSource = remember { MutableInteractionSource() }
+                val pressScale by RexPress.pressScale(interactionSource)
+
+                ShortNavigationBarItem(
+                  modifier = Modifier
+                    .offset(y = 2.dp)
+                    .graphicsLayer {
+                      scaleX = pressScale
+                      scaleY = pressScale
+                    },
+                  interactionSource = interactionSource,
+                  icon = {
+                    if (isYouTabWithCustomAvatar) {
+                      Image(
+                        bitmap = customAvatarBitmap!!,
+                        contentDescription = tab.label,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                          .size(24.dp)
+                          .clip(CircleShape)
+                          .border(
+                            width = if (isSelected) 1.5.dp else 1.dp,
+                            color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                            shape = CircleShape,
+                          ),
+                      )
+                    } else if (tab.rexIcon != null) {
+                      RexIcon(
+                        icon = tab.rexIcon,
+                        isFilled = isSelected,
+                        modifier = Modifier.size(24.dp),
+                      )
+                    } else {
+                      Icon(tab.icon, contentDescription = tab.label)
+                    }
+                  },
                   label = { Text(tab.label) },
-                  selected = selectedTab == index,
+                  selected = isSelected,
                   onClick = {
-                    if (selectedTab == index) {
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    if (isSelected) {
                       _scrollToTopRequest.tryEmit(tab.id)
                     } else {
                       selectedTab = index
                     }
                   },
-                  colors = itemColors
+                  colors = itemColors,
                 )
               }
             }
           }
         }
-    ) { paddingValues ->
+    ) { _ ->
       Box(modifier = Modifier.fillMaxSize()) {
-        val fabBottomPadding = 80.dp
+        val fabBottomPadding = 64.dp
 
         AnimatedContent(
           targetState = selectedTab,
           transitionSpec = {
-            val slideDistance = with(density) { 48.dp.roundToPx() }
-            val animationDuration = 250
-            
-            if (targetState > initialState) {
-              (slideInHorizontally(
-                animationSpec = tween(
-                  durationMillis = animationDuration,
-                  easing = FastOutSlowInEasing
-                ),
-                initialOffsetX = { slideDistance }
-              ) + fadeIn(
-                animationSpec = tween(
-                  durationMillis = animationDuration,
-                  easing = FastOutSlowInEasing
-                )
-              )) togetherWith (slideOutHorizontally(
-                animationSpec = tween(
-                  durationMillis = animationDuration,
-                  easing = FastOutSlowInEasing
-                ),
-                targetOffsetX = { -slideDistance }
-              ) + fadeOut(
-                animationSpec = tween(
-                  durationMillis = animationDuration / 2,
-                  easing = FastOutSlowInEasing
-                )
-              ))
-            } else {
-              (slideInHorizontally(
-                animationSpec = tween(
-                  durationMillis = animationDuration,
-                  easing = FastOutSlowInEasing
-                ),
-                initialOffsetX = { -slideDistance }
-              ) + fadeIn(
-                animationSpec = tween(
-                  durationMillis = animationDuration,
-                  easing = FastOutSlowInEasing
-                )
-              )) togetherWith (slideOutHorizontally(
-                animationSpec = tween(
-                  durationMillis = animationDuration,
-                  easing = FastOutSlowInEasing
-                ),
-                targetOffsetX = { slideDistance }
-              ) + fadeOut(
-                animationSpec = tween(
-                  durationMillis = animationDuration / 2,
-                  easing = FastOutSlowInEasing
-                )
-              ))
+            val forward = targetState > initialState
+            val (enter, exit) = RexMotion.screenTransition(
+              context = context,
+              forward = forward,
+              style = motionPreset,
+            )
+            (enter togetherWith exit).apply {
+              targetContentZIndex = if (forward) 1f else -1f
             }
           },
           label = "tab_animation"
@@ -431,13 +515,16 @@ object MainScreen : Screen {
           val shortsIdx = visibleTabs.indexOfFirst { it.id == "shorts" }
           val isShortsTabActive = isShortsEnabled && shortsIdx != -1 && selectedTab == shortsIdx
           val isNavBarVisible = !hideNavigationBar && !isShortsTabActive && visibleTabs.size > 1
-          
-          val navBarHeight = if (isNavBarVisible) paddingValues.calculateBottomPadding().coerceAtLeast(80.dp) else 0.dp
-          val miniPlayerHeight = if (miniPlayerState.isPlaybackActive) 72.dp else 0.dp
-          val totalBottomPadding = navBarHeight + miniPlayerHeight
+          val navBarBottomInset = ShortNavigationBarDefaults.windowInsets.asPaddingValues().calculateBottomPadding()
+          // Docks the content sheet flush against the top edge of the navigation bar (64.dp bar
+          // height + device navigation bar inset). If the bottom bar is hidden, the content sheet
+          // still reserves the device inset so its rounded corners clear the 3-button bar.
+          val navBarHeight = if (isNavBarVisible) 64.dp + navBarBottomInset else navBarBottomInset
           
           CompositionLocalProvider(
-            LocalNavigationBarHeight provides totalBottomPadding
+            LocalNavigationBarHeight provides navBarHeight,
+            LocalBottomBarPresent provides isNavBarVisible,
+            LocalMiniPlayerActive provides miniPlayerState.isPlaybackActive,
           ) {
             if (targetTab in visibleTabs.indices) {
               visibleTabs[targetTab].content()
@@ -464,9 +551,16 @@ object MainScreen : Screen {
 // CompositionLocal for navigation bar height
 val LocalNavigationBarHeight = compositionLocalOf { 0.dp }
 
+// CompositionLocal for bottom navigation bar visibility
+val LocalBottomBarPresent = compositionLocalOf { false }
+
+// CompositionLocal for whether mini player playback is currently active
+val LocalMiniPlayerActive = compositionLocalOf { false }
+
 private data class VisibleTab(
   val id: String,
   val label: String,
   val icon: androidx.compose.ui.graphics.vector.ImageVector,
+  val rexIcon: xyz.mpv.rex.ui.icons.MaterialSymbolIcon? = null,
   val content: @Composable () -> Unit
 )

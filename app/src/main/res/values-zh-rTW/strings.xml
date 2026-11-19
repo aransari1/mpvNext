@@ -1,6 +1,4 @@
 <resources>
-    <string name="app_name" translatable="false">mpvNext</string>
-    <string name="author_name" translatable="false">Abdurrahman Ansari</string>
 
     <string name="generic_reset">重設</string>
     <string name="generic_share">分享</string>
@@ -20,9 +18,6 @@
     <string name="pref_appearance_darkmode_dark">深色</string>
     <string name="pref_appearance_amoled_mode_title">AMOLED 純黑模式</string>
     <string name="pref_appearance_amoled_mode_summary">在深色主題中使用純黑背景</string>
-    <string name="pref_appearance_material_you_title">Material You</string>
-    <string name="pref_appearance_material_you_summary">啟用動態色彩</string>
-    <string name="pref_appearance_material_you_summary_disabled">僅適用於 Android 12 及以上版本</string>
     <string name="pref_appearance_unlimited_name_lines_title">顯示完整名稱</string>
     <string name="pref_appearance_unlimited_name_lines_summary">顯示完整的資料夾和影片名稱，不進行截斷</string>
     <string name="pref_appearance_enable_bounce_animation_title">啟用回彈動畫</string>
@@ -36,8 +31,6 @@
     <string name="pref_appearance_use_system_font_title">使用系統字型</string>
     <string name="pref_appearance_use_system_font_summary">使用您裝置的預設字型，而非應用程式字型</string>
     <string name="pref_appearance_category_file_browser">檔案瀏覽器</string>
-    <string name="pref_appearance_show_hidden_files_title">顯示隱藏檔案</string>
-    <string name="pref_appearance_show_hidden_files_summary">顯示以點 (.) 開頭的隱藏資料夾，包括 android、data、系統資料夾和 .nomedia 檔案</string>
     <string name="pref_appearance_show_unplayed_old_video_label_title">顯示新未播放影片標籤</string>
     <string name="pref_appearance_show_unplayed_old_video_label_summary">在指定天數內新增且從未播放過的影片上顯示「新」標籤</string>
     <string name="pref_appearance_unplayed_old_video_days_title">新影片標籤的天數閾值</string>
@@ -45,15 +38,6 @@
     <string name="pref_appearance_category_thumbnails">縮圖</string>
     <string name="pref_appearance_show_network_thumbnails_title">顯示網路縮圖 (實驗性)</string>
     <string name="pref_appearance_show_network_thumbnails_summary">為網路串流產生縮圖 (可能會增加行動網路的數據使用量)</string>
-    <string name="pref_appearance_thumbnail_strategy_title">縮圖產生策略</string>
-    <string name="pref_appearance_thumbnail_strategy_summary">選擇從影片中擷取縮圖的方式</string>
-    <string name="pref_appearance_thumbnail_strategy_first_frame_title">首個影格</string>
-    <string name="pref_appearance_thumbnail_strategy_first_frame_summary">最快速的擷取方式。使用影片的 10 秒處。</string>
-    <string name="pref_appearance_thumbnail_strategy_position_title">指定位置影格</string>
-    <string name="pref_appearance_thumbnail_strategy_position_summary">需要較多處理。從影片較後方擷取影格，以避免空白標題畫面。</string>
-    <string name="pref_appearance_thumbnail_position_title">縮圖影格位置</string>
-    <string name="pref_appearance_thumbnail_position_summary">在影片總長的 %d%% 處擷取縮圖</string>
-    <string name="pref_appearance_thumbnail_position_reset">重設縮圖位置為預設值</string>
     <string name="pref_appearance_theme_picker_label">應用程式主題</string>
     <string name="pref_appearance_auto_scroll_title">自動捲動到上次播放</string>
     <string name="pref_appearance_auto_scroll_summary">開啟影片列表時自動捲動到上次播放的影片</string>
@@ -102,8 +86,6 @@
     <!-- Player Preferences Hardcoded -->
     <string name="pref_autoplay_title">啟用上一個/下一個導航</string>
     <string name="pref_autoplay_summary">為資料夾中的所有影片顯示下一個/上一個按鈕</string>
-    <string name="pref_autoplay_next_video_title">自動播放下一個影片</string>
-    <string name="pref_autoplay_next_video_summary">當前影片結束時自動播放下一個影片</string>
     <string name="pref_auto_pip_title">自動子母畫面</string>
     <string name="pref_auto_pip_summary">按下首頁或返回鍵時自動進入子母畫面模式</string>
     <string name="pref_dynamic_speed_overlay_title">動態速度疊加層</string>
@@ -131,14 +113,10 @@
 
     <string name="pref_layout_title">播放程式配置</string>
     <string name="pref_layout_summary">自訂播放程式按鈕配置</string>
-    <string name="pref_layout_reset_default">重設為預設值</string>
     <string name="pref_layout_top_right_controls">右上角控制項</string>
     <string name="pref_layout_bottom_right_controls">右下角控制項</string>
     <string name="pref_layout_bottom_left_controls">左下角控制項</string>
     <string name="pref_layout_portrait_bottom_controls">直向底部控制項</string>
-    <string name="pref_layout_preview">預覽</string>
-    <string name="pref_layout_reset_title">重設配置？</string>
-    <string name="pref_layout_reset_summary">所有自訂的播放程式控制配置將重設為預設位置</string>
 
     <string name="pref_player">播放程式</string>
     <string name="pref_player_summary">螢幕方向、手勢與控制</string>
@@ -153,7 +131,6 @@
     <string name="pref_player_orientation_landscape">橫向</string>
     <string name="pref_player_orientation_reverse_landscape">反向橫向</string>
     <string name="pref_player_orientation_sensor_landscape">感應器橫向</string>
-    <string name="pref_player_save_position_on_quit">結束時儲存位置</string>
     <string name="pref_player_double_tap_seek_duration">雙擊搜尋時間</string>
     <string name="pref_player_custom_skip_duration_title">自訂跳過時間</string>
     <string name="pref_player_custom_skip_duration_summary">自訂跳過按鈕的前進時間</string>
@@ -207,13 +184,16 @@
     <string name="pref_gesture_use_relative_seeking_title">使用相對搜尋</string>
     <string name="pref_gesture_use_relative_seeking_summary">相對於開始拖動的位置進行搜尋，而非手指的絕對位置。</string>
 
-    <string name="pref_gesture_double_tap_custom_info">您可以在 input.conf 中使用以下鍵碼將自訂動作綁定到這些手勢：\n\n左側：MBTN_LEFT_DBL\n中間：MBTN_MID_DBL\n右側：MBTN_RIGHT_DBL</string>
+    <string name="pref_gesture_double_tap_custom_info">您可以在 input.conf 中使用以下鍵碼將自訂動作綁定到這些手勢：</string>
+    <string name="pref_gesture_double_tap_left">左側</string>
+    <string name="pref_gesture_double_tap_center">中間</string>
+    <string name="pref_gesture_double_tap_right">右側</string>
 
     <string name="pref_gesture_media_title">媒體控制</string>
     <string name="pref_gesture_media_previous">上一個</string>
     <string name="pref_gesture_media_play">播放/暫停</string>
     <string name="pref_gesture_media_next">下一個</string>
-    <string name="pref_gesture_media_custom_info">您可以在 input.conf 中使用以下鍵碼將自訂動作綁定到媒體控制：\n\n上一個：PREV\n播放/暫停：PLAYPAUSE\n下一個：NEXT</string>
+    <string name="pref_gesture_media_custom_info">您可以在 input.conf 中使用以下鍵碼將自訂動作綁定到媒體控制：</string>
 
     <string name="pref_gesture_view_title">檢視</string>
     <string name="pref_gesture_tap_thumbnail_to_select_title">點擊縮圖進行選擇</string>
@@ -424,7 +404,6 @@
 
 
 
-    <string name="github_repo_url" translatable="false">https://github.com/aransari1/mpvNext</string>
     <string name="swap_the_volume_and_brightness_slider">交換音量和亮度滑動條</string>
     <string name="pref_player_display_reduce_player_animation">減少播放程式動畫</string>
     <string name="pref_player_display_hide_player_control_time">隱藏播放控制時間</string>
@@ -548,10 +527,7 @@
     <string name="export_complete">匯出完成</string>
     <string name="import_complete">匯入完成</string>
     <string name="auto_picture_in_picture">自動子母畫面</string>
-    <string name="dynamic_speed_overlay">動態速度疊加層</string>
     <string name="show_navigation_bar_with_controls">隨控制項顯示導覽列</string>
-    <string name="enable_lua_scripts">啟用 Lua 指令碼</string>
-    <string name="manage_lua_scripts">管理 Lua 指令碼</string>
     <string name="rename_playlist">重新命名播放清單</string>
     <string name="create_playlist">建立播放清單</string>
     <string name="add_connection">新增連線</string>
@@ -585,7 +561,6 @@
     <string name="filter_presets">過濾器預設</string>
     <string name="no_storage_devices_found">找不到儲存裝置</string>
     <string name="no_folders_or_supported_files">無資料夾或支援的檔案</string>
-    <string name="hello_world">你好世界</string>
 
     <!-- Browser Preferences -->
     <string name="pref_show_audio_files_title">顯示音訊檔案</string>

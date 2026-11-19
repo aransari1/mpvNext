@@ -12,6 +12,7 @@ import androidx.compose.ui.Modifier
 import xyz.mpv.rex.R
 import xyz.mpv.rex.preferences.preference.PreferenceStore
 import xyz.mpv.rex.preferences.preference.getEnum
+import xyz.mpv.rex.presentation.MotionStyle
 import xyz.mpv.rex.ui.theme.AppTheme
 import xyz.mpv.rex.ui.theme.DarkMode
 import xyz.mpv.rex.ui.theme.spacing
@@ -22,6 +23,9 @@ class AppearancePreferences(
 ) {
   val darkMode = preferenceStore.getEnum("dark_mode", DarkMode.System)
   val appTheme = preferenceStore.getEnum("app_theme", AppTheme.Default)
+  val navigationMotionStyle = preferenceStore.getEnum("navigation_motion_style", MotionStyle.ExpressiveParallax)
+  val themePreset = preferenceStore.getString("theme_preset", "Default")
+  val settingsBadgeShape = preferenceStore.getString("settings_badge_shape", "SQUIRCLE")
   val appLanguage = preferenceStore.getString("app_language", "")
   val onboardingCompleted = preferenceStore.getBoolean("onboarding_completed", false)
   val materialYou = preferenceStore.getBoolean("material_you", true)
@@ -30,6 +34,7 @@ class AppearancePreferences(
   val useSystemFont = preferenceStore.getBoolean("use_system_font", false)
   val unlimitedNameLines = preferenceStore.getBoolean("unlimited_name_lines", false)
   val hidePlayerButtonsBackground = preferenceStore.getBoolean("hide_player_buttons_background", false)
+  val showNextPreviousButtons = preferenceStore.getBoolean("show_next_previous_buttons", true)
   val enableGlassPlayerControls = preferenceStore.getBoolean("enable_glass_player_controls", false)
   val enableGlassSeekbarBackground = preferenceStore.getBoolean("enable_glass_seekbar_background", false)
   val enableBounceAnimation = preferenceStore.getBoolean("enable_bounce_animation", false)
@@ -39,11 +44,15 @@ class AppearancePreferences(
   val communityAlreadyJoinedTimestamp = preferenceStore.getLong("community_already_joined_timestamp", 0L)
 
   val showHiddenFiles = preferenceStore.getBoolean("show_hidden_files", false)
+  val customProfileName = preferenceStore.getString("custom_profile_name", "")
+  val customProfileImagePath = preferenceStore.getString("custom_profile_image_path", "")
   val showUnplayedOldVideoLabel = preferenceStore.getBoolean("show_unplayed_old_video_label", true)
   val unplayedOldVideoDays = preferenceStore.getInt("unplayed_old_video_days", 7)
+
   val showNetworkThumbnails = preferenceStore.getBoolean("show_network_thumbnails", false)
   val seekbarStyle = preferenceStore.getEnum("seekbar_style", SeekbarStyle.Standard)
   val playerAlwaysDarkMode = preferenceStore.getBoolean("player_always_dark_mode", true)
+  val hidePlayFabShowInHeader = preferenceStore.getBoolean("hide_play_fab_show_in_header", false)
 
   val thumbnailStrategy = preferenceStore.getEnum("thumbnail_strategy", ThumbnailStrategy.FirstFrame)
   val thumbnailPositionPercent = preferenceStore.getInt("thumbnail_position_percent", THUMBNAIL_POSITION_DEFAULT)
@@ -61,7 +70,7 @@ class AppearancePreferences(
   val topRightControls =
     preferenceStore.getString(
       "top_right_controls",
-      "CURRENT_CHAPTER,DECODER,AUDIO_TRACK,SUBTITLES,MORE_OPTIONS",
+      "VIDEO_QUALITY,CURRENT_CHAPTER,DECODER,AUDIO_TRACK,SUBTITLES,MORE_OPTIONS",
     )
 
   val bottomRightControls =
@@ -79,13 +88,13 @@ class AppearancePreferences(
   val portraitBottomControls =
     preferenceStore.getString(
       "portrait_bottom_controls",
-      "DECODER,AUDIO_TRACK,SUBTITLES,PLAYBACK_SPEED,REPEAT_MODE,SHUFFLE,SCREEN_ROTATION,LOCK_CONTROLS,BACKGROUND_PLAYBACK,PICTURE_IN_PICTURE,ASPECT_RATIO,MORE_OPTIONS",
+      "VIDEO_QUALITY,DECODER,AUDIO_TRACK,SUBTITLES,PLAYBACK_SPEED,REPEAT_MODE,SHUFFLE,SCREEN_ROTATION,LOCK_CONTROLS,BACKGROUND_PLAYBACK,PICTURE_IN_PICTURE,ASPECT_RATIO",
     )
 
   val moreSheetControls =
     preferenceStore.getString(
       "more_sheet_controls",
-      "SCREEN_ROTATION,DECODER,AUDIO_TRACK,SUBTITLES,PLAYBACK_SPEED,REPEAT_MODE,SHUFFLE,VIDEO_ZOOM,FRAME_NAVIGATION,ASPECT_RATIO,PICTURE_IN_PICTURE,LOCK_CONTROLS,SLEEP_TIMER",
+      "VIDEO_QUALITY,SCREEN_ROTATION,DECODER,AUDIO_TRACK,SUBTITLES,PLAYBACK_SPEED,REPEAT_MODE,SHUFFLE,VIDEO_ZOOM,FRAME_NAVIGATION,ASPECT_RATIO,PICTURE_IN_PICTURE,LOCK_CONTROLS,SLEEP_TIMER",
     )
 
   fun parseButtons(

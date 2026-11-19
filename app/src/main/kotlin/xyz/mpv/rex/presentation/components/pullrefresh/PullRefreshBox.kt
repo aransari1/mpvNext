@@ -1,34 +1,40 @@
 package xyz.mpv.rex.presentation.components.pullrefresh
 
-import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.LoadingIndicator
-import androidx.compose.material3.MaterialShapes
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.TopAppBarState
 import androidx.compose.material3.pulltorefresh.pullToRefresh
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -37,16 +43,25 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
- * A reusable Box that wraps content with pull-to-refresh functionality.
+ * A reusable Box that wraps content with classic pull-to-refresh: the content
+ * stays fixed in place and only the refresh indicator moves, dropping in from
+ * the top edge.
+ *
+ * Header priority: when [headerScrollState] is supplied, header expansion is
+ * prioritized over pull-to-refresh. If the header is collapsed (or partially
+ * collapsed) when a gesture begins, pull-to-refresh is disabled for the duration
+ * of that gesture. Downward drags expand the header without showing the refresh
+ * indicator. Only once the header is already fully expanded at the start of a
+ * subsequent downward gesture can pull-to-refresh trigger.
  *
  * @param isRefreshing Tracks refresh state.
  * @param onRefresh Invoked when refresh is triggered.
  * @param modifier Box modifier.
  * @param enabled Toggles pull-to-refresh.
- * @param listState Unused. Reserved for top-scroll checks.
- * @param refreshingOffset Unused. Reserved for offset customization.
- * @param refreshThreshold Pull distance required to trigger refresh.
- * @param delayAfterRefresh Delay (ms) to keep indicator visible after completion.
+ * @param refreshThreshold Pull distance at which a refresh triggers.
+ * @param delayAfterRefresh Delay (ms) to keep the indicator visible after completion.
+ * @param headerScrollState Collapsible header above this box. When non-null the
+ *   header must be expanded before a pull can refresh.
  * @param content Content displayed inside the Box.
  */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
@@ -56,101 +71,100 @@ fun PullRefreshBox(
   onRefresh: suspend () -> Unit,
   modifier: Modifier = Modifier,
   enabled: Boolean = true,
-  @Suppress("UNUSED_PARAMETER") listState: LazyListState? = null,
-  @Suppress("UNUSED_PARAMETER") refreshingOffset: Dp = 80.dp,
   refreshThreshold: Dp = 80.dp,
   delayAfterRefresh: Long = 800L,
+  headerScrollState: TopAppBarState? = null,
   content: @Composable BoxScope.() -> Unit,
 ) {
   val coroutineScope = rememberCoroutineScope()
   val state = rememberPullToRefreshState()
   val density = LocalDensity.current
 
-  // Max pixel offset the content is pushed down.
-  val maxTranslationPx = with(density) { refreshThreshold.toPx() }
-
   // Tracks active refresh to cancel previous jobs on rapid pulls.
   val activeJob = remember { mutableStateOf<Job?>(null) }
 
-  // Target translation: hold at max if refreshing, otherwise track drag distance.
+  // Sample header state at the beginning of each touch gesture.
+  // If the header is collapsed (heightOffset < -1f) when the gesture starts,
+  // this gesture will expand the header and NOT trigger pull-to-refresh.
+  // Pull-to-refresh will only be allowed on the next gesture once the header is fully expanded.
+  var gestureAllowsRefresh by remember {
+    mutableStateOf(headerScrollState == null || headerScrollState.heightOffset >= -1f)
+  }
+
+  val pointerModifier = if (headerScrollState == null) {
+    Modifier
+  } else {
+    Modifier.pointerInput(headerScrollState) {
+      awaitEachGesture {
+        awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+        gestureAllowsRefresh = headerScrollState.heightOffset >= -1f
+        waitForUpOrCancellation()
+        gestureAllowsRefresh = headerScrollState.heightOffset >= -1f
+      }
+    }
+  }
+
+  val isHeaderExpanded by remember(headerScrollState) {
+    derivedStateOf {
+      headerScrollState == null || headerScrollState.heightOffset >= -1f
+    }
+  }
+
+  val pullRefreshEnabled = enabled && gestureAllowsRefresh && isHeaderExpanded
+
+  // Max pixel offset the indicator travels down.
+  val maxTranslationPx = with(density) { refreshThreshold.toPx() }
+
   val targetTranslationY = if (isRefreshing.value) {
     maxTranslationPx
   } else {
     (state.distanceFraction * maxTranslationPx).coerceAtLeast(0f)
   }
 
-  // Spring animation for content snap/bounce.
   val animatedTranslationY by animateFloatAsState(
     targetValue = targetTranslationY,
-    animationSpec = spring(
-      dampingRatio = Spring.DampingRatioMediumBouncy,
-      stiffness = Spring.StiffnessMediumLow,
-    ),
-    label = "content_translationY",
+    animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing),
+    label = "refresh_indicator_translationY",
   )
 
-  // Indicator scale/alpha: 0 at rest, 1 at threshold/refreshing.
-  val indicatorScale by animateFloatAsState(
-    targetValue = if (isRefreshing.value) 1f else state.distanceFraction.coerceIn(0f, 1f),
-    animationSpec = spring(
-      dampingRatio = Spring.DampingRatioLowBouncy,
-      stiffness = Spring.StiffnessMedium,
-    ),
-    label = "indicator_scale",
-  )
-
-  // Morphing polygon sequence for indeterminate state.
-  val expressivePolygons = remember {
-    listOf(
-      MaterialShapes.Cookie4Sided,
-      MaterialShapes.SoftBurst,
-      MaterialShapes.Oval,
-    )
-  }
-
-  // Cached indicator size.
   val indicatorSize = 56.dp
   val indicatorSizePx = remember(density) { with(density) { indicatorSize.toPx() } }
 
   Box(
-    modifier = modifier.pullToRefresh(
-      isRefreshing = isRefreshing.value,
-      state = state,
-      enabled = enabled,
-      onRefresh = {
-        activeJob.value?.cancel()
-        isRefreshing.value = true
-        activeJob.value = coroutineScope.launch {
-          try {
-            onRefresh()
-            delay(delayAfterRefresh)
-          } finally {
-            isRefreshing.value = false
+    modifier = modifier
+      .clipToBounds()
+      .then(pointerModifier)
+      .pullToRefresh(
+        isRefreshing = isRefreshing.value,
+        state = state,
+        enabled = pullRefreshEnabled,
+        threshold = refreshThreshold,
+        onRefresh = {
+          activeJob.value?.cancel()
+          isRefreshing.value = true
+          activeJob.value = coroutineScope.launch {
+            try {
+              onRefresh()
+              delay(delayAfterRefresh)
+            } finally {
+              isRefreshing.value = false
+            }
           }
-        }
-      },
-    ),
+        },
+      ),
   ) {
-    // LAYER 1: Content (moves down during drag/refresh)
-    Box(
-      modifier = Modifier
-        .matchParentSize()
-        .graphicsLayer { translationY = animatedTranslationY },
-    ) {
+    // LAYER 1: Content, static. Never translated.
+    Box(modifier = Modifier.matchParentSize()) {
       content()
     }
 
-    // LAYER 2: Floating indicator (centered in the gap above content)
+    // LAYER 2: Refresh indicator, fixed size, sliding down from the top edge.
     Box(
       modifier = Modifier
         .align(Alignment.TopCenter)
         .graphicsLayer {
-          translationY = (animatedTranslationY / 2f) - (indicatorSizePx / 2f)
-          scaleX = indicatorScale
-          scaleY = indicatorScale
-          alpha = indicatorScale
+          translationY = animatedTranslationY - indicatorSizePx
         }
-        .shadow(elevation = 4.dp, shape = CircleShape, clip = false)
         .size(indicatorSize)
         .clip(CircleShape)
         .background(MaterialTheme.colorScheme.surfaceContainerHigh)
@@ -158,16 +172,12 @@ fun PullRefreshBox(
       contentAlignment = Alignment.Center,
     ) {
       if (isRefreshing.value) {
-        // Indeterminate
         LoadingIndicator(
-          polygons = expressivePolygons,
           modifier = Modifier.fillMaxSize(),
         )
       } else {
-        // Determinate
         LoadingIndicator(
           progress = { state.distanceFraction.coerceIn(0f, 1f) },
-          polygons = expressivePolygons,
           modifier = Modifier.fillMaxSize(),
         )
       }

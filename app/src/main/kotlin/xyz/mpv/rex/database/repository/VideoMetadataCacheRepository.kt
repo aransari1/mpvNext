@@ -5,11 +5,15 @@ import android.net.Uri
 import android.util.Log
 import xyz.mpv.rex.database.dao.VideoMetadataDao
 import xyz.mpv.rex.database.entities.VideoMetadataEntity
+import xyz.mpv.rex.domain.media.model.Video
 import xyz.mpv.rex.utils.media.MediaInfoOps
+import xyz.mpv.rex.utils.media.MediaInfoOps.VideoMetadata
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.withContext
@@ -28,6 +32,146 @@ class VideoMetadataCacheRepository(
     private const val TAG = "VideoMetadataCache"
     private const val PARALLEL_PROCESSING_LIMIT = 16 // Process 16 videos simultaneously for faster extraction
     private const val CACHE_VALIDITY_DAYS = 30L
+    private const val RETRIEVER_SAFE_WIDTH = 4096
+  }
+
+  /**
+   * Extracts a single metadata row using MediaInfo, never throwing.
+   * Shared by the batch path and [walkMetadata] so both write identical cache rows.
+   */
+  private suspend fun extractAndCache(
+    file: File,
+    uri: Uri,
+    displayName: String,
+  ): MediaInfoOps.VideoMetadata? {
+    val result = MediaInfoOps.extractBasicMetadata(context, uri, displayName)
+    result.onSuccess { metadata ->
+      dao.insertMetadata(
+        VideoMetadataEntity(
+          path = file.absolutePath,
+          size = file.length(),
+          dateModified = file.lastModified() / 1000,
+          duration = metadata.durationMs,
+          width = metadata.width,
+          height = metadata.height,
+          rotation = metadata.rotation,
+          fps = metadata.fps,
+          hasEmbeddedSubtitles = metadata.hasEmbeddedSubtitles,
+          subtitleCodec = metadata.subtitleCodec,
+          artist = metadata.artist,
+          album = metadata.album,
+          lastScanned = System.currentTimeMillis(),
+        ),
+      )
+    }.onFailure { error ->
+      Log.w(TAG, "Failed to extract metadata for $displayName: ${error.message}")
+    }
+    return result.getOrNull()
+  }
+
+  /**
+   * Walks [files] in priority order, invoking [onResult] with the best metadata
+   * available for each file as soon as it is known.
+   *
+   * Cache lookups and MediaInfo extraction are both batched, but unlike
+   * [getOrExtractMetadataBatch] the caller receives results incrementally instead of
+   * waiting for the entire list. Cached entries in a batch are reported before the
+   * uncached files of that batch are probed, so a warm cache streams out immediately.
+   */
+  suspend fun walkMetadata(
+    files: List<Triple<File, Uri, String>>,
+    onResult: (path: String, metadata: VideoMetadata) -> Unit,
+  ) = withContext(Dispatchers.IO) {
+    if (files.isEmpty()) return@withContext
+
+    files.chunked(PARALLEL_PROCESSING_LIMIT).forEach { chunk ->
+      currentCoroutineContext().ensureActive()
+
+      // Batch cache lookup for this chunk only.
+      val cachedByPath = dao.getMetadataBatch(chunk.map { it.first.absolutePath })
+        .associateBy { it.path }
+
+      val pending = mutableListOf<Triple<File, Uri, String>>()
+      for ((file, uri, displayName) in chunk) {
+        val cached = cachedByPath[file.absolutePath]
+        if (cached != null &&
+          cached.dateModified == file.lastModified() / 1000 &&
+          cached.size == file.length()
+        ) {
+          onResult(
+            cached.path,
+            VideoMetadata(
+              sizeBytes = cached.size,
+              durationMs = cached.duration,
+              width = cached.width,
+              height = cached.height,
+              rotation = cached.rotation,
+              fps = cached.fps,
+              hasEmbeddedSubtitles = cached.hasEmbeddedSubtitles,
+              subtitleCodec = cached.subtitleCodec,
+              artist = cached.artist,
+              album = cached.album,
+            ),
+          )
+        } else {
+          pending.add(Triple(file, uri, displayName))
+        }
+      }
+
+      if (pending.isEmpty()) return@forEach
+
+      coroutineScope {
+        pending.map { (file, uri, displayName) ->
+          async { file.absolutePath to extractAndCache(file, uri, displayName) }
+        }.awaitAll().forEach { (path, metadata) ->
+          if (metadata != null) onResult(path, metadata)
+        }
+      }
+    }
+  }
+
+  /**
+   * Cheap, container-probing-free resolution lookup used to pre-filter candidates
+   * (e.g. Shorts orientation) before paying for a MediaInfo extraction.
+   *
+   * Resolution sources, in order: MediaStore columns already present on [Video],
+   * then MediaMetadataRetriever, which is significantly faster than MediaInfo on
+   * low-end devices and does not need a detached file descriptor.
+   * Returns null when no source could determine a landscape/portrait orientation.
+   */
+  suspend fun probeResolution(video: Video): Pair<Int, Int>? =
+    withContext(Dispatchers.IO) {
+      val fromStore = resolveOrientation(video.width, video.height, video.rotation)
+      if (fromStore != null) return@withContext fromStore
+
+      val retriever = android.media.MediaMetadataRetriever()
+      try {
+        retriever.setDataSource(video.path)
+        val w = retriever
+          .extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)
+          ?.toIntOrNull() ?: 0
+        val h = retriever
+          .extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)
+          ?.toIntOrNull() ?: 0
+        val rotation = retriever
+          .extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)
+          ?.toIntOrNull() ?: video.rotation
+        resolveOrientation(w, h, rotation)
+      } catch (e: Exception) {
+        Log.d(TAG, "Resolution probe failed for ${video.displayName}: ${e.message}")
+        null
+      } finally {
+        runCatching { retriever.release() }
+      }
+    }
+
+  /** Applies display rotation, then reports whether the frame is portrait. */
+  private fun resolveOrientation(width: Int, height: Int, rotation: Int): Pair<Int, Int>? {
+    if (width <= 0 || height <= 0 || width > RETRIEVER_SAFE_WIDTH || height > RETRIEVER_SAFE_WIDTH) {
+      return null
+    }
+    // 90 / 270 degree rotations swap the displayed axes.
+    return if (rotation % 180 == 0) width to height else height to width
   }
 
   /**

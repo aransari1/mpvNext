@@ -2,7 +2,9 @@ package xyz.mpv.rex.ui.browser.dialogs
 
 import android.widget.Toast
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -14,7 +16,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.PlaylistPlay
 import androidx.compose.material.icons.automirrored.outlined.PlaylistAdd
@@ -24,8 +25,11 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -48,12 +52,14 @@ import androidx.compose.ui.unit.dp
 import xyz.mpv.rex.database.entities.PlaylistEntity
 import xyz.mpv.rex.database.repository.PlaylistRepository
 import xyz.mpv.rex.domain.media.model.Video
+import xyz.mpv.rex.ui.browser.states.EmptyState
 import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AddToPlaylistDialog(
   isOpen: Boolean,
@@ -98,16 +104,23 @@ fun AddToPlaylistDialog(
     return
   }
 
-  AlertDialog(
+  ModalBottomSheet(
     onDismissRequest = onDismiss,
-    title = {
+    sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+    modifier = modifier,
+    dragHandle = { AddToPlaylistDragHandle() },
+  ) {
+    Column(
+      modifier = Modifier
+        .fillMaxWidth()
+        .padding(start = 24.dp, end = 24.dp, bottom = 24.dp),
+      verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
       Text(
         text = stringResource(R.string.add_to_playlist),
-        style = MaterialTheme.typography.headlineMedium,
+        style = MaterialTheme.typography.titleLarge,
         fontWeight = FontWeight.Bold,
       )
-    },
-    text = {
       Column(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -177,37 +190,62 @@ fun AddToPlaylistDialog(
             }
           }
         } else {
-          // Empty state
-          EmptyPlaylistsMessage()
+          // Empty state. EmptyState fills its parent and leaves 64.dp for the bottom navigation
+          // bar, so it needs a bounded box here: the sheet's content column is unconstrained.
+          Box(
+            modifier = Modifier
+              .fillMaxWidth()
+              .height(220.dp),
+          ) {
+            EmptyState(
+              icon = Icons.AutoMirrored.Outlined.PlaylistAdd,
+              title = stringResource(R.string.no_playlists_yet),
+              message = stringResource(R.string.create_first_playlist_above),
+            )
+          }
         }
       }
-    },
-    confirmButton = {
-      Button(
-        onClick = {
-          onSuccess()
-          onDismiss()
-        },
-        colors = ButtonDefaults.buttonColors(
-          containerColor = MaterialTheme.colorScheme.primary,
+
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+        verticalAlignment = Alignment.CenterVertically,
+      ) {
+        TextButton(
+          onClick = onDismiss,
+          shape = MaterialTheme.shapes.extraLarge,
+        ) {
+          Text(stringResource(R.string.generic_cancel), fontWeight = FontWeight.Medium)
+        }
+        Button(
+          onClick = {
+            onSuccess()
+            onDismiss()
+          },
+          colors = ButtonDefaults.buttonColors(
+            containerColor = MaterialTheme.colorScheme.primary,
+          ),
+          shape = MaterialTheme.shapes.extraLarge,
+        ) {
+          Text(stringResource(R.string.done), fontWeight = FontWeight.Bold)
+        }
+      }
+    }
+  }
+}
+
+/** Drag handle matching the one the other browser sheets draw. */
+@Composable
+private fun AddToPlaylistDragHandle() {
+  Box(
+    modifier =
+      Modifier
+        .padding(vertical = 12.dp)
+        .size(width = 32.dp, height = 4.dp)
+        .background(
+          color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+          shape = MaterialTheme.shapes.extraLarge,
         ),
-        shape = MaterialTheme.shapes.extraLarge,
-      ) {
-        Text(stringResource(R.string.done), fontWeight = FontWeight.Bold)
-      }
-    },
-    dismissButton = {
-      TextButton(
-        onClick = onDismiss,
-        shape = MaterialTheme.shapes.extraLarge,
-      ) {
-        Text(stringResource(R.string.generic_cancel), fontWeight = FontWeight.Medium)
-      }
-    },
-    containerColor = MaterialTheme.colorScheme.surface,
-    tonalElevation = 6.dp,
-    shape = MaterialTheme.shapes.extraLarge,
-    modifier = modifier,
   )
 }
 
@@ -223,7 +261,7 @@ private fun PlaylistItemCard(
     modifier = Modifier
       .fillMaxWidth()
       .clickable(onClick = onClick),
-    shape = RoundedCornerShape(12.dp),
+    shape = MaterialTheme.shapes.large,
     colors = CardDefaults.cardColors(
       containerColor = MaterialTheme.colorScheme.surfaceVariant,
     ),
@@ -258,43 +296,6 @@ private fun PlaylistItemCard(
           color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
       }
-    }
-  }
-}
-
-@Composable
-private fun EmptyPlaylistsMessage() {
-  Card(
-    modifier = Modifier.fillMaxWidth(),
-    shape = RoundedCornerShape(12.dp),
-    colors = CardDefaults.cardColors(
-      containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-    ),
-  ) {
-    Column(
-      modifier = Modifier
-        .fillMaxWidth()
-        .padding(24.dp),
-      horizontalAlignment = Alignment.CenterHorizontally,
-      verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-      Icon(
-        imageVector = Icons.AutoMirrored.Outlined.PlaylistAdd,
-        contentDescription = null,
-        modifier = Modifier.size(48.dp),
-        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-      )
-      Text(
-        text = stringResource(R.string.no_playlists_yet),
-        style = MaterialTheme.typography.titleMedium,
-        fontWeight = FontWeight.Bold,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-      )
-      Text(
-        text = stringResource(R.string.create_first_playlist_above),
-        style = MaterialTheme.typography.bodyMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-      )
     }
   }
 }

@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="utf-8"?>
+<animated-vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:drawable="@drawable/ic_splash_logo">
+
+    <target android:name="path_1">
+        <aapt:attr name="android:animation">
+            <set android:ordering="sequentially">
+                <objectAnimator
+                    android:propertyName="trimPathEnd"
+                    android:valueFrom="0"
+                    android:valueTo="0"
+                    android:valueType="floatType"
+                    android:duration="250" />
+                <objectAnimator
+                    android:propertyName="trimPathEnd"
+                    android:valueFrom="0"
+                    android:valueTo="1"
+                    android:valueType="floatType"
+                    android:duration="400"
+                    android:interpolator="@android:interpolator/decelerate_cubic" />
+            </set>
+        </aapt:attr>
+    </target>
+
+    <target android:name="crown_path">
+        <aapt:attr name="android:animation">
+            <set android:ordering="together">
+                <objectAnimator
+                    android:propertyName="trimPathEnd"
+                    android:valueFrom="0"
+                    android:valueTo="0"
+                    android:valueType="floatType"
+                    android:duration="250" />
+                <objectAnimator
+                    android:propertyName="trimPathEnd"
+                    android:valueFrom="0"
+                    android:valueTo="1"
+                    android:valueType="floatType"
+                    android:startOffset="250"
+                    android:duration="400"
+                    android:interpolator="@android:interpolator/decelerate_cubic" />
+                <set android:ordering="sequentially">
+                    <objectAnimator
+                        android:propertyName="fillColor"
+                        android:valueFrom="@color/splash_screen_background"
+                        android:valueTo="@color/splash_screen_background"
+                        android:valueType="colorType"
+                        android:duration="650" />
+                    <objectAnimator
+                        android:propertyName="fillColor"
+                        android:valueFrom="@color/splash_screen_background"
+                        android:valueTo="#F4C542"
+                        android:valueType="colorType"
+                        android:duration="150" />
+                </set>
+            </set>
+        </aapt:attr>
+    </target>
+</animated-vector>

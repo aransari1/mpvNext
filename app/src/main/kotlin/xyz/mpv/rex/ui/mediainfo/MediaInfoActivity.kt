@@ -34,7 +34,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -64,6 +63,7 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import xyz.mpv.rex.preferences.AppearancePreferences
+import xyz.mpv.rex.presentation.components.CollapsibleHeaderScreen
 import xyz.mpv.rex.preferences.preference.collectAsState
 import xyz.mpv.rex.ui.theme.DarkMode
 import xyz.mpv.rex.ui.theme.MpvexTheme
@@ -73,6 +73,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.koin.android.ext.android.inject
 import java.io.File
+import xyz.mpv.rex.ui.controls.TonalIconTone
+import xyz.mpv.rex.ui.controls.tonalIconButtonColors
 
 class MediaInfoActivity : ComponentActivity() {
   private val appearancePreferences by inject<AppearancePreferences>()
@@ -197,82 +199,49 @@ class MediaInfoActivity : ComponentActivity() {
       }
     }
 
-    Scaffold(
-      topBar = {
-        TopAppBar(
-          title = {
-            Column {
-              Text(
-                text = stringResource(xyz.mpv.rex.R.string.media_info_title),
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold,
-              )
-              Text(
-                text = fileName,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-              )
-            }
-          },
-          navigationIcon = {
-            IconButton(onClick = onBack) {
-              Icon(Icons.AutoMirrored.Default.ArrowBack, contentDescription = stringResource(xyz.mpv.rex.R.string.media_info_back))
-            }
-          },
-          actions = {
-            if (!isLoading && error == null && textContent != null) {
-              Row(modifier = Modifier.padding(end = 12.dp)) {
-                FilledTonalIconButton(
-                  onClick = {
-                    scope.launch {
-                      copyToClipboard(textContent!!, fileName)
-                    }
-                  },
-                  colors = IconButtonDefaults.filledTonalIconButtonColors(
-                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
-                  ),
-                ) {
-                  Icon(
-                    imageVector = Icons.Filled.ContentCopy,
-                    contentDescription = stringResource(xyz.mpv.rex.R.string.media_info_copy),
-                  )
+    CollapsibleHeaderScreen(
+      title = stringResource(xyz.mpv.rex.R.string.media_info_title),
+      subtitle = fileName,
+      showBackButton = true,
+      onBackClick = onBack,
+      actions = {
+        if (!isLoading && error == null && textContent != null) {
+          Row(modifier = Modifier.padding(end = 12.dp)) {
+            FilledTonalIconButton(
+              onClick = {
+                scope.launch {
+                  copyToClipboard(textContent!!, fileName)
                 }
-
-                Spacer(modifier = Modifier.width(8.dp))
-
-                FilledTonalIconButton(
-                  onClick = {
-                    scope.launch {
-                      shareMediaInfo(textContent!!, fileName, fileUri)
-                    }
-                  },
-                  colors = IconButtonDefaults.filledTonalIconButtonColors(
-                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
-                  ),
-                ) {
-                  Icon(
-                    imageVector = Icons.Filled.Share,
-                    contentDescription = stringResource(xyz.mpv.rex.R.string.media_info_share),
-                  )
-                }
-              }
+              },
+              colors = tonalIconButtonColors(TonalIconTone.Secondary),
+            ) {
+              Icon(
+                imageVector = Icons.Filled.ContentCopy,
+                contentDescription = stringResource(xyz.mpv.rex.R.string.media_info_copy),
+              )
             }
-          },
-          colors = TopAppBarDefaults.topAppBarColors(
-            containerColor = MaterialTheme.colorScheme.surface,
-            titleContentColor = MaterialTheme.colorScheme.onSurface,
-          ),
-        )
+
+            Spacer(modifier = Modifier.width(8.dp))
+
+            FilledTonalIconButton(
+              onClick = {
+                scope.launch {
+                  shareMediaInfo(textContent!!, fileName, fileUri)
+                }
+              },
+              colors = tonalIconButtonColors(TonalIconTone.Secondary),
+            ) {
+              Icon(
+                imageVector = Icons.Filled.Share,
+                contentDescription = stringResource(xyz.mpv.rex.R.string.media_info_share),
+              )
+            }
+          }
+        }
       },
-    ) { padding ->
+    ) { contentModifier ->
       Box(
-        modifier = Modifier
-          .fillMaxSize()
-          .padding(padding),
+        modifier = contentModifier.fillMaxSize(),
       ) {
         when {
           isLoading -> LoadingContent()
@@ -347,11 +316,12 @@ class MediaInfoActivity : ComponentActivity() {
 
     // Parse the text output into sections
     val sections = parseMediaInfoText(fullMediaInfoText)
+    val scrollState = rememberScrollState()
 
     Column(
       modifier = Modifier
         .fillMaxSize()
-        .verticalScroll(rememberScrollState())
+        .verticalScroll(scrollState)
         .padding(16.dp),
       verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {

@@ -6,9 +6,11 @@ import xyz.mpv.rex.domain.browser.PathComponent
 import xyz.mpv.rex.domain.media.model.Video
 import xyz.mpv.rex.domain.media.model.VideoFolder
 import xyz.mpv.rex.utils.storage.CoreMediaScanner
+import xyz.mpv.rex.utils.storage.FileFilterUtils
 import xyz.mpv.rex.utils.storage.VideoScanUtils
 import xyz.mpv.rex.utils.storage.FileSystemOps
 import xyz.mpv.rex.utils.storage.MediaScanPolicy
+import xyz.mpv.rex.utils.storage.isPathExcluded
 import xyz.mpv.rex.utils.media.MediaMetadataOps
 import xyz.mpv.rex.domain.playbackstate.repository.PlaybackStateRepository
 import xyz.mpv.rex.database.repository.HybridMediaIndexRepository
@@ -16,6 +18,8 @@ import xyz.mpv.rex.preferences.AppearancePreferences
 import xyz.mpv.rex.preferences.BrowserPreferences
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import org.koin.core.context.GlobalContext
 import java.io.File
@@ -55,17 +59,58 @@ object MediaFileRepository {
       }.getOrNull()?.takeIf { it.access == VideoScanUtils.FolderAccess.READABLE }?.videos.orEmpty()
       val indexed = koin.get<HybridMediaIndexRepository>().getVideosInFolder(bucketId)
       koin.get<HybridMediaIndexRepository>().enrichFolderMetadata(bucketId)
-      (direct + indexed)
-        .associateBy { video -> video.path.ifBlank { video.uri.toString() } }
-        .values
-        .sortedBy { it.displayName.lowercase() }
+      mergeFolderVideos(direct, indexed)
     }
+
+  /**
+   * Merges direct filesystem/MediaStore results with the persistent index.
+   *
+   * The direct scan may contain derived, non-persisted metadata such as matching
+   * same-folder external subtitle formats. The persistent index does not currently
+   * store that field, so blindly using associateBy(direct + indexed) lets the indexed
+   * copy overwrite the richer direct copy and drops the external subtitle indicators.
+   *
+   * Keep the indexed record as the base for its persisted metadata, but carry over
+   * subtitle-source metadata from the direct scan whenever the same media path exists
+   * in both sources. Embedded subtitle metadata is merged conservatively as well.
+   */
+  internal fun mergeFolderVideos(
+    direct: List<Video>,
+    indexed: List<Video>,
+  ): List<Video> {
+    val merged = indexed
+      .associateBy { video -> video.path.ifBlank { video.uri.toString() } }
+      .toMutableMap()
+
+    direct.forEach { directVideo ->
+      val key = directVideo.path.ifBlank { directVideo.uri.toString() }
+      val indexedVideo = merged[key]
+
+      merged[key] = if (indexedVideo == null) {
+        directVideo
+      } else {
+        indexedVideo.copy(
+          hasEmbeddedSubtitles =
+            directVideo.hasEmbeddedSubtitles || indexedVideo.hasEmbeddedSubtitles,
+          subtitleCodec =
+            directVideo.subtitleCodec.ifBlank { indexedVideo.subtitleCodec },
+          matchingExternalSubtitleFormats = directVideo.matchingExternalSubtitleFormats,
+          subtitleIndicatorReady = directVideo.subtitleIndicatorReady || indexedVideo.subtitleIndicatorReady,
+        )
+      }
+    }
+
+    return merged.values
+      .sortedBy { it.displayName.lowercase() }
+  }
 
   suspend fun getVideosForBuckets(context: Context, bucketIds: Set<String>): List<Video> =
     withContext(Dispatchers.IO) {
-      bucketIds.flatMap { id ->
-        getVideosInFolder(context, id)
-      }
+      bucketIds
+        .flatMap { id -> getVideosInFolder(context, id) }
+        .associateBy { it.path.ifBlank { it.uri.toString() } }
+        .values
+        .toList()
     }
 
   suspend fun getAllVideos(context: Context): List<Video> =
@@ -73,6 +118,9 @@ object MediaFileRepository {
       val folders = getAllVideoFolders(context)
       val bucketIds = folders.map { it.bucketId }.toSet()
       getVideosForBuckets(context, bucketIds)
+        .associateBy { it.path.ifBlank { it.uri.toString() } }
+        .values
+        .toList()
     }
 
   // ==================== FILE SYSTEM BROWSING ====================
@@ -110,30 +158,64 @@ object MediaFileRepository {
         val foldersPreferences = koin.get<xyz.mpv.rex.preferences.FoldersPreferences>()
         val blacklistedFolders = foldersPreferences.blacklistedFolders.get()
 
-        val folders = if (scanPolicy.includeNoMediaContent) {
-          val hybridIndex = koin.get<HybridMediaIndexRepository>()
-          hybridIndex.ensureFreshIfEmpty()
-          hybridIndex.getFoldersInDirectory(
-            parentPath = path,
-            playbackStates = playbackStates,
-            thresholdDays = thresholdDays,
-            watchedThreshold = browserPreferences.watchedThreshold.get(),
-          )
-        } else {
-          CoreMediaScanner.getFoldersInDirectory(
-            context = context,
-            parentPath = path,
-            playbackStates = playbackStates,
-            thresholdDays = thresholdDays,
-            blacklistedFolders = blacklistedFolders,
-            policy = scanPolicy,
-          )
-        }
-        folders
-          .filter { data ->
-            isAudioEnabled || data.videoCount > 0
+        coroutineScope {
+          val foldersDeferred = async {
+            val folders = if (scanPolicy.includeNoMediaContent) {
+              val hybridIndex = koin.get<HybridMediaIndexRepository>()
+              hybridIndex.ensureFreshIfEmpty()
+              hybridIndex.getFoldersInDirectory(
+                parentPath = path,
+                playbackStates = playbackStates,
+                thresholdDays = thresholdDays,
+                watchedThreshold = browserPreferences.watchedThreshold.get(),
+              )
+            } else {
+              CoreMediaScanner.getFoldersInDirectory(
+                context = context,
+                parentPath = path,
+                playbackStates = playbackStates,
+                thresholdDays = thresholdDays,
+                blacklistedFolders = blacklistedFolders,
+                policy = scanPolicy,
+              )
+            }
+            folders.filter { data ->
+              !isPathExcluded(data.path, blacklistedFolders) &&
+                data.activeCount(isAudioEnabled) > 0 &&
+                (scanPolicy.includeNoMediaContent || !FileFilterUtils.isWithinNoMediaBoundary(File(data.path)))
+            }
           }
-          .forEach { folderData ->
+
+          val videosDeferred = async {
+            if (!isPathExcluded(path, blacklistedFolders)) {
+              val folderScan = VideoScanUtils.scanFolder(context, path, scanPolicy)
+              if (folderScan.access == VideoScanUtils.FolderAccess.INACCESSIBLE) {
+                return@async Result.failure<List<FileSystemItem.VideoFile>>(Exception("Directory is not accessible: $path"))
+              }
+              val videoItems = folderScan.videos
+                .filter { video -> isAudioEnabled || !video.isAudio }
+                .map { video ->
+                  FileSystemItem.VideoFile(
+                    name = video.displayName,
+                    path = video.path,
+                    lastModified = if (video.dateModified > 0) video.dateModified * 1000L else File(video.path).lastModified(),
+                    video = video,
+                  )
+                }
+              Result.success(videoItems)
+            } else {
+              Result.success(emptyList())
+            }
+          }
+
+          val folderList = foldersDeferred.await()
+          val videoResult = videosDeferred.await()
+
+          if (videoResult.isFailure) {
+            return@coroutineScope Result.failure(videoResult.exceptionOrNull() ?: Exception("Unknown error"))
+          }
+
+          folderList.forEach { folderData ->
             items.add(
               FileSystemItem.Folder(
                 name = folderData.name,
@@ -143,6 +225,10 @@ object MediaFileRepository {
                 audioCount = folderData.audioCount,
                 totalSize = folderData.totalSize,
                 totalDuration = folderData.totalDuration,
+                videoSize = folderData.videoSize,
+                audioSize = folderData.audioSize,
+                videoDuration = folderData.videoDuration,
+                audioDuration = folderData.audioDuration,
                 hasSubfolders = folderData.hasSubfolders,
                 newCount = folderData.newCount,
                 unwatchedVideoCount = folderData.unwatchedVideoCount
@@ -150,30 +236,13 @@ object MediaFileRepository {
             )
           }
 
-        // Get videos in current directory - Hide if current path is blacklisted
-        if (path !in blacklistedFolders) {
-          val folderScan = VideoScanUtils.scanFolder(context, path, scanPolicy)
-          if (folderScan.access == VideoScanUtils.FolderAccess.INACCESSIBLE) {
-            return@withContext Result.failure(Exception("Directory is not accessible: $path"))
-          }
-          folderScan.videos
-            .filter { video -> isAudioEnabled || !video.isAudio }
-            .forEach { video ->
-              items.add(
-                FileSystemItem.VideoFile(
-                  name = video.displayName,
-                  path = video.path,
-                  lastModified = File(video.path).lastModified(),
-                  video = video,
-                ),
-              )
-            }
+          items.addAll(videoResult.getOrDefault(emptyList()))
+          Result.success(items)
         }
-
-        Result.success(items)
       } catch (e: CancellationException) {
         throw e
       } catch (e: Exception) {
+        android.util.Log.e("MediaFileRepository", "Error scanning directory: $path", e)
         Result.failure(e)
       }
     }

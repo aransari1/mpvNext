@@ -93,6 +93,7 @@ import androidx.core.content.FileProvider
 import java.io.File
 import xyz.mpv.rex.preferences.PlayerPreferences
 import xyz.mpv.rex.presentation.Screen
+import xyz.mpv.rex.presentation.components.CollapsibleHeaderScreen
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicTextField
@@ -100,6 +101,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
 import xyz.mpv.rex.ui.utils.LocalBackStack
+import xyz.mpv.rex.ui.utils.navigateBack
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -107,6 +109,9 @@ import org.koin.compose.koinInject
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
 import java.util.UUID
+import xyz.mpv.rex.presentation.MotionStyle
+import xyz.mpv.rex.ui.controls.TonalIconTone
+import xyz.mpv.rex.ui.controls.tonalIconButtonColors
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Data models
@@ -133,6 +138,10 @@ data class CustomButtonSlots(
 
 @Serializable
 object CustomButtonScreen : Screen {
+  /** Settings keep the app's original full horizontal push. */
+  override val motion: MotionStyle
+    get() = MotionStyle.Default
+
     @OptIn(ExperimentalMaterial3Api::class)
     @Composable
     override fun Content() {
@@ -225,47 +234,19 @@ object CustomButtonScreen : Screen {
             buttonSlots.add(toIdx.coerceIn(0, buttonSlots.size), moved)
         }
 
-        Scaffold(
-            topBar = {
-                TopAppBar(
-                    title = {
-                        Column {
-                            Text(
-                                text = stringResource(id = R.string.custom_buttons_title),
-                                style = MaterialTheme.typography.headlineSmall,
-                                fontWeight = FontWeight.ExtraBold,
-                                color = MaterialTheme.colorScheme.primary,
-                            )
-                            Text(
-                                text = stringResource(id = R.string.custom_buttons_subtitle),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    },
-                    navigationIcon = {
-                        IconButton(onClick = backstack::removeLastOrNull) {
-                            Icon(
-                                Icons.AutoMirrored.Outlined.ArrowBack,
-                                contentDescription = stringResource(id = R.string.back),
-                                tint = MaterialTheme.colorScheme.secondary,
-                            )
-                        }
-                    },
-                    colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = MaterialTheme.colorScheme.surface,
-                    ),
-                )
-            },
-        ) { padding ->
+        CollapsibleHeaderScreen(
+            title = stringResource(id = R.string.custom_buttons_title),
+            subtitle = stringResource(id = R.string.custom_buttons_subtitle),
+            showBackButton = true,
+            onBackClick = backstack::navigateBack,
+        ) { contentModifier ->
             val navBarHeight = xyz.mpv.rex.ui.browser.LocalNavigationBarHeight.current
             LazyColumn(
                 state = lazyListState,
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                    top = padding.calculateTopPadding(),
-                    bottom = padding.calculateBottomPadding() + navBarHeight + 16.dp
+                    bottom = navBarHeight + 16.dp
                 ),
-                modifier = Modifier
+                modifier = contentModifier
                     .fillMaxSize()
                     .padding(horizontal = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -527,10 +508,7 @@ fun ButtonSlotCard(
                     FilledTonalIconButton(
                         onClick = onDelete,
                         modifier = Modifier.size(36.dp),
-                        colors = IconButtonDefaults.filledTonalIconButtonColors(
-                            containerColor = MaterialTheme.colorScheme.errorContainer,
-                            contentColor   = MaterialTheme.colorScheme.onErrorContainer,
-                        ),
+                        colors = tonalIconButtonColors(TonalIconTone.Error),
                     ) {
                         Icon(Icons.Default.Delete, contentDescription = stringResource(id = R.string.delete), modifier = Modifier.size(18.dp))
                     }

@@ -37,6 +37,7 @@ class MPVPipHelper(
   fun onPictureInPictureModeChanged(isInPipMode: Boolean) {
     if (isInPipMode) {
       registerPipReceiver()
+      updatePictureInPictureParams()
     } else {
       unregisterPipReceiver()
     }

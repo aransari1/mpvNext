@@ -46,6 +46,7 @@ import xyz.mpv.rex.preferences.AdvancedPreferences
 import xyz.mpv.rex.preferences.preference.collectAsState
 import xyz.mpv.rex.presentation.Screen
 import xyz.mpv.rex.ui.utils.LocalBackStack
+import xyz.mpv.rex.ui.utils.navigateBack
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -140,7 +141,7 @@ data class ConfigEditorScreen(
           withContext(Dispatchers.Main) {
             hasUnsavedChanges = false
             Toast.makeText(context, "$fileName saved", Toast.LENGTH_SHORT).show()
-            backStack.removeLastOrNull()
+            backStack.navigateBack()
           }
         } catch (e: Exception) {
           withContext(Dispatchers.Main) {
@@ -173,7 +174,7 @@ data class ConfigEditorScreen(
           }
         },
         navigationIcon = {
-          IconButton(onClick = backStack::removeLastOrNull) {
+          IconButton(onClick = backStack::navigateBack) {
             Icon(
               Icons.AutoMirrored.Default.ArrowBack,
               contentDescription = stringResource(id = R.string.back),

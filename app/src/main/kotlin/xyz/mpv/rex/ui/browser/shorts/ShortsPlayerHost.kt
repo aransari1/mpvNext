@@ -7,13 +7,18 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import xyz.mpv.rex.R
+import xyz.mpv.rex.ui.player.MPVLifecycleLock
 import xyz.mpv.rex.ui.player.MPVView
+import xyz.mpv.rex.ui.player.MpvConfigSync
 import `is`.xyz.mpv.MPVLib
 import `is`.xyz.mpv.MPVNode
 import org.xmlpull.v1.XmlPullParser
@@ -46,6 +51,7 @@ fun ShortsPlayerHost(
     }
 
     DisposableEffect(Unit) {
+        var fileLoadedJob: Job? = null
         val observer = object : MPVLib.EventObserver {
             private var lastTimePos = 0.0
             private var lastDuration = 0L
@@ -53,13 +59,16 @@ fun ShortsPlayerHost(
             override fun event(eventId: Int, data: MPVNode) {
                 when (eventId) {
                     MPVLib.MpvEvent.MPV_EVENT_START_FILE -> {
+                        fileLoadedJob?.cancel()
+                        fileLoadedJob = null
                         onPlayerReadyChange(false)
                         lastTimePos = 0.0
                         lastDuration = 0L
                         onProgressUpdate(0.0, 0L)
                     }
                     MPVLib.MpvEvent.MPV_EVENT_FILE_LOADED -> {
-                        coroutineScope.launch {
+                        fileLoadedJob?.cancel()
+                        fileLoadedJob = coroutineScope.launch {
                             delay(150)
                             onPlayerReadyChange(true)
                         }
@@ -93,6 +102,13 @@ fun ShortsPlayerHost(
             override fun eventProperty(property: String, value: MPVNode) {}
         }
 
+        if (MPVLifecycleLock.isTearingDown.value) {
+            runBlocking(Dispatchers.IO) {
+                MPVLifecycleLock.awaitTeardown()
+            }
+        }
+        MpvConfigSync.prepare(context)
+
         mpvView.initialize(context.filesDir.path, context.cacheDir.path)
         MPVLib.setPropertyString("loop-file", "inf")
         MPVLib.observeProperty("time-pos", MPVLib.MpvFormat.MPV_FORMAT_DOUBLE)
@@ -101,14 +117,22 @@ fun ShortsPlayerHost(
         onReady(mpvView)
         
         onDispose {
+            fileLoadedJob?.cancel()
+            fileLoadedJob = null
             MPVLib.removeObserver(observer)
-            mpvView.destroy()
+            MPVLifecycleLock.onTeardownStart()
+            try {
+                mpvView.destroy()
+            } finally {
+                MPVLifecycleLock.onTeardownComplete()
+            }
         }
     }
 
     AndroidView(
         factory = {
             FrameLayout(context).apply {
+                (mpvView.parent as? ViewGroup)?.removeView(mpvView)
                 addView(mpvView)
             }
         },

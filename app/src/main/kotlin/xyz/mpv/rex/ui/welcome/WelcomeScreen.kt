@@ -129,8 +129,13 @@ object WelcomeScreen : Screen {
     fun navigateToMain() {
       appearancePreferences.onboardingCompleted.set(true)
       if (backstack.lastOrNull() == WelcomeScreen) {
+        // Add the destination before removing the current entry so the back stack is never
+        // empty (NavDisplay rejects an empty back stack during recomposition).
         backstack.add(MainScreen)
         backstack.remove(WelcomeScreen)
+      } else if (backstack.none { it == MainScreen }) {
+        // Onboarding finished while this entry is no longer on top; make sure a root exists.
+        backstack.add(MainScreen)
       }
     }
 
@@ -151,8 +156,7 @@ object WelcomeScreen : Screen {
         Surface(
           modifier = Modifier.fillMaxWidth(),
           color = MaterialTheme.colorScheme.surfaceContainer,
-          tonalElevation = 8.dp,
-          shadowElevation = 8.dp,
+          shadowElevation = 6.dp,
         ) {
           Column(
             modifier = Modifier
@@ -525,7 +529,7 @@ object WelcomeScreen : Screen {
     // Explanation Dialog
     if (showExplanationDialog) {
       val uriHandler = LocalUriHandler.current
-      val githubUrl = "https://github.com/sfsakhawat999/mpvRex"
+      val githubUrl = "https://github.com/mpvRex/REX-Player"
       val isPlayStoreBuild = BuildConfig.SCOPED_STORAGE_ONLY
 
       AlertDialog(

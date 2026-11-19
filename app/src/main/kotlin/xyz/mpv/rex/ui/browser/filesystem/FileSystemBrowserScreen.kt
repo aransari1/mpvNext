@@ -46,6 +46,7 @@ import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PictureInPictureAlt
+import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.SwapVert
@@ -68,7 +69,10 @@ import androidx.compose.material3.ToggleFloatingActionButtonDefaults.animateIcon
 import androidx.compose.material3.TooltipAnchorPosition
 import androidx.compose.material3.TooltipBox
 import androidx.compose.material3.TooltipDefaults
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.TopAppBarState
 import androidx.compose.material3.animateFloatingActionButton
+import androidx.compose.material3.rememberTopAppBarState
 import androidx.compose.material3.rememberTooltipState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -87,6 +91,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -114,6 +119,7 @@ import xyz.mpv.rex.ui.browser.cards.FolderCard
 import xyz.mpv.rex.ui.browser.cards.VideoCard
 import xyz.mpv.rex.ui.browser.components.BrowserBottomBar
 import xyz.mpv.rex.ui.browser.components.BrowserTopBar
+import xyz.mpv.rex.ui.browser.components.ContentSurfaceContainer
 import xyz.mpv.rex.ui.browser.components.UnifiedExplorerContent
 import xyz.mpv.rex.ui.browser.components.SelectionOverflowAction
 import xyz.mpv.rex.ui.browser.dialogs.AddToPlaylistDialog
@@ -130,6 +136,7 @@ import xyz.mpv.rex.utils.history.RecentlyPlayedOps
 import xyz.mpv.rex.ui.browser.states.EmptyState
 import xyz.mpv.rex.ui.browser.states.PermissionDeniedState
 import xyz.mpv.rex.ui.utils.LocalBackStack
+import xyz.mpv.rex.ui.utils.navigateBack
 import xyz.mpv.rex.utils.media.CopyPasteOps
 import xyz.mpv.rex.utils.media.MediaUtils
 import androidx.compose.ui.text.style.TextOverflow
@@ -143,6 +150,8 @@ import kotlinx.serialization.Serializable
 import androidx.compose.foundation.layout.fillMaxHeight
 import xyz.mpv.rex.ui.browser.components.FastScrollbar
 import org.koin.compose.koinInject
+import xyz.mpv.rex.preferences.AppearancePreferences
+import xyz.mpv.rex.ui.motion.RexMotion
 
 /**
  * Root File System Browser screen - shows storage volumes
@@ -163,6 +172,7 @@ object FileSystemBrowserRootScreen : xyz.mpv.rex.presentation.Screen {
 data class FileSystemDirectoryScreen(
   val path: String,
 ) : xyz.mpv.rex.presentation.Screen {
+
   @OptIn(ExperimentalPermissionsApi::class)
   @Composable
   override fun Content() {
@@ -183,6 +193,8 @@ fun FileSystemBrowserScreen(path: String? = null) {
   val clipboardManager = LocalClipboardManager.current
   val browserPreferences = koinInject<BrowserPreferences>()
   val playerPreferences = koinInject<xyz.mpv.rex.preferences.PlayerPreferences>()
+  val appearancePreferences = koinInject<AppearancePreferences>()
+  val hidePlayFabShowInHeader by appearancePreferences.hidePlayFabShowInHeader.collectAsState()
   val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
 
   // ViewModel - use path parameter if provided, otherwise show roots
@@ -201,17 +213,23 @@ fun FileSystemBrowserScreen(path: String? = null) {
   val newVideoIds by viewModel.newVideoIds.collectAsState()
   val watchedVideoIds by viewModel.watchedVideoIds.collectAsState()
   val isLoading by viewModel.isLoading.collectAsState()
+  val hasLoaded by viewModel.hasLoaded.collectAsState()
   val uiSettings by viewModel.uiSettings.collectAsState()
   val error by viewModel.error.collectAsState()
   val isAtRoot by viewModel.isAtRoot.collectAsState()
   val breadcrumbs by viewModel.breadcrumbs.collectAsState()
   val playlistMode by playerPreferences.playlistMode.collectAsState()
+
+  // Pinned folders/files (issue #466). Collected from the app-wide repository so
+  // every directory shares the same pin set.
+  val pinnedPaths by viewModel.pinnedPathList.collectAsState(initial = emptyList())
   val itemsWereDeletedOrMoved by viewModel.itemsWereDeletedOrMoved.collectAsState()
   val showSubtitleIndicator by browserPreferences.showSubtitleIndicator.collectAsState()
   val recentlyPlayedFilePath by viewModel.recentlyPlayedFilePath.collectAsState()
   val recentlyPlayedPaths by viewModel.recentlyPlayedPaths.collectAsState()
   val recentlyPlayedFilePaths by viewModel.recentlyPlayedFilePaths.collectAsState()
   val autoScrollToLastPlayed by browserPreferences.autoScrollToLastPlayed.collectAsState()
+  val showAudioFiles by browserPreferences.showAudioFiles.collectAsState()
 
   // Use standalone local states instead of CompositionLocal to avoid scroll issues with predictive back gesture
   val rememberedIndex = rememberSaveable { mutableIntStateOf(0) }
@@ -273,6 +291,12 @@ fun FileSystemBrowserScreen(path: String? = null) {
   // FAB visibility for scroll-based hiding
   val isFabVisible = remember { mutableStateOf(true) }
   val isFabExpanded = remember { mutableStateOf(false) }
+  val isMiniPlayerActive = xyz.mpv.rex.ui.browser.LocalMiniPlayerActive.current
+  LaunchedEffect(isMiniPlayerActive) {
+    if (isMiniPlayerActive) {
+      isFabExpanded.value = false
+    }
+  }
   
   // Selection info state
   var mediaInfoUri by remember { mutableStateOf<Uri?>(null) }
@@ -444,9 +468,22 @@ fun FileSystemBrowserScreen(path: String? = null) {
     onExpandedChange = { isFabExpanded.value = it },
   )
 
+  val topAppBarState = rememberTopAppBarState()
+  val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior(topAppBarState)
+
   // Main content
   Box(modifier = Modifier.fillMaxSize()) {
     Scaffold(
+      modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
+      // Nested/pushed screens must set the screen tone themselves; it does not
+      // propagate from MainScreen across a NavDisplay boundary, and a nested
+      // Scaffold overrides it. surfaceContainer is what shows through the
+      // content surface's gaps and around its 24.dp corners.
+      containerColor = if (MaterialTheme.colorScheme.background == androidx.compose.ui.graphics.Color.Black) {
+        androidx.compose.ui.graphics.Color.Black
+      } else {
+        MaterialTheme.colorScheme.surfaceContainer
+      },
       topBar = {
         BrowserTopBar(
           title = if (isAtRoot) {
@@ -454,14 +491,28 @@ fun FileSystemBrowserScreen(path: String? = null) {
           } else {
             breadcrumbs.lastOrNull()?.name ?: stringResource(xyz.mpv.rex.R.string.tree_view)
           },
+          scrollBehavior = scrollBehavior,
           isInSelectionMode = isInSelectionMode,
           selectedCount = selectedCount,
           totalCount = totalCount,
           isHomeScreen = isAtRoot,
+          normalPlayClick = if (isAtRoot && hidePlayFabShowInHeader) {
+            {
+              coroutineScope.launch {
+                val recentlyPlayedVideos = xyz.mpv.rex.utils.history.RecentlyPlayedOps.getRecentlyPlayed(limit = 1)
+                val lastPlayed = recentlyPlayedVideos.firstOrNull()
+                if (lastPlayed != null) {
+                  MediaUtils.playFile(lastPlayed.filePath, context, "recently_played_button")
+                } else {
+                  Toast.makeText(context, context.getString(R.string.no_recently_played_videos), Toast.LENGTH_SHORT).show()
+                }
+              }
+            }
+          } else null,
           onBackClick = if (isAtRoot) {
             null
           } else {
-            { backstack.removeLastOrNull() }
+            { backstack.navigateBack() }
           },
           onCancelSelection = {
             folderSelectionManager.clear()
@@ -507,8 +558,8 @@ fun FileSystemBrowserScreen(path: String? = null) {
                   multiSelectionUnit = "folder"
                   multiSelectionInfo = Triple(
                     selected.size,
-                    selected.sumOf { it.totalSize },
-                    selected.sumOf { it.totalDuration },
+                    selected.sumOf { it.activeSize(showAudioFiles) },
+                    selected.sumOf { it.activeDuration(showAudioFiles) },
                   )
                 }
               }
@@ -519,8 +570,8 @@ fun FileSystemBrowserScreen(path: String? = null) {
                   multiSelectionUnit = "item"
                   multiSelectionInfo = Triple(
                     selectedVideos.size + selectedFolders.size,
-                    selectedVideos.sumOf { it.size } + selectedFolders.sumOf { it.totalSize },
-                    selectedVideos.sumOf { it.duration } + selectedFolders.sumOf { it.totalDuration },
+                    selectedVideos.sumOf { it.size } + selectedFolders.sumOf { it.activeSize(showAudioFiles) },
+                    selectedVideos.sumOf { it.duration } + selectedFolders.sumOf { it.activeDuration(showAudioFiles) },
                   )
                 }
               }
@@ -633,7 +684,7 @@ fun FileSystemBrowserScreen(path: String? = null) {
               ))
               add(SelectionOverflowAction(
                 icon = Icons.Filled.Share,
-                label = "Web Share",
+                label = stringResource(R.string.web_share_title),
                 onClick = { showWebShareSheet = true },
               ))
               if (folderSelectionManager.isInSelectionMode && !videoSelectionManager.isInSelectionMode) {
@@ -643,8 +694,33 @@ fun FileSystemBrowserScreen(path: String? = null) {
                   onClick = {
                     viewModel.blacklistFolders(folderSelectionManager.getSelectedItems())
                     folderSelectionManager.clear()
+                    Toast.makeText(
+                      context,
+                      context.getString(R.string.pref_folders_blacklisted),
+                      Toast.LENGTH_SHORT,
+                    ).show()
                   },
                 ))
+              }
+              run {
+                val folderPaths = folderSelectionManager.getSelectedItems()
+                  .map { it.path }.filter { it.isNotBlank() }
+                val mediaPaths = videoSelectionManager.getSelectedItems()
+                  .map { it.path }.filter { it.isNotBlank() }
+                val allPaths = (folderPaths + mediaPaths).distinct()
+                if (allPaths.isNotEmpty()) {
+                  val pinnedSet = pinnedPaths.toSet()
+                  val allPinned = allPaths.all { it in pinnedSet }
+                  add(SelectionOverflowAction(
+                    icon = Icons.Filled.PushPin,
+                    label = stringResource(if (allPinned) R.string.unpin_from_top else R.string.pin_to_top),
+                    onClick = {
+                      viewModel.setPinned(folderPaths, mediaPaths, pinned = !allPinned)
+                      folderSelectionManager.clear()
+                      videoSelectionManager.clear()
+                    },
+                  ))
+                }
               }
               val selectedVideos = videoSelectionManager.getSelectedItems()
               val selectedFolders = folderSelectionManager.getSelectedItems()
@@ -677,9 +753,9 @@ fun FileSystemBrowserScreen(path: String? = null) {
           )
         },
       floatingActionButton = {
-        if (isAtRoot) {
+        if (isAtRoot && !hidePlayFabShowInHeader && !isMiniPlayerActive) {
           FloatingActionButtonMenu(
-            modifier = Modifier.padding(bottom = navigationBarHeight + 8.dp),
+            modifier = Modifier.padding(bottom = (navigationBarHeight - 4.dp).coerceAtLeast(0.dp)),
             expanded = isFabExpanded.value,
             button = {
               TooltipBox(
@@ -793,7 +869,8 @@ fun FileSystemBrowserScreen(path: String? = null) {
               videoFilesWithPlayback = videoFilesWithPlayback,
               newVideoIds = newVideoIds,
               watchedVideoIds = watchedVideoIds,
-              isLoading = isLoading && items.isEmpty(),
+              isLoading = isLoading,
+              hasLoaded = hasLoaded,
               uiSettings = uiSettings,
               isRefreshing = isRefreshing,
               error = error,
@@ -807,6 +884,7 @@ fun FileSystemBrowserScreen(path: String? = null) {
               recentlyPlayedPaths = recentlyPlayedPaths,
               autoScrollToLastPlayed = autoScrollToLastPlayed,
               navigationBarHeight = navigationBarHeight,
+              headerScrollState = topAppBarState,
               onRefresh = { viewModel.refresh() },
               onFolderClick = { folder ->
                 if (isInSelectionMode) {
@@ -840,6 +918,7 @@ fun FileSystemBrowserScreen(path: String? = null) {
               modifier = Modifier,
               isInSelectionMode = isInSelectionMode,
               scrollTriggerKey = "${sortType.name}:${sortOrder.name}",
+              pinnedPaths = pinnedPaths,
             )
           }
 
@@ -857,14 +936,8 @@ fun FileSystemBrowserScreen(path: String? = null) {
     // Play Store gating is intentionally bypassed here.
     AnimatedVisibility(
       visible = showFloatingBottomBar,
-      enter = slideInVertically(
-        animationSpec = tween(durationMillis = animationDuration),
-        initialOffsetY = { fullHeight -> fullHeight }
-      ),
-      exit = slideOutVertically(
-        animationSpec = tween(durationMillis = animationDuration),
-        targetOffsetY = { fullHeight -> fullHeight }
-      ),
+      enter = RexMotion.dockEnter(LocalContext.current),
+          exit = RexMotion.dockExit(LocalContext.current),
       modifier = Modifier.align(Alignment.BottomCenter)
     ) {
       BrowserBottomBar(
@@ -1145,12 +1218,12 @@ suspend fun searchRecursively(
           }
         }
         is FileSystemItem.Folder -> {
-          if ((isAudioFilesVisible || item.videoCount > 0) && item.name.contains(query, ignoreCase = true)) {
+          if (item.activeCount(isAudioFilesVisible) > 0 && item.name.contains(query, ignoreCase = true)) {
             Log.d("FileSystemBrowserScreen", "Found matching folder: ${item.name}")
             results.add(item)
           }
           // Recursively search in subdirectories if they have content we care about
-          if (isAudioFilesVisible || item.videoCount > 0) {
+          if (item.activeCount(isAudioFilesVisible) > 0) {
             try {
               val subResults = searchRecursively(context, item.path, query)
               results.addAll(subResults)
@@ -1196,7 +1269,7 @@ private suspend fun collectVideosRecursively(
 
     // Recursively scan subfolders that have relevant content
     items.filterIsInstance<FileSystemItem.Folder>().forEach { folder ->
-      if (isAudioFilesVisible || folder.videoCount > 0) {
+      if (folder.activeCount(isAudioFilesVisible) > 0) {
         val subVideos = collectVideosRecursively(context, folder.path)
         videos.addAll(subVideos)
       }
@@ -1234,6 +1307,7 @@ private fun FileSystemBrowserContent(
   newVideoIds: Set<Long>,
   watchedVideoIds: Set<Long>,
   isLoading: Boolean,
+  hasLoaded: Boolean = !isLoading || items.isNotEmpty(),
   uiSettings: UiSettings,
   isRefreshing: androidx.compose.runtime.MutableState<Boolean>,
   error: String?,
@@ -1258,6 +1332,8 @@ private fun FileSystemBrowserContent(
   modifier: Modifier = Modifier,
   isInSelectionMode: Boolean = false,
   scrollTriggerKey: Any? = null,
+  pinnedPaths: List<String> = emptyList(),
+  headerScrollState: TopAppBarState? = null,
 ) {
   val thumbnailRepository = koinInject<xyz.mpv.rex.domain.thumbnail.ThumbnailRepository>()
   val browserPreferences = koinInject<BrowserPreferences>()
@@ -1294,7 +1370,13 @@ private fun FileSystemBrowserContent(
     }
   }
 
-  Column(modifier = modifier.fillMaxSize()) {
+  // The breadcrumb stays on the screen tone above the sheet; only the list
+  // itself is painted inside the content surface.
+  Column(
+    modifier = modifier
+      .fillMaxSize()
+      .padding(bottom = navigationBarHeight),
+  ) {
     // Breadcrumb navigation (if not at root and enabled)
     if (showTreeViewPath && !isAtRoot && breadcrumbs.isNotEmpty()) {
       xyz.mpv.rex.ui.browser.filesystem.BreadcrumbNavigation(
@@ -1303,9 +1385,13 @@ private fun FileSystemBrowserContent(
       )
     }
 
-    UnifiedExplorerContent(
+    ContentSurfaceContainer(
+      navigationBarHeight = 0.dp,
+    ) {
+      UnifiedExplorerContent(
       items = items,
       isLoading = isLoading,
+      hasLoaded = hasLoaded,
       uiSettings = uiSettings,
       isSelected = { item ->
         when (item) {
@@ -1336,6 +1422,7 @@ private fun FileSystemBrowserContent(
       emptyMessage = stringResource(R.string.empty_folder_message),
       isRefreshing = isRefreshing,
       onRefresh = onRefresh,
+      headerScrollState = headerScrollState,
       isInSelectionMode = isInSelectionMode,
       recentlyPlayedFilePath = recentlyPlayedFilePath,
       recentlyPlayedFilePaths = recentlyPlayedFilePaths,
@@ -1347,7 +1434,10 @@ private fun FileSystemBrowserContent(
       videoPlaybackProgress = videoFilesWithPlayback,
       scrollTriggerKey = scrollTriggerKey,
       showSections = true,
+      pinnedPaths = pinnedPaths,
+      useContentSurface = true,
     )
+    }
   }
 }
 

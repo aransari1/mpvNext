@@ -1,0 +1,116 @@
+name: CI Release Build
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: "Build and Sign Test APKs"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate short SHA
+        id: set-short-sha
+        run: echo "SHORT_SHA=${GITHUB_SHA:0:7}" >> $GITHUB_ENV
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'adopt'
+          java-version: 17
+          cache: 'gradle'
+
+      - name: Make gradlew executable
+        run: chmod +x ./gradlew
+
+      - name: Build release APKs with Gradle
+        run: ./gradlew assembleRelease --stacktrace
+
+      - name: Sign APKs
+        run: |
+          set -e
+          RELEASE_DIR="app/build/outputs/apk/release"
+
+          echo "${{ secrets.SIGNING_KEYSTORE }}" | base64 -d > release.keystore
+
+          APK_COUNT=$(find "$RELEASE_DIR" -name "app-*-release-unsigned.apk" -type f | wc -l)
+          if [ "$APK_COUNT" -eq 0 ]; then
+            echo "No unsigned APK files found"
+            ls -lah "$RELEASE_DIR"
+            rm release.keystore
+            exit 1
+          fi
+
+          APKSIGNER=$(find $ANDROID_HOME/build-tools -name apksigner | sort -V | tail -n 1)
+          echo "Using apksigner: $APKSIGNER"
+
+          find "$RELEASE_DIR" -name "app-*-release-unsigned.apk" -type f | while read -r apk; do
+            signed_apk="${apk/-unsigned/}"
+
+            $APKSIGNER sign \
+              --ks release.keystore \
+              --ks-key-alias "${{ secrets.SIGNING_KEY_ALIAS }}" \
+              --ks-pass "pass:${{ secrets.SIGNING_STORE_PASSWORD }}" \
+              --key-pass "pass:${{ secrets.KEY_PASSWORD }}" \
+              --out "$signed_apk" \
+              "$apk"
+
+            $APKSIGNER verify "$signed_apk"
+            rm "$apk"
+          done
+
+          rm release.keystore
+          ls -lh "$RELEASE_DIR"/app-*-release.apk
+
+      - name: Prepare artifacts
+        run: |
+          set -euo pipefail
+          mkdir -p output
+          apks=("universal" "arm64-v8a" "armeabi-v7a" "x86" "x86_64")
+          for abi in "${apks[@]}"; do
+            src="app/build/outputs/apk/release/app-${abi}-release.apk"
+            dst="output/REX-Player-${abi}-${{ env.SHORT_SHA }}.apk"
+            if [ -f "$src" ]; then
+              cp "$src" "$dst"
+            fi
+          done
+          ls -lah output/
+
+      - name: Upload app-arm64-v8a Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: REX-Player-arm64-v8a-signed-${{ env.SHORT_SHA }}
+          path: output/REX-Player-arm64-v8a-${{ env.SHORT_SHA }}.apk
+
+      - name: Upload app-armeabi-v7a Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: REX-Player-armeabi-v7a-signed-${{ env.SHORT_SHA }}
+          path: output/REX-Player-armeabi-v7a-${{ env.SHORT_SHA }}.apk
+
+      - name: Upload app-universal Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: REX-Player-universal-signed-${{ env.SHORT_SHA }}
+          path: output/REX-Player-universal-${{ env.SHORT_SHA }}.apk
+
+      - name: Upload app-x86 Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: REX-Player-x86-signed-${{ env.SHORT_SHA }}
+          path: output/REX-Player-x86-${{ env.SHORT_SHA }}.apk
+
+      - name: Upload app-x86_64 Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: REX-Player-x86_64-signed-${{ env.SHORT_SHA }}
+          path: output/REX-Player-x86_64-${{ env.SHORT_SHA }}.apk

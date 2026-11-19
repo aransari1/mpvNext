@@ -12,6 +12,7 @@ import xyz.mpv.rex.ui.browser.base.BaseBrowserViewModel
 import xyz.mpv.rex.utils.history.RecentlyPlayedOps
 import xyz.mpv.rex.utils.media.MediaLibraryEvents
 import xyz.mpv.rex.utils.media.MetadataRetrieval
+import xyz.mpv.rex.utils.media.PlaybackStateIndex
 import xyz.mpv.rex.utils.storage.FileTypeUtils
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -189,6 +190,7 @@ class VideoListViewModel(
 
   private suspend fun loadPlaybackInfo(videos: List<Video>) {
     val playbackStates = playbackStateRepository.getAllPlaybackStates()
+    val playbackIndex = PlaybackStateIndex.of(playbackStates)
     val currentTime = System.currentTimeMillis()
     val thresholdDays = appearancePreferences.unplayedOldVideoDays.get()
     val thresholdMillis = thresholdDays * 24 * 60 * 60 * 1000L
@@ -196,7 +198,7 @@ class VideoListViewModel(
 
     val videosWithInfo =
       videos.map { video ->
-        val playbackState = playbackStates.find { it.mediaTitle == video.displayName }
+        val playbackState = playbackIndex.forName(video.displayName)
 
         // Map saved orientation to video
         val videoWithOrientation = if (playbackState?.savedOrientation != null) {
@@ -206,26 +208,18 @@ class VideoListViewModel(
         }
 
         // Calculate watch progress (0.0 to 1.0)
-        val progress = if (playbackState != null && video.duration > 0 && playbackState.timeRemaining != -1) {
-          val durationSeconds = video.duration / 1000
+        val durationSeconds = if (video.duration > 0) video.duration / 1000 else 0L
+        val progressValue = if (playbackState != null && durationSeconds > 0 && playbackState.timeRemaining != -1) {
           val watched = durationSeconds - playbackState.timeRemaining.toLong()
-          val progressValue = (watched.toFloat() / durationSeconds.toFloat()).coerceIn(0f, 1f)
-          if (progressValue in 0.01f..0.99f) progressValue else null
+          (watched.toFloat() / durationSeconds.toFloat()).coerceIn(0f, 1f)
         } else {
           null
         }
 
-        // Correct logic for "NEW" label
-        val videoAge = currentTime - (video.dateModified * 1000)
-        val isOldAndUnplayed = (playbackState == null && videoAge <= thresholdMillis) || (playbackState != null && playbackState.timeRemaining == -1)
-
         val isWatched = if (playbackState != null) {
           if (playbackState.hasBeenWatched) {
             true
-          } else if (video.duration > 0 && playbackState.timeRemaining != -1) {
-            val durationSeconds = video.duration / 1000
-            val watched = durationSeconds - playbackState.timeRemaining.toLong()
-            val progressValue = (watched.toFloat() / durationSeconds.toFloat()).coerceIn(0f, 1f)
+          } else if (progressValue != null) {
             progressValue >= (watchedThreshold / 100f)
           } else {
             false
@@ -233,6 +227,16 @@ class VideoListViewModel(
         } else {
           false
         }
+
+        val progress = if (progressValue != null && progressValue >= 0.01f && !isWatched) {
+          progressValue
+        } else {
+          null
+        }
+
+        // Correct logic for "NEW" label
+        val videoAge = currentTime - (video.dateModified * 1000)
+        val isOldAndUnplayed = (playbackState == null && videoAge <= thresholdMillis) || (playbackState != null && playbackState.timeRemaining == -1)
 
         VideoWithPlaybackInfo(
           video = videoWithOrientation,

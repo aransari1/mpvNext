@@ -18,6 +18,8 @@ class AdvancedPreferences(
   val enabledStatisticsPage = preferenceStore.getInt("enabled_stats_page", 0)
 
   val enableRecentlyPlayed = preferenceStore.getBoolean("enable_recently_played", true)
+  val autoRemoveDeletedFromHistory = preferenceStore.getBoolean("auto_remove_deleted_from_history", false)
+  val excludeExternalPlaybackFromHistory = preferenceStore.getBoolean("exclude_external_playback_from_history", false)
 
   val enableMediaInfoActivity = preferenceStore.getBoolean("enable_media_info_activity", false)
 

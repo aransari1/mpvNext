@@ -12,7 +12,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -35,6 +37,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberTopAppBarState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -43,6 +47,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -58,15 +63,21 @@ import xyz.mpv.rex.ui.browser.components.BrowserTopBar
 import xyz.mpv.rex.ui.browser.selection.SelectionState
 import xyz.mpv.rex.ui.browser.states.EmptyState
 import xyz.mpv.rex.ui.utils.LocalBackStack
+import xyz.mpv.rex.ui.utils.navigateBack
 import xyz.mpv.rex.utils.media.MediaLibraryEvents
 import xyz.mpv.rex.utils.media.OpenDocumentTreeContract
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import org.koin.compose.koinInject
+import xyz.mpv.rex.presentation.MotionStyle
 
 @Serializable
 object LibraryRootsPreferencesScreen : Screen {
+  /** Settings keep the app's original full horizontal push. */
+  override val motion: MotionStyle
+    get() = MotionStyle.Default
+
   @OptIn(ExperimentalMaterial3Api::class)
   @Composable
   override fun Content() {
@@ -116,15 +127,21 @@ object LibraryRootsPreferencesScreen : Screen {
       }
     }
 
+    val topAppBarState = rememberTopAppBarState()
+    val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior(topAppBarState)
+
     Scaffold(
+      modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
+      contentWindowInsets = WindowInsets.safeDrawing,
       topBar = {
         BrowserTopBar(
           title = stringResource(R.string.pref_library_roots_title),
+          scrollBehavior = scrollBehavior,
           isInSelectionMode = selectionState.isInSelectionMode,
           selectedCount = selectionState.selectedCount,
           totalCount = libraryRootsList.size,
           onCancelSelection = { selectionState = selectionState.clear() },
-          onBackClick = backstack::removeLastOrNull,
+          onBackClick = backstack::navigateBack,
           onDeleteClick = {
             removeRoots(selectionState.selectedIds)
             selectionState = selectionState.clear()

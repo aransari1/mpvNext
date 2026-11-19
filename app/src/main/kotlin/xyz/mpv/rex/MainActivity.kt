@@ -1,6 +1,7 @@
 package xyz.mpv.rex
 
 import android.app.Activity
+import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import android.content.Intent
@@ -13,44 +14,48 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
-import androidx.compose.animation.slideIn
-import androidx.compose.animation.slideOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.IntOffset
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation3.runtime.NavBackStack
 import androidx.navigation3.runtime.NavEntry
 import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.ui.NavDisplay
+import xyz.mpv.rex.ui.motion.RexMotion
 import xyz.mpv.rex.preferences.AppearancePreferences
 import xyz.mpv.rex.preferences.preference.collectAsState
+import xyz.mpv.rex.presentation.MotionStyle
 import xyz.mpv.rex.presentation.Screen
 import xyz.mpv.rex.repository.NetworkRepository
 import xyz.mpv.rex.utils.update.UpdateDialog
+import xyz.mpv.rex.utils.update.UpdateManager
 import xyz.mpv.rex.utils.update.UpdateViewModel
 import xyz.mpv.rex.ui.browser.MainScreen
 import xyz.mpv.rex.ui.theme.DarkMode
 import xyz.mpv.rex.ui.theme.MpvexTheme
 import xyz.mpv.rex.ui.utils.LocalBackStack
+import xyz.mpv.rex.ui.utils.navigateBack
 import xyz.mpv.rex.utils.permission.PermissionUtils
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.navigationBars
 import xyz.mpv.rex.ui.browser.miniplayer.MiniPlayer
 import xyz.mpv.rex.ui.browser.miniplayer.MiniPlayerStateManager
+import xyz.mpv.rex.ui.browser.LocalBottomBarPresent
+import xyz.mpv.rex.ui.browser.LocalMiniPlayerActive
 import xyz.mpv.rex.ui.browser.LocalNavigationBarHeight
 import xyz.mpv.rex.ui.welcome.WelcomeScreen
 import androidx.compose.foundation.layout.Box
@@ -69,6 +74,28 @@ import org.koin.android.ext.android.inject
 import androidx.compose.runtime.staticCompositionLocalOf
 
 val LocalUpdateViewModel = staticCompositionLocalOf<UpdateViewModel?> { null }
+
+/**
+ * `contentKey` of the top entry in a `NavDisplay` scene, i.e. the id of the card the user
+ * tapped. Returns null when the entry is not a container-transform source (its contentKey
+ * is the `"root"` placeholder) or when the scene has no entries.
+ */
+/**
+ * The screen a scene represents.
+ *
+ * A scene's key is the screen on the backstack. Anything that is not a [Screen] cannot happen
+ * today (every NavKey here is one), but a transition must not throw, so it falls back to a
+ * screen that declares no motion preference.
+ */
+private fun screenOf(scene: androidx.navigation3.scene.Scene<*>): Screen =
+  scene.key as? Screen ?: FallbackScreen
+
+/** Stand-in used only if a scene's key is unexpectedly not a [Screen]. */
+private object FallbackScreen : Screen {
+  @androidx.compose.runtime.Composable
+  override fun Content() = Unit
+}
+
 
 /**
  * Main entry point for the application
@@ -106,12 +133,22 @@ class MainActivity : ComponentActivity() {
       val dark by appearancePreferences.darkMode.collectAsState()
       val isSystemInDarkTheme = isSystemInDarkTheme()
       val isDarkMode = dark == DarkMode.Dark || (dark == DarkMode.System && isSystemInDarkTheme)
+      // Keep system bars fully transparent and adaptive: the app draws edge-to-edge behind both
+      // the status bar and the 3-button navigation bar. Setting both statusBarStyle and
+      // navigationBarStyle explicitly with transparent scrims, and disabling contrast enforcement
+      // on API 29+, ensures the system does not overlay a white/grey scrim over the 3-button bar.
+      val barStyle = if (isDarkMode) {
+        SystemBarStyle.dark(Color.Transparent.toArgb())
+      } else {
+        SystemBarStyle.light(Color.Transparent.toArgb(), Color.Transparent.toArgb())
+      }
       enableEdgeToEdge(
-        SystemBarStyle.auto(
-          lightScrim = Color.White.toArgb(),
-          darkScrim = Color.Transparent.toArgb(),
-        ) { isDarkMode },
+        statusBarStyle = barStyle,
+        navigationBarStyle = barStyle,
       )
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        window.isNavigationBarContrastEnforced = false
+      }
 
       // Auto-connect to saved network connections
       LaunchedEffect(Unit) {
@@ -119,7 +156,10 @@ class MainActivity : ComponentActivity() {
       }
 
       MpvexTheme {
-        Surface {
+        Surface(
+          modifier = Modifier.fillMaxSize(),
+          color = MaterialTheme.colorScheme.surfaceContainer,
+        ) {
           Navigator()
         }
       }
@@ -197,90 +237,95 @@ class MainActivity : ComponentActivity() {
       null
     }
     val updateState by (updateViewModel?.updateState ?: MutableStateFlow(UpdateViewModel.UpdateState.Idle)).collectAsState()
-    val isDownloading by (updateViewModel?.isDownloading ?: MutableStateFlow(false)).collectAsState()
-    val downloadProgress by (updateViewModel?.downloadProgress ?: MutableStateFlow(0f)).collectAsState()
-    val miniPlayerState by miniPlayerStateManager.state.collectAsState()
+    val motionPreset by appearancePreferences.navigationMotionStyle.collectAsState()
     val hideNavigationBar by MainScreen.shouldHideNavigationBar.collectAsState()
+    val miniPlayerState by miniPlayerStateManager.state.collectAsState()
     val currentRoute = typedBackstack.lastOrNull()
     val isMainScreen = currentRoute == MainScreen
     val isWelcomeScreen = currentRoute == WelcomeScreen
-    
-    val targetBottomPadding = if (isMainScreen && !hideNavigationBar) {
-      if (miniPlayerState.isExpanded) 8.dp else 88.dp
-    } else 8.dp
-    val animatedBottomPadding by androidx.compose.animation.core.animateDpAsState(
-      targetValue = targetBottomPadding,
-      animationSpec = tween(220),
-      label = "miniPlayerBottomPadding"
-    )
 
-    val targetMiniPlayerHeight = if (miniPlayerState.isPlaybackActive) 67.dp else 0.dp
-    val miniPlayerHeight by androidx.compose.animation.core.animateDpAsState(
-      targetValue = targetMiniPlayerHeight,
-      animationSpec = tween(220),
-      label = "miniPlayerHeight"
-    )
-    val navBarHeight = if (isMainScreen && !hideNavigationBar) 80.dp else 0.dp
-    val totalNavigationBarHeight = navBarHeight + miniPlayerHeight
+    // The mini player is hosted here, in the window, so its expanded page can cover pushed
+    // screens too. It is docked on the navigation bar and does its own layout, so nothing in this
+    // file offsets for it any more: `LocalNavigationBarHeight` owns the content inset, and the
+    // sheet owns its own geometry.
+    val navBarHeight = if (isMainScreen && !hideNavigationBar) 64.dp else 0.dp
+    val totalNavigationBarHeight = navBarHeight
 
-    BackHandler(enabled = isMainScreen || isWelcomeScreen) {
-      (context as? Activity)?.moveTaskToBack(true)
+    // The floating mini player rests above the bottom chrome: the navigation bar + device inset
+    // when on MainScreen, or the system navigation bar inset when pushed over.
+    val systemBottomInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+    val publishedChrome by MainScreen.miniPlayerBottomChromeHeight.collectAsState()
+    val miniPlayerBottomChrome = (if (isMainScreen) publishedChrome else null) ?: systemBottomInset
+
+    // True while the mini player's page is the destination. Tracked here only so the fallback branch
+    // below can double-check; the page itself owns Back (see the comment on the handler).
+    var miniPlayerExpanded by remember { mutableStateOf(false) }
+    val collapseMiniPlayer = remember { mutableStateOf<(() -> Unit)?>(null) }
+
+    // System back: pop one entry, or send the task to the background at the root. Popping the root
+    // entry is never allowed, because NavDisplay throws "backstack cannot be empty".
+    //
+    // The mini player's expanded page is *not* handled here. It registers its own `BackHandler` in
+    // `MiniPlayer`, which composes after `NavDisplay` and therefore sits in front of both NavDisplay's
+    // handler and every screen-level one (registration order decides: `ArrayDeque.addFirst` +
+    // first-enabled-wins). This handler is registered before `NavDisplay`, so it is last in line and
+    // only runs once every other handler has declined.
+    BackHandler(enabled = typedBackstack.size > 1 || isMainScreen || isWelcomeScreen) {
+      if (miniPlayerExpanded && collapseMiniPlayer.value != null) {
+        // Defensive only: reachable if the sheet's own handler was somehow unregistered mid-press.
+        collapseMiniPlayer.value?.invoke()
+        return@BackHandler
+      }
+      if (!typedBackstack.navigateBack()) {
+        (context as? Activity)?.moveTaskToBack(true)
+      }
     }
 
     // Provide shared states to all screens
     CompositionLocalProvider(
       LocalBackStack provides typedBackstack,
       LocalUpdateViewModel provides updateViewModel,
-      LocalNavigationBarHeight provides totalNavigationBarHeight
+      LocalNavigationBarHeight provides totalNavigationBarHeight,
+      LocalBottomBarPresent provides (isMainScreen && !hideNavigationBar),
+      LocalMiniPlayerActive provides miniPlayerState.isPlaybackActive,
     ) {
       Box(modifier = Modifier.fillMaxSize()) {
         NavDisplay(
           backStack = typedBackstack,
-          onBack = { typedBackstack.removeLastOrNull() },
-          entryProvider = { route -> NavEntry(route) { route.Content() } },
+          onBack = { typedBackstack.navigateBack() },
+          entryProvider = { route ->
+            NavEntry(route) { route.Content() }
+          },
+          // The screen further up the stack owns the edge, so push and pop always mirror each
+          // other and each edge has exactly one style. Pop reads the screen being left; push
+          // reads the screen arriving.
           popTransitionSpec = {
-            (
-              fadeIn(animationSpec = tween(220)) +
-                slideIn(animationSpec = tween(220)) { IntOffset(-it.width / 2, 0) }
-            ) togetherWith (
-                fadeOut(animationSpec = tween(220)) +
-                  slideOut(animationSpec = tween(220)) { IntOffset(it.width / 2, 0) }
-            )
+            val screen = screenOf(initialState)
+            val style = if (screen.motion == MotionStyle.Default) motionPreset else screen.motion
+            RexMotion.screenTransition(context, forward = false, style = style)
+              .let { (enter, exit) -> enter togetherWith exit }
           },
           transitionSpec = {
-            (
-              fadeIn(animationSpec = tween(220)) +
-                slideIn(animationSpec = tween(220)) { IntOffset(it.width / 2, 0) }
-            ) togetherWith (
-                fadeOut(animationSpec = tween(220)) +
-                  slideOut(animationSpec = tween(220)) { IntOffset(-it.width / 2, 0) }
-            )
+            val screen = screenOf(targetState)
+            val style = if (screen.motion == MotionStyle.Default) motionPreset else screen.motion
+            RexMotion.screenTransition(context, forward = true, style = style)
+              .let { (enter, exit) -> enter togetherWith exit }
           },
-          predictivePopTransitionSpec = {
-            (
-              fadeIn(animationSpec = tween(220)) +
-                scaleIn(
-                  animationSpec = tween(220, delayMillis = 30),
-                  initialScale = .9f,
-                  TransformOrigin(-1f, .5f),
-                )
-            ) togetherWith (
-                fadeOut(animationSpec = tween(220)) +
-                  scaleOut(
-                    animationSpec = tween(220, delayMillis = 30),
-                    targetScale = .9f,
-                    TransformOrigin(-1f, .5f),
-                  )
-            )
+          predictivePopTransitionSpec = { _ ->
+            // Navigation 3 drives the gesture itself; this only decides the shape the departing
+            // screen leaves with, so the preview and the committed pop agree.
+            val screen = screenOf(initialState)
+            val style = if (screen.motion == MotionStyle.Default) motionPreset else screen.motion
+            RexMotion.predictiveBackTransition(context, style = style)
+              .let { (enter, exit) -> enter togetherWith exit }
           },
         )
 
         MiniPlayer(
           stateManager = miniPlayerStateManager,
-          modifier = Modifier
-            .align(Alignment.BottomCenter)
-            .navigationBarsPadding()
-            .padding(bottom = animatedBottomPadding)
+          bottomChromeHeight = miniPlayerBottomChrome,
+          expandedChanged = { miniPlayerExpanded = it },
+          collapseRequest = { req -> collapseMiniPlayer.value = req },
         )
       }
 
@@ -291,42 +336,18 @@ class MainActivity : ComponentActivity() {
             val release = (updateState as UpdateViewModel.UpdateState.Available).release
             UpdateDialog(
               release = release,
-              isDownloading = isDownloading,
-              progress = downloadProgress,
-              actionLabel = if (isDownloading) "Downloading..." else "Download",
+              actionLabel = "Download",
               currentVersion = currentVersion,
               onDismiss = { updateViewModel.dismiss() },
-              onAction = { 
-                // Redirect to GitHub releases page as requested by user
+              onAction = {
+                // Hand off to the releases page; the app never downloads or
+                // installs APKs itself. Every build tracks the same release feed.
                 context.startActivity(
                   Intent(
                     Intent.ACTION_VIEW, 
                     (release.htmlUrl ?: "https://github.com/aransari1/mpvNext/releases/latest").toUri()
                   )
                 )
-                // updateViewModel.downloadUpdate(release) // Kept in code but disabled for now
-              },
-              onIgnore = { updateViewModel.ignoreVersion(release.tagName.removePrefix("v")) }
-            )
-          }
-          is UpdateViewModel.UpdateState.ReadyToInstall -> {
-            val release = (updateState as UpdateViewModel.UpdateState.ReadyToInstall).release
-            UpdateDialog(
-              release = release,
-              isDownloading = isDownloading,
-              progress = downloadProgress,
-              actionLabel = "Install",
-              currentVersion = currentVersion,
-              onDismiss = { updateViewModel.dismiss() },
-              onAction = { 
-                // Redirect to GitHub releases page as requested by user
-                context.startActivity(
-                  Intent(
-                    Intent.ACTION_VIEW, 
-                    (release.htmlUrl ?: "https://github.com/aransari1/mpvNext/releases/latest").toUri()
-                  )
-                )
-                // updateViewModel.installUpdate(release) // Kept in code but disabled for now
               },
               onIgnore = { updateViewModel.ignoreVersion(release.tagName.removePrefix("v")) }
             )

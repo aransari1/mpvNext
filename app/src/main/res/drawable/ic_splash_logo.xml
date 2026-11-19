@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Splash icon geometry (no animation) at the Android 12+ spec:
+  432dp icon area with all visible art inside the inner 288dp.
+
+  The original mpvRex art fits within roughly 288x273, so it is re-centred
+  inside the 432 canvas: the 288 viewport art is offset by +72 on both axes.
+
+  Paint order matters: the crown is declared LAST so it draws on top of the
+  triangle.
+
+  Groups / names (used as AnimatedVectorDrawable targets):
+    play_scale - scale/stretch wrapper for the triangle, pivot at its left edge
+    play       - the triangle itself
+    crown_static - crown group; NO animation target, so it never moves
+    crown_path   - the crown's path; animate fillColor/alpha here only
+                   (colour-only target: position can never change)
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:name="vector"
+    android:width="432dp"
+    android:height="432dp"
+    android:viewportWidth="432"
+    android:viewportHeight="432">
+
+    <group
+        android:name="wrapper"
+        android:pivotX="216"
+        android:pivotY="216">
+
+        <!-- Full-canvas clip so an animated element is never cut off. -->
+        <clip-path
+            android:name="clip0_1_4"
+            android:pathData="M 0 0 L 432 0 L 432 432 L 0 432 Z" />
+
+        <!-- Scale wrapper: pivot on the triangle's left edge midpoint. -->
+        <group
+            android:name="play_scale"
+            android:pivotX="172"
+            android:pivotY="219.5">
+
+            <group android:name="play">
+                <path
+                    android:name="path_1"
+                    android:pathData="M 172 245 L 172 164.647 C 172 159 174.774 157.588 180.323 160.412 L 269.798 213.353 C 276.734 217.588 276.734 221.824 269.798 226.059 L 182.404 276.882 C 175.468 281.118 172 279 172 270.529 L 172 245 Z"
+                    android:strokeColor="@color/splash_screen_icon_color"
+                    android:strokeWidth="15"
+                    android:strokeLineCap="round"
+                    android:strokeLineJoin="round" />
+            </group>
+        </group>
+
+        <!-- Crown: declared last so it paints above the triangle. Never moves. -->
+        <group android:name="crown_static">
+            <path
+                android:name="crown_path"
+                android:pathData="M 197.078 153.581 L 210.281 121.362 L 222.408 150.778 L 256.331 138.391 L 259.977 170.904 L 295.816 169.501 L 267.977 195.38 L 197.078 153.581 Z"
+                android:fillColor="#f4c542"
+                android:strokeColor="#f4c542"
+                android:strokeWidth="3"
+                android:strokeLineCap="round"
+                android:strokeLineJoin="round" />
+        </group>
+    </group>
+</vector>

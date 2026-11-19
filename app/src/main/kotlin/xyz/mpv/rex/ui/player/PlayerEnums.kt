@@ -19,6 +19,14 @@ enum class PlayerOrientation(
   SensorLandscape(R.string.pref_player_orientation_sensor_landscape),
 }
 
+enum class PlaybackControlsPosition(
+  @StringRes val titleRes: Int,
+) {
+  Center(R.string.pref_playback_controls_position_center),
+  Bottom(R.string.pref_playback_controls_position_bottom),
+  Hide(R.string.pref_playback_controls_position_hide),
+}
+
 enum class BackgroundPlaybackMode(
   @StringRes val titleRes: Int,
 ) {
@@ -26,6 +34,14 @@ enum class BackgroundPlaybackMode(
   AudioOnly(R.string.pref_background_playback_audio_only),
   VideoOnly(R.string.pref_background_playback_video_only),
   Never(R.string.pref_background_playback_never),
+}
+
+enum class LongPressSpeedMemoryMode(
+  @StringRes val titleRes: Int,
+) {
+  Global(R.string.pref_player_remember_long_press_speed_global),
+  PerVideo(R.string.pref_player_remember_long_press_speed_per_video),
+  Reset(R.string.pref_player_remember_long_press_speed_reset),
 }
 
 enum class ResumePlaybackMode(
@@ -73,13 +89,14 @@ enum class SingleActionGesture(
 
 enum class CustomKeyCodes(
   val keyCode: String,
+  @StringRes val titleRes: Int,
 ) {
-  DoubleTapLeft("MBTN_LEFT_DBL"),
-  DoubleTapCenter("MBTN_MID_DBL"),
-  DoubleTapRight("MBTN_RIGHT_DBL"),
-  MediaPrevious("PREV"),
-  MediaPlay("PLAYPAUSE"),
-  MediaNext("NEXT"),
+  DoubleTapLeft("MBTN_LEFT_DBL", R.string.pref_gesture_double_tap_left),
+  DoubleTapCenter("MBTN_MID_DBL", R.string.pref_gesture_double_tap_center),
+  DoubleTapRight("MBTN_RIGHT_DBL", R.string.pref_gesture_double_tap_right),
+  MediaPrevious("PREV", R.string.pref_gesture_media_previous),
+  MediaPlay("PLAYPAUSE", R.string.pref_gesture_media_play),
+  MediaNext("NEXT", R.string.pref_gesture_media_next),
 }
 
 enum class Decoder(
@@ -140,6 +157,8 @@ enum class Sheets {
   FrameNavigation,
   CustomSkipDuration,
   SleepTimer,
+  ClipExport,
+  VideoQuality,
 }
 
 enum class Panels {
@@ -179,6 +198,10 @@ sealed class PlayerUpdates {
   ) : PlayerUpdates()
 
   data class ResumedFrom(
+    val position: Int,
+  ) : PlayerUpdates()
+
+  data class PromptResume(
     val position: Int,
   ) : PlayerUpdates()
 

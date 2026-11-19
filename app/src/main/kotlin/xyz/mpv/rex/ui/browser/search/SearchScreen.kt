@@ -57,6 +57,9 @@ import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.ui.graphics.Color
+import org.koin.compose.koinInject
+import xyz.mpv.rex.preferences.BrowserPreferences
+import xyz.mpv.rex.preferences.preference.collectAsState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -88,6 +91,7 @@ import xyz.mpv.rex.presentation.Screen
 import xyz.mpv.rex.ui.browser.LocalNavigationBarHeight
 import xyz.mpv.rex.ui.browser.components.BrowserBottomBar
 import xyz.mpv.rex.ui.browser.components.BrowserTopBar
+import xyz.mpv.rex.ui.browser.components.ContentSurfaceContainer
 import xyz.mpv.rex.ui.browser.components.SelectionOverflowAction
 import xyz.mpv.rex.ui.browser.components.UnifiedExplorerContent
 import xyz.mpv.rex.ui.browser.dialogs.AddToPlaylistDialog
@@ -102,6 +106,7 @@ import xyz.mpv.rex.ui.browser.sheets.MediaInfoSheet
 import xyz.mpv.rex.ui.browser.sheets.MultiSelectionInfoSheet
 import xyz.mpv.rex.ui.browser.videolist.VideoListScreen
 import xyz.mpv.rex.ui.utils.LocalBackStack
+import xyz.mpv.rex.ui.utils.navigateBack
 import xyz.mpv.rex.utils.history.RecentlyPlayedOps
 import xyz.mpv.rex.utils.media.CopyPasteOps
 import xyz.mpv.rex.utils.media.MediaUtils
@@ -109,6 +114,7 @@ import xyz.mpv.rex.utils.media.OpenDocumentTreeContract
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import java.io.File
+import xyz.mpv.rex.ui.motion.RexMotion
 
 @Serializable
 data class SearchScreen(
@@ -149,6 +155,8 @@ data class SearchScreen(
     val recentlyPlayedFilePath by viewModel.recentlyPlayedFilePath.collectAsState()
     val recentlyPlayedFilePaths by viewModel.recentlyPlayedFilePaths.collectAsState()
     val recentlyPlayedPaths by viewModel.recentlyPlayedPaths.collectAsState()
+    val browserPreferences = koinInject<BrowserPreferences>()
+    val showAudioFiles by browserPreferences.showAudioFiles.collectAsState()
 
     // Selection managers
     val folders = searchResults.filterIsInstance<FileSystemItem.Folder>()
@@ -238,11 +246,20 @@ data class SearchScreen(
         folderSelectionManager.clear()
         videoSelectionManager.clear()
       } else {
-        backstack.removeLastOrNull()
+        backstack.navigateBack()
       }
     }
 
     Scaffold(
+      // Nested/pushed screens must set the screen tone themselves; it does not
+      // propagate from MainScreen across a NavDisplay boundary, and a nested
+      // Scaffold overrides it. surfaceContainer is what shows through the
+      // content surface's gaps and around its 24.dp corners.
+      containerColor = if (MaterialTheme.colorScheme.background == androidx.compose.ui.graphics.Color.Black) {
+        androidx.compose.ui.graphics.Color.Black
+      } else {
+        MaterialTheme.colorScheme.surfaceContainer
+      },
       topBar = {
         val topBarContainerColor = if (MaterialTheme.colorScheme.background == Color.Black) {
           Color.Black
@@ -290,8 +307,8 @@ data class SearchScreen(
                   multiSelectionUnit = "folder"
                   multiSelectionInfo = Triple(
                     selected.size,
-                    selected.sumOf { it.totalSize },
-                    selected.sumOf { it.totalDuration },
+                    selected.sumOf { it.activeSize(showAudioFiles) },
+                    selected.sumOf { it.activeDuration(showAudioFiles) },
                   )
                 }
               }
@@ -302,8 +319,8 @@ data class SearchScreen(
                   multiSelectionUnit = "item"
                   multiSelectionInfo = Triple(
                     selectedVideos.size + selectedFolders.size,
-                    selectedVideos.sumOf { it.size } + selectedFolders.sumOf { it.totalSize },
-                    selectedVideos.sumOf { it.duration } + selectedFolders.sumOf { it.totalDuration },
+                    selectedVideos.sumOf { it.size } + selectedFolders.sumOf { it.activeSize(showAudioFiles) },
+                    selectedVideos.sumOf { it.duration } + selectedFolders.sumOf { it.activeDuration(showAudioFiles) },
                   )
                 }
               }
@@ -373,7 +390,7 @@ data class SearchScreen(
               add(
                 SelectionOverflowAction(
                   icon = Icons.Filled.Share,
-                  label = "Web Share",
+                  label = stringResource(R.string.web_share_title),
                   onClick = { showWebShareSheet = true }
                 )
               )
@@ -421,7 +438,7 @@ data class SearchScreen(
                 ),
                 windowInsets = WindowInsets(0, 0, 0, 0),
                 navigationIcon = {
-                  IconButton(onClick = { backstack.removeLastOrNull() }) {
+                  IconButton(onClick = { backstack.navigateBack() }) {
                     Icon(
                       imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                       contentDescription = stringResource(R.string.generic_cancel),
@@ -540,14 +557,14 @@ data class SearchScreen(
         }
       }
     ) { padding ->
-      Box(
-        modifier = Modifier
-          .fillMaxSize()
-          .padding(top = padding.calculateTopPadding())
+      ContentSurfaceContainer(
+        navigationBarHeight = LocalNavigationBarHeight.current,
+        modifier = Modifier.padding(top = padding.calculateTopPadding()),
       ) {
         UnifiedExplorerContent(
           items = searchResults,
           isLoading = isSearchLoading,
+          hasLoaded = !isSearchLoading,
           uiSettings = uiSettings,
           isSelected = { item ->
             when (item) {
@@ -603,50 +620,45 @@ data class SearchScreen(
           watchedVideoIds = watchedVideoIds,
           videoPlaybackProgress = videoFilesWithPlayback,
           showSections = true,
+          useContentSurface = true,
         )
 
-        // Floating Bottom Bar for multi-selection actions
-        AnimatedVisibility(
-          visible = showFloatingBottomBar,
-          enter = slideInVertically(
-            animationSpec = tween(durationMillis = 200),
-            initialOffsetY = { fullHeight -> fullHeight }
-          ),
-          exit = slideOutVertically(
-            animationSpec = tween(durationMillis = 200),
-            targetOffsetY = { fullHeight -> fullHeight }
-          ),
-          modifier = Modifier.align(Alignment.BottomCenter)
-        ) {
-          BrowserBottomBar(
-            isSelectionMode = true,
-            onCopyClick = {
-              operationType.value = CopyPasteOps.OperationType.Copy
-              if (CopyPasteOps.canUseDirectFileOperations()) {
-                folderPickerOpen.value = true
-              } else {
-                treePickerLauncher.launch(null)
-              }
-            },
-            onMoveClick = {
-              operationType.value = CopyPasteOps.OperationType.Move
-              if (CopyPasteOps.canUseDirectFileOperations()) {
-                folderPickerOpen.value = true
-              } else {
-                treePickerLauncher.launch(null)
-              }
-            },
-            onRenameClick = { renameDialogOpen = true },
-            onDeleteClick = { deleteDialogOpen = true },
-            onAddToPlaylistClick = { addToPlaylistDialogOpen = true },
-            onMarkAsClick = { showMarkAsSheet = true },
-            showRename = (videoSelectionManager.isSingleSelection || folderSelectionManager.isSingleSelection) && !isMixedSelection,
-            showAddToPlaylist = videoSelectionManager.isInSelectionMode && !isMixedSelection,
-            showDelete = !isMixedSelection && folderSelectionManager.selectedCount <= 1
-          )
+        Box(modifier = Modifier.fillMaxSize()) {
+          // Floating Bottom Bar for multi-selection actions
+          AnimatedVisibility(
+            visible = showFloatingBottomBar,
+            enter = RexMotion.dockEnter(LocalContext.current),
+          exit = RexMotion.dockExit(LocalContext.current),
+            modifier = Modifier.align(Alignment.BottomCenter)
+          ) {
+            BrowserBottomBar(
+              isSelectionMode = true,
+              onCopyClick = {
+                operationType.value = CopyPasteOps.OperationType.Copy
+                if (CopyPasteOps.canUseDirectFileOperations()) {
+                  folderPickerOpen.value = true
+                } else {
+                  treePickerLauncher.launch(null)
+                }
+              },
+              onMoveClick = {
+                operationType.value = CopyPasteOps.OperationType.Move
+                if (CopyPasteOps.canUseDirectFileOperations()) {
+                  folderPickerOpen.value = true
+                } else {
+                  treePickerLauncher.launch(null)
+                }
+              },
+              onRenameClick = { renameDialogOpen = true },
+              onDeleteClick = { deleteDialogOpen = true },
+              onAddToPlaylistClick = { addToPlaylistDialogOpen = true },
+              onMarkAsClick = { showMarkAsSheet = true },
+              showRename = (videoSelectionManager.isSingleSelection || folderSelectionManager.isSingleSelection) && !isMixedSelection,
+              showAddToPlaylist = videoSelectionManager.isInSelectionMode && !isMixedSelection,
+              showDelete = !isMixedSelection && folderSelectionManager.selectedCount <= 1
+            )
+          }
         }
-      }
-    }
 
     // Rename Dialog
     if (renameDialogOpen) {
@@ -851,6 +863,8 @@ data class SearchScreen(
           videoSelectionManager.clear()
         },
       )
+    }
+      }
     }
   }
 }

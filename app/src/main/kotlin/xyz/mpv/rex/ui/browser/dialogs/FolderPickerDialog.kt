@@ -25,7 +25,6 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -46,6 +45,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import xyz.mpv.rex.utils.storage.StorageVolumeUtils
 import java.io.File
+import xyz.mpv.rex.ui.controls.TonalIconTone
+import xyz.mpv.rex.ui.controls.tonalIconButtonColors
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
@@ -161,11 +162,7 @@ fun FolderPickerDialog(
                 val parent = currentDir?.parent
                 selectedPath = parent // null will show storage root
               },
-              colors =
-                IconButtonDefaults.filledTonalIconButtonColors(
-                  containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                  contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
-                ),
+              colors = tonalIconButtonColors(TonalIconTone.Secondary),
               shape = MaterialTheme.shapes.extraLarge,
             ) {
               Icon(
@@ -180,11 +177,7 @@ fun FolderPickerDialog(
             onClick = {
               selectedPath = Environment.getExternalStorageDirectory().absolutePath
             },
-            colors =
-              IconButtonDefaults.filledTonalIconButtonColors(
-                containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
-              ),
+            colors = tonalIconButtonColors(TonalIconTone.Secondary),
             shape = MaterialTheme.shapes.extraLarge,
           ) {
             Icon(
@@ -197,11 +190,7 @@ fun FolderPickerDialog(
           FilledTonalIconButton(
             onClick = { showCreateFolderDialog = true },
             enabled = selectedPath != null,
-            colors =
-              IconButtonDefaults.filledTonalIconButtonColors(
-                containerColor = MaterialTheme.colorScheme.primaryContainer,
-                contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-              ),
+            colors = tonalIconButtonColors(TonalIconTone.Primary),
             shape = MaterialTheme.shapes.extraLarge,
           ) {
             Icon(

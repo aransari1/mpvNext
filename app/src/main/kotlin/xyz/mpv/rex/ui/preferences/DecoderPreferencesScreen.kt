@@ -41,18 +41,27 @@ import xyz.mpv.rex.preferences.DecoderPreferences
 import xyz.mpv.rex.preferences.preference.collectAsState
 import xyz.mpv.rex.domain.hdr.HdrToysManager
 import xyz.mpv.rex.presentation.Screen
+import xyz.mpv.rex.presentation.components.CollapsibleHeaderScreen
+import xyz.mpv.rex.presentation.components.GroupPosition
+import xyz.mpv.rex.presentation.components.GroupedListColumn
 import xyz.mpv.rex.ui.player.Debanding
 import xyz.mpv.rex.ui.player.MPVProfile
 import xyz.mpv.rex.ui.utils.LocalBackStack
+import xyz.mpv.rex.ui.utils.navigateBack
 import xyz.mpv.rex.ui.preferences.VulkanUtils
 import kotlinx.serialization.Serializable
 import me.zhanghai.compose.preference.ListPreference
 import me.zhanghai.compose.preference.ProvidePreferenceLocals
 import xyz.mpv.rex.ui.preferences.components.SwitchPreference
 import org.koin.compose.koinInject
+import xyz.mpv.rex.presentation.MotionStyle
 
 @Serializable
 object DecoderPreferencesScreen : Screen {
+  /** Settings keep the app's original full horizontal push. */
+  override val motion: MotionStyle
+    get() = MotionStyle.Default
+
   @OptIn(ExperimentalMaterial3Api::class)
   @Composable
   override fun Content() {
@@ -61,36 +70,21 @@ object DecoderPreferencesScreen : Screen {
     val context = LocalContext.current
     val isVulkanSupported = remember { VulkanUtils.isVulkanSupported(context) }
     var showGpuNextWarning by remember { mutableStateOf(false) }
-    Scaffold(
-      topBar = {
-        TopAppBar(
-          title = {
-            Text(
-              text = stringResource(R.string.pref_decoder),
-              style = MaterialTheme.typography.headlineSmall,
-              fontWeight = FontWeight.ExtraBold,
-              color = MaterialTheme.colorScheme.primary,
-            )
-          },
-          navigationIcon = {
-            IconButton(onClick = backstack::removeLastOrNull) {
-              Icon(
-                Icons.AutoMirrored.Default.ArrowBack,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.secondary,
-              )
-            }
-          },
-        )
-      },
-    ) { padding ->
+    val pageColor = MaterialTheme.colorScheme.surfaceContainer
+    val cardColor = MaterialTheme.colorScheme.surface
+
+    CollapsibleHeaderScreen(
+      containerColor = pageColor,
+      title = stringResource(R.string.pref_decoder),
+      showBackButton = true,
+      onBackClick = backstack::navigateBack,
+    ) { contentModifier ->
       val navBarHeight = xyz.mpv.rex.ui.browser.LocalNavigationBarHeight.current
+      val listState = rememberPreferenceLazyListState()
       ProvidePreferenceLocals {
         LazyColumn(
-          modifier =
-            Modifier
-              .fillMaxSize()
-              .padding(padding),
+          state = listState,
+          modifier = contentModifier,
           contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = navBarHeight + 16.dp),
         ) {
           item {
@@ -98,278 +92,314 @@ object DecoderPreferencesScreen : Screen {
           }
 
           item {
-            PreferenceCard {
-              val profile by preferences.profile.collectAsState()
-              val currentProfile = MPVProfile.fromValue(profile)
-              ListPreference(
-                value = currentProfile,
-                onValueChange = { preferences.profile.set(it.value) },
-                values = MPVProfile.entries,
-                title = { Text(stringResource(R.string.pref_decoder_profile_title)) },
-                summary = {
-                  Text(
-                    currentProfile.displayName,
-                    color = MaterialTheme.colorScheme.outline,
-                  )
-                },
-              )
+            val profile by preferences.profile.collectAsState()
+            val currentProfile = MPVProfile.fromValue(profile)
+            val tryHWDecoding by preferences.tryHWDecoding.collectAsState()
+            val gpuNext by preferences.gpuNext.collectAsState()
+            val useVulkan by preferences.useVulkan.collectAsState()
+            val debanding by preferences.debanding.collectAsState()
+            val useYUV420p by preferences.useYUV420P.collectAsState()
+            val enableAnime4K by preferences.enableAnime4K.collectAsState()
+            val enableHdrToys by preferences.enableHdrToys.collectAsState()
 
-              PreferenceDivider()
+            GroupedListColumn {
+              GroupedPreferenceCard(
+                color = cardColor, tonalElevation = 0.dp,
+                position = GroupPosition.FIRST,
+                highlightKey = listOf(R.string.pref_decoder, R.string.pref_decoder_profile_title),
+              ) {
+                ListPreference(
+                  value = currentProfile,
+                  onValueChange = { preferences.profile.set(it.value) },
+                  values = MPVProfile.entries,
+                  title = { Text(stringResource(R.string.pref_decoder_profile_title)) },
+                  summary = {
+                    Text(
+                      currentProfile.displayName,
+                      color = MaterialTheme.colorScheme.outline,
+                    )
+                  },
+                )
+              }
 
-              val tryHWDecoding by preferences.tryHWDecoding.collectAsState()
-              SwitchPreference(
-                value = tryHWDecoding,
-                onValueChange = {
-                  preferences.tryHWDecoding.set(it)
-                },
-                title = { Text(stringResource(R.string.pref_decoder_try_hw_dec_title)) },
-              )
+              GroupedPreferenceCard(
+                color = cardColor, tonalElevation = 0.dp,
+                position = GroupPosition.MIDDLE,
+                highlightKey = R.string.pref_decoder_try_hw_dec_title,
+              ) {
+                SwitchPreference(
+                  value = tryHWDecoding,
+                  onValueChange = { preferences.tryHWDecoding.set(it) },
+                  title = { Text(stringResource(R.string.pref_decoder_try_hw_dec_title)) },
+                )
+              }
 
-              PreferenceDivider()
+              GroupedPreferenceCard(
+                color = cardColor, tonalElevation = 0.dp,
+                position = GroupPosition.MIDDLE,
+                highlightKey = R.string.pref_decoder_codec_info_title,
+              ) {
+                me.zhanghai.compose.preference.Preference(
+                  title = { Text(stringResource(R.string.pref_decoder_codec_info_title)) },
+                  summary = {
+                    Text(
+                      stringResource(R.string.pref_decoder_codec_info_summary),
+                      color = MaterialTheme.colorScheme.outline,
+                    )
+                  },
+                  onClick = { backstack.add(CodecInformationScreen) },
+                )
+              }
 
-              me.zhanghai.compose.preference.Preference(
-                title = { Text(stringResource(R.string.pref_decoder_codec_info_title)) },
-                summary = {
-                  Text(
-                    stringResource(R.string.pref_decoder_codec_info_summary),
-                    color = MaterialTheme.colorScheme.outline,
-                  )
-                },
-                onClick = { backstack.add(CodecInformationScreen) },
-              )
-
-              PreferenceDivider()
-
-              val gpuNext by preferences.gpuNext.collectAsState()
-              val useVulkan by preferences.useVulkan.collectAsState() // Added to check Vulkan state
-              SwitchPreference(
-                value = gpuNext,
-                onValueChange = { enabled ->
-                    if (enabled && !gpuNext && !useVulkan) { // Only show warning if Vulkan is disabled
+              GroupedPreferenceCard(
+                color = cardColor, tonalElevation = 0.dp,
+                position = GroupPosition.MIDDLE,
+                highlightKey = R.string.pref_decoder_gpu_next_title,
+              ) {
+                Column {
+                  SwitchPreference(
+                    value = gpuNext,
+                    onValueChange = { enabled ->
+                      if (enabled && !gpuNext && !useVulkan) {
                         showGpuNextWarning = true
-                    } else {
+                      } else {
                         preferences.gpuNext.set(enabled)
-                        if (enabled && !useVulkan) { // Only disable Anime4K if Vulkan is disabled
-                            preferences.enableAnime4K.set(false)
+                        if (enabled && !useVulkan) {
+                          preferences.enableAnime4K.set(false)
                         }
-                    }
-                },
-                title = { Text(stringResource(R.string.pref_decoder_gpu_next_title)) },
-                summary = {
-                  Text(
-                    stringResource(R.string.pref_decoder_gpu_next_summary),
-                    color = MaterialTheme.colorScheme.outline,
+                      }
+                    },
+                    title = { Text(stringResource(R.string.pref_decoder_gpu_next_title)) },
+                    summary = {
+                      Text(
+                        stringResource(R.string.pref_decoder_gpu_next_summary),
+                        color = MaterialTheme.colorScheme.outline,
+                      )
+                    },
                   )
-                },
-              )
 
-              if (showGpuNextWarning) {
-                  AlertDialog(
+                  if (showGpuNextWarning) {
+                    AlertDialog(
                       onDismissRequest = { showGpuNextWarning = false },
                       title = { Text(stringResource(R.string.pref_decoder_gpu_next_enable_title)) },
                       text = {
-                          Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                              Text(stringResource(R.string.pref_decoder_gpu_next_warning))
-                              Text(stringResource(R.string.pref_decoder_gpu_next_purple_screen_fix))
-                              
-                              Surface(
-                                  color = MaterialTheme.colorScheme.errorContainer,
-                                  shape = MaterialTheme.shapes.small
-                              ) {
-                                  Column(modifier = Modifier.padding(8.dp)) {
-                                      Text(
-                                          text = stringResource(R.string.pref_anime4k_incompatibility),
-                                          style = MaterialTheme.typography.titleSmall,
-                                          color = MaterialTheme.colorScheme.onErrorContainer
-                                      )
-                                      Text(
-                                          text = stringResource(R.string.pref_anime4k_gpu_next_error),
-                                          style = MaterialTheme.typography.bodySmall,
-                                          color = MaterialTheme.colorScheme.onErrorContainer
-                                      )
-                                  }
-                              }
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                          Text(stringResource(R.string.pref_decoder_gpu_next_warning))
+                          Text(stringResource(R.string.pref_decoder_gpu_next_purple_screen_fix))
+                          
+                          Surface(
+                            color = MaterialTheme.colorScheme.errorContainer,
+                            shape = MaterialTheme.shapes.small
+                          ) {
+                            Column(modifier = Modifier.padding(8.dp)) {
+                              Text(
+                                text = stringResource(R.string.pref_anime4k_incompatibility),
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.onErrorContainer
+                              )
+                              Text(
+                                text = stringResource(R.string.pref_anime4k_gpu_next_error),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onErrorContainer
+                              )
+                            }
                           }
+                        }
                       },
                       confirmButton = {
-                          Button(onClick = {
-                              preferences.gpuNext.set(true)
-                              preferences.enableAnime4K.set(false) // Ensure Anime4K is disabled on confirmation
-                              showGpuNextWarning = false
-                          }) {
-                              Text(stringResource(R.string.pref_decoder_gpu_next_enable_anyway))
-                          }
+                        Button(onClick = {
+                          preferences.gpuNext.set(true)
+                          preferences.enableAnime4K.set(false)
+                          showGpuNextWarning = false
+                        }) {
+                          Text(stringResource(R.string.pref_decoder_gpu_next_enable_anyway))
+                        }
                       },
                       dismissButton = {
-                          TextButton(onClick = { showGpuNextWarning = false }) {
-                              Text(stringResource(R.string.generic_cancel))
-                          }
+                        TextButton(onClick = { showGpuNextWarning = false }) {
+                          Text(stringResource(R.string.generic_cancel))
+                        }
                       }
-                  )
+                    )
+                  }
+                }
               }
 
-              PreferenceDivider()
-
-              // val useVulkan by preferences.useVulkan.collectAsState() // Moved up for gpuNext logic
-             SwitchPreference(
-                value = useVulkan,
-                onValueChange = { enabled ->
-                  preferences.useVulkan.set(enabled)
-                  // When Vulkan is disabled, ensure Anime4K and GPU Next are not both enabled
-                  if (!enabled) {
-                    val anime4kEnabled = preferences.enableAnime4K.get()
-                    val gpuNextEnabled = preferences.gpuNext.get()
-                    if (anime4kEnabled && gpuNextEnabled) {
-                      // Disable GPU Next to keep Anime4K
-                      preferences.gpuNext.set(false)
+              GroupedPreferenceCard(
+                color = cardColor, tonalElevation = 0.dp,
+                position = GroupPosition.MIDDLE,
+                highlightKey = R.string.pref_decoder_vulkan_title,
+              ) {
+                SwitchPreference(
+                  value = useVulkan,
+                  onValueChange = { enabled ->
+                    preferences.useVulkan.set(enabled)
+                    if (!enabled) {
+                      val anime4kEnabled = preferences.enableAnime4K.get()
+                      val gpuNextEnabled = preferences.gpuNext.get()
+                      if (anime4kEnabled && gpuNextEnabled) {
+                        preferences.gpuNext.set(false)
+                      }
                     }
-                  }
-                },
-                enabled = isVulkanSupported,
-                title = { Text(stringResource(R.string.pref_decoder_vulkan_title) + " (Experimental)") },
-                summary = {
-                  Text(
-                    stringResource(
-                      if (isVulkanSupported) R.string.pref_decoder_vulkan_summary
-                      else R.string.pref_decoder_vulkan_not_supported
-                    ),
-                    color = if (isVulkanSupported) MaterialTheme.colorScheme.outline
-                           else MaterialTheme.colorScheme.error,
-                  )
-                },
-              )
+                  },
+                  enabled = isVulkanSupported,
+                  title = { Text(stringResource(R.string.pref_decoder_vulkan_title) + " (Experimental)") },
+                  summary = {
+                    Text(
+                      stringResource(
+                        if (isVulkanSupported) R.string.pref_decoder_vulkan_summary
+                        else R.string.pref_decoder_vulkan_not_supported
+                      ),
+                      color = if (isVulkanSupported) MaterialTheme.colorScheme.outline
+                             else MaterialTheme.colorScheme.error,
+                    )
+                  },
+                )
+              }
 
-              PreferenceDivider()
+              GroupedPreferenceCard(
+                color = cardColor, tonalElevation = 0.dp,
+                position = GroupPosition.MIDDLE,
+                highlightKey = R.string.pref_decoder_debanding_title,
+              ) {
+                ListPreference(
+                  value = debanding,
+                  onValueChange = { preferences.debanding.set(it) },
+                  values = Debanding.entries,
+                  title = { Text(stringResource(R.string.pref_decoder_debanding_title)) },
+                  summary = {
+                    Text(
+                      debanding.name,
+                      color = MaterialTheme.colorScheme.outline,
+                    )
+                  },
+                )
+              }
 
-              val debanding by preferences.debanding.collectAsState()
-              ListPreference(
-                value = debanding,
-                onValueChange = { preferences.debanding.set(it) },
-                values = Debanding.entries,
-                title = { Text(stringResource(R.string.pref_decoder_debanding_title)) },
-                summary = {
-                  Text(
-                    debanding.name,
-                    color = MaterialTheme.colorScheme.outline,
-                  )
-                },
-              )
+              GroupedPreferenceCard(
+                color = cardColor, tonalElevation = 0.dp,
+                position = GroupPosition.MIDDLE,
+                highlightKey = R.string.pref_decoder_yuv420p_title,
+              ) {
+                SwitchPreference(
+                  value = useYUV420p,
+                  onValueChange = { preferences.useYUV420P.set(it) },
+                  title = { Text(stringResource(R.string.pref_decoder_yuv420p_title)) },
+                  summary = {
+                    Text(
+                      stringResource(R.string.pref_decoder_yuv420p_summary),
+                      color = MaterialTheme.colorScheme.outline,
+                    )
+                  },
+                )
+              }
 
-              PreferenceDivider()
-
-              val useYUV420p by preferences.useYUV420P.collectAsState()
-              SwitchPreference(
-                value = useYUV420p,
-                onValueChange = {
-                  preferences.useYUV420P.set(it)
-                },
-                title = { Text(stringResource(R.string.pref_decoder_yuv420p_title)) },
-                summary = {
-                  Text(
-                    stringResource(R.string.pref_decoder_yuv420p_summary),
-                    color = MaterialTheme.colorScheme.outline,
-                  )
-                },
-              )
-
-              PreferenceDivider()
-              
-              val enableAnime4K by preferences.enableAnime4K.collectAsState()
-              SwitchPreference(
-                value = enableAnime4K,
-                onValueChange = { enabled ->
+              GroupedPreferenceCard(
+                color = cardColor, tonalElevation = 0.dp,
+                position = GroupPosition.MIDDLE,
+                highlightKey = R.string.pref_anime4k_title,
+              ) {
+                SwitchPreference(
+                  value = enableAnime4K,
+                  onValueChange = { enabled ->
                     preferences.enableAnime4K.set(enabled)
                     if (enabled) {
-                        preferences.enableHdrToys.set(false)
-                        if (!useVulkan) { // Only disable GPU Next if Vulkan is disabled
-                            preferences.gpuNext.set(false)
-                        }
+                      preferences.enableHdrToys.set(false)
+                      if (!useVulkan) {
+                        preferences.gpuNext.set(false)
+                      }
                     }
-                },
-                title = { Text(stringResource(R.string.pref_anime4k_title)) },
-                summary = {
-                  Column {
-                    Text(
-                      stringResource(R.string.pref_anime4k_summary),
-                      color = MaterialTheme.colorScheme.outline,
+                  },
+                  title = { Text(stringResource(R.string.pref_anime4k_title)) },
+                  summary = {
+                    Column {
+                      Text(
+                        stringResource(R.string.pref_anime4k_summary),
+                        color = MaterialTheme.colorScheme.outline,
+                      )
+                      Text(
+                        text = "github.com/bloc97/Anime4K",
+                        color = MaterialTheme.colorScheme.primary,
+                        style = MaterialTheme.typography.bodySmall,
+                        textDecoration = TextDecoration.Underline,
+                        modifier = Modifier.clickable {
+                          val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/bloc97/Anime4K"))
+                          context.startActivity(intent)
+                        }
+                      )
+                    }
+                  },
+                )
+              }
+
+              GroupedPreferenceCard(
+                color = cardColor, tonalElevation = 0.dp,
+                position = GroupPosition.LAST,
+                highlightKey = "HDR-to-SDR Tone Mapping (hdr-toys)",
+              ) {
+                Column {
+                  SwitchPreference(
+                    value = enableHdrToys,
+                    onValueChange = { enabled ->
+                      preferences.enableHdrToys.set(enabled)
+                      if (enabled) {
+                        preferences.gpuNext.set(true)
+                        preferences.enableAnime4K.set(false)
+                      }
+                    },
+                    title = { Text("HDR-to-SDR Tone Mapping (hdr-toys)") },
+                    summary = {
+                      Column {
+                        Text(
+                          "Apply high quality GLSL shaders for HDR-to-SDR conversion. Requires gpu-next.",
+                          color = MaterialTheme.colorScheme.outline,
+                        )
+                        Text(
+                          text = "github.com/natural-harmonia-gropius/hdr-toys",
+                          color = MaterialTheme.colorScheme.primary,
+                          style = MaterialTheme.typography.bodySmall,
+                          textDecoration = TextDecoration.Underline,
+                          modifier = Modifier.clickable {
+                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/natural-harmonia-gropius/hdr-toys"))
+                            context.startActivity(intent)
+                          }
+                        )
+                      }
+                    },
+                  )
+
+                  if (enableHdrToys) {
+                    val toneMapping by preferences.hdrToysToneMapping.collectAsState()
+                    val currentTone = runCatching { HdrToysManager.ToneMapping.valueOf(toneMapping) }.getOrDefault(HdrToysManager.ToneMapping.ASTRA)
+                    ListPreference(
+                      value = currentTone,
+                      onValueChange = { preferences.hdrToysToneMapping.set(it.name) },
+                      values = HdrToysManager.ToneMapping.entries,
+                      title = { Text("  Tone Mapping Algorithm") },
+                      summary = {
+                        Text(
+                          "  " + currentTone.name,
+                          color = MaterialTheme.colorScheme.outline,
+                        )
+                      }
                     )
-                    Text(
-                      text = "github.com/bloc97/Anime4K",
-                      color = MaterialTheme.colorScheme.primary,
-                      style = MaterialTheme.typography.bodySmall,
-                      textDecoration = TextDecoration.Underline,
-                      modifier = Modifier.clickable {
-                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/bloc97/Anime4K"))
-                        context.startActivity(intent)
+
+                    val gamutMapping by preferences.hdrToysGamutMapping.collectAsState()
+                    val currentGamut = runCatching { HdrToysManager.GamutMapping.valueOf(gamutMapping) }.getOrDefault(HdrToysManager.GamutMapping.BOTTOSSON)
+                    ListPreference(
+                      value = currentGamut,
+                      onValueChange = { preferences.hdrToysGamutMapping.set(it.name) },
+                      values = HdrToysManager.GamutMapping.entries,
+                      title = { Text("  Gamut Mapping Algorithm") },
+                      summary = {
+                        Text(
+                          "  " + currentGamut.name,
+                          color = MaterialTheme.colorScheme.outline,
+                        )
                       }
                     )
                   }
-                },
-              )
-
-              PreferenceDivider()
-
-              val enableHdrToys by preferences.enableHdrToys.collectAsState()
-              SwitchPreference(
-                value = enableHdrToys,
-                onValueChange = { enabled ->
-                  preferences.enableHdrToys.set(enabled)
-                  if (enabled) {
-                    preferences.gpuNext.set(true)
-                    preferences.enableAnime4K.set(false)
-                  }
-                },
-                title = { Text("HDR-to-SDR Tone Mapping (hdr-toys)") },
-                summary = {
-                  Column {
-                    Text(
-                      "Apply high quality GLSL shaders for HDR-to-SDR conversion. Requires gpu-next.",
-                      color = MaterialTheme.colorScheme.outline,
-                    )
-                    Text(
-                      text = "github.com/natural-harmonia-gropius/hdr-toys",
-                      color = MaterialTheme.colorScheme.primary,
-                      style = MaterialTheme.typography.bodySmall,
-                      textDecoration = TextDecoration.Underline,
-                      modifier = Modifier.clickable {
-                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/natural-harmonia-gropius/hdr-toys"))
-                        context.startActivity(intent)
-                      }
-                    )
-                  }
-                },
-              )
-
-              if (enableHdrToys) {
-                val toneMapping by preferences.hdrToysToneMapping.collectAsState()
-                val currentTone = runCatching { HdrToysManager.ToneMapping.valueOf(toneMapping) }.getOrDefault(HdrToysManager.ToneMapping.ASTRA)
-                ListPreference(
-                  value = currentTone,
-                  onValueChange = { preferences.hdrToysToneMapping.set(it.name) },
-                  values = HdrToysManager.ToneMapping.entries,
-                  title = { Text("  Tone Mapping Algorithm") },
-                  summary = {
-                    Text(
-                      "  " + currentTone.name,
-                      color = MaterialTheme.colorScheme.outline,
-                    )
-                  }
-                )
-
-                val gamutMapping by preferences.hdrToysGamutMapping.collectAsState()
-                val currentGamut = runCatching { HdrToysManager.GamutMapping.valueOf(gamutMapping) }.getOrDefault(HdrToysManager.GamutMapping.BOTTOSSON)
-                ListPreference(
-                  value = currentGamut,
-                  onValueChange = { preferences.hdrToysGamutMapping.set(it.name) },
-                  values = HdrToysManager.GamutMapping.entries,
-                  title = { Text("  Gamut Mapping Algorithm") },
-                  summary = {
-                    Text(
-                      "  " + currentGamut.name,
-                      color = MaterialTheme.colorScheme.outline,
-                    )
-                  }
-                )
+                }
               }
             }
           }

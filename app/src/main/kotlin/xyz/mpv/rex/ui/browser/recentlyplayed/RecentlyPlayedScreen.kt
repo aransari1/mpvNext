@@ -9,10 +9,16 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.calculateEndPadding
+import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -25,15 +31,23 @@ import androidx.compose.material.icons.filled.FileOpen
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
+import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.FloatingActionButtonMenu
+import androidx.compose.material3.FloatingActionButtonMenuItem
 import androidx.compose.material3.Icon
+import androidx.compose.material3.ToggleFloatingActionButton
+import androidx.compose.material3.ToggleFloatingActionButtonDefaults.animateIcon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.PlainTooltip
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.TopAppBarState
+import androidx.compose.material3.rememberTopAppBarState
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.material3.TooltipAnchorPosition
 import androidx.compose.material3.TooltipBox
 import androidx.compose.material3.TooltipDefaults
@@ -56,6 +70,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import xyz.mpv.rex.database.repository.PlaylistRepository
@@ -75,11 +91,13 @@ import xyz.mpv.rex.ui.browser.cards.FolderCard
 import xyz.mpv.rex.ui.browser.cards.PlaylistCard
 import xyz.mpv.rex.ui.browser.cards.VideoCard
 import xyz.mpv.rex.ui.browser.components.BrowserTopBar
+import xyz.mpv.rex.ui.browser.components.ContentSurfaceContainer
 import xyz.mpv.rex.ui.browser.components.UnifiedExplorerContent
 import xyz.mpv.rex.ui.browser.playlist.PlaylistDetailScreen
 import xyz.mpv.rex.ui.browser.selection.rememberSelectionManager
 import xyz.mpv.rex.ui.browser.states.EmptyState
 import xyz.mpv.rex.ui.utils.LocalBackStack
+import xyz.mpv.rex.ui.utils.navigateBack
 import xyz.mpv.rex.utils.media.MediaUtils
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
@@ -109,6 +127,13 @@ object RecentlyPlayedScreen : Screen {
     val navigationBarHeight = xyz.mpv.rex.ui.browser.LocalNavigationBarHeight.current
 
     val isFabVisible = remember { mutableStateOf(true) }
+    val isFabExpanded = remember { mutableStateOf(false) }
+    val isMiniPlayerActive = xyz.mpv.rex.ui.browser.LocalMiniPlayerActive.current
+    LaunchedEffect(isMiniPlayerActive) {
+      if (isMiniPlayerActive) {
+        isFabExpanded.value = false
+      }
+    }
     val isRefreshing = remember { mutableStateOf(false) }
     
     val coroutineScope = rememberCoroutineScope()
@@ -123,17 +148,21 @@ object RecentlyPlayedScreen : Screen {
             is RecentlyPlayedItem.PlaylistItem -> "playlist_${item.playlist.id}"
           }
         },
-        onDeleteItems = { items, _ ->
-          viewModel.deleteRecentItems(items)
+        onDeleteItems = { items, deleteFiles ->
+          viewModel.deleteRecentItems(items, deleteFiles)
         },
         onRenameItem = null, // Cannot rename from history screen
         onOperationComplete = { },
       )
 
-    // Handle back button during selection mode
-    BackHandler(enabled = selectionManager.isInSelectionMode) {
+    val canNavigateBack = remember { backStack.size > 1 }
+
+    // Handle back button during selection mode or when navigated from another screen
+    BackHandler(enabled = selectionManager.isInSelectionMode || canNavigateBack) {
       if (selectionManager.isInSelectionMode) {
         selectionManager.clear()
+      } else {
+        backStack.navigateBack()
       }
     }
 
@@ -142,6 +171,8 @@ object RecentlyPlayedScreen : Screen {
     val gridState = remember { LazyGridState() }
     val browserPreferences = koinInject<BrowserPreferences>()
     val mediaLayoutMode by browserPreferences.mediaLayoutMode.collectAsState()
+    val appearancePreferences = koinInject<xyz.mpv.rex.preferences.AppearancePreferences>()
+    val hidePlayFabShowInHeader by appearancePreferences.hidePlayFabShowInHeader.collectAsState()
     xyz.mpv.rex.ui.browser.fab.FabScrollHelper.trackScrollForFabVisibility(
       listState = listState,
       gridState = if (mediaLayoutMode == MediaLayoutMode.GRID) gridState else null,
@@ -164,19 +195,54 @@ object RecentlyPlayedScreen : Screen {
       }
     }
 
+    val topAppBarState = rememberTopAppBarState()
+    val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior(topAppBarState)
+
     Scaffold(
+        modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
+      // Nested/pushed screens must set the screen tone themselves; it does not
+      // propagate from MainScreen across a NavDisplay boundary, and a nested
+      // Scaffold overrides it. surfaceContainer is what shows through the
+      // content surface's gaps and around its 24.dp corners.
+      containerColor = if (MaterialTheme.colorScheme.background == androidx.compose.ui.graphics.Color.Black) {
+        androidx.compose.ui.graphics.Color.Black
+      } else {
+        MaterialTheme.colorScheme.surfaceContainer
+      },
         topBar = {
           BrowserTopBar(
             title = stringResource(R.string.recently_played),
+            scrollBehavior = scrollBehavior,
             isInSelectionMode = selectionManager.isInSelectionMode,
             selectedCount = selectionManager.selectedCount,
             totalCount = recentItems.size,
-            onBackClick = null, // No back button for recently played screen
+            onBackClick = if (canNavigateBack) {
+              {
+                if (selectionManager.isInSelectionMode) {
+                  selectionManager.clear()
+                } else {
+                  backStack.navigateBack()
+                }
+              }
+            } else null,
             onCancelSelection = { selectionManager.clear() },
             onSortClick = null, // No sorting in recently played
             onSettingsClick = {
               backStack.add(xyz.mpv.rex.ui.preferences.PreferencesScreen)
             },
+            normalPlayClick = if (hidePlayFabShowInHeader && recentItems.isNotEmpty()) {
+              {
+                coroutineScope.launch {
+                  val recentlyPlayedVideos = xyz.mpv.rex.utils.history.RecentlyPlayedOps.getRecentlyPlayed(limit = 1)
+                  val lastPlayed = recentlyPlayedVideos.firstOrNull()
+                  if (lastPlayed != null) {
+                    MediaUtils.playFile(lastPlayed.filePath, context, "recently_played_button")
+                  } else {
+                    android.widget.Toast.makeText(context, context.getString(R.string.no_recently_played_videos), android.widget.Toast.LENGTH_SHORT).show()
+                  }
+                }
+              }
+            } else null,
             isSingleSelection = selectionManager.isSingleSelection,
             onInfoClick = null, // No info in recently played
             onPlayClick = null,
@@ -187,32 +253,92 @@ object RecentlyPlayedScreen : Screen {
           )
         },
       floatingActionButton = {
-        if (!selectionManager.isInSelectionMode && isFabVisible.value && recentItems.isNotEmpty()) {
+        val navigationBarHeight = xyz.mpv.rex.ui.browser.LocalNavigationBarHeight.current
+
+        if (!hidePlayFabShowInHeader && recentItems.isNotEmpty() && !isMiniPlayerActive) {
           TooltipBox(
             positionProvider = TooltipDefaults.rememberTooltipPositionProvider(TooltipAnchorPosition.Above),
             tooltip = { PlainTooltip { Text(stringResource(R.string.play_recently_played_or_first)) } },
             state = rememberTooltipState(),
           ) {
-            FloatingActionButton(
-              modifier = Modifier
-                .padding(bottom = navigationBarHeight + 8.dp)
-                .animateFloatingActionButton(
-                  visible = true,
-                  alignment = Alignment.BottomEnd,
-                ),
-              onClick = {
-                coroutineScope.launch {
-                  val recentlyPlayedVideos = xyz.mpv.rex.utils.history.RecentlyPlayedOps.getRecentlyPlayed(limit = 1)
-                  val lastPlayed = recentlyPlayedVideos.firstOrNull()
-                  if (lastPlayed != null) {
-                    MediaUtils.playFile(lastPlayed.filePath, context, "recently_played_button")
-                  } else {
-                    android.widget.Toast.makeText(context, context.getString(R.string.no_recently_played_videos), android.widget.Toast.LENGTH_SHORT).show()
+            FloatingActionButtonMenu(
+              modifier = Modifier.padding(
+                bottom = (navigationBarHeight - 4.dp).coerceAtLeast(0.dp)
+              ),
+              expanded = isFabExpanded.value,
+              button = {
+                TooltipBox(
+                  positionProvider = TooltipDefaults.rememberTooltipPositionProvider(
+                    if (isFabExpanded.value) TooltipAnchorPosition.Start else TooltipAnchorPosition.Above
+                  ),
+                  tooltip = { PlainTooltip { Text(stringResource(R.string.play_recently_played_or_first)) } },
+                  state = rememberTooltipState(),
+                ) {
+                  Box(
+                    modifier = Modifier.animateFloatingActionButton(
+                      visible = !selectionManager.isInSelectionMode && isFabVisible.value,
+                      alignment = Alignment.BottomEnd,
+                    )
+                  ) {
+                    ToggleFloatingActionButton(
+                      checked = isFabExpanded.value,
+                      onCheckedChange = { /* handled by overlay */ },
+                    ) {
+                      val imageVector by remember {
+                        derivedStateOf {
+                          if (checkedProgress > 0.5f) Icons.Filled.Close else Icons.Filled.PlayArrow
+                        }
+                      }
+                      Icon(
+                        painter = rememberVectorPainter(imageVector),
+                        contentDescription = null,
+                        modifier = Modifier.animateIcon({ checkedProgress }),
+                      )
+                    }
+                    Box(
+                      modifier = Modifier
+                        .matchParentSize()
+                        .pointerInput(Unit) {
+                          detectTapGestures(
+                            onTap = {
+                              if (isFabExpanded.value) {
+                                isFabExpanded.value = false
+                              } else {
+                                coroutineScope.launch {
+                                  val recentlyPlayedVideos =
+                                    xyz.mpv.rex.utils.history.RecentlyPlayedOps.getRecentlyPlayed(limit = 1)
+                                  val lastPlayed = recentlyPlayedVideos.firstOrNull()
+                                  if (lastPlayed != null) {
+                                    MediaUtils.playFile(
+                                      lastPlayed.filePath,
+                                      context,
+                                      "recently_played_button"
+                                    )
+                                  } else {
+                                    android.widget.Toast.makeText(
+                                      context,
+                                      context.getString(R.string.no_recently_played_videos),
+                                      android.widget.Toast.LENGTH_SHORT
+                                    ).show()
+                                  }
+                                }
+                              }
+                            },
+                            onLongPress = {
+                              if (!isFabExpanded.value) isFabExpanded.value = true
+                            }
+                          )
+                        }
+                    )
                   }
                 }
               },
             ) {
-              Icon(Icons.Filled.PlayArrow, contentDescription = stringResource(R.string.play_recently_played_or_first))
+              FloatingActionButtonMenuItem(
+                onClick = { isFabExpanded.value = false },
+                icon = { Icon(Icons.Filled.PlayArrow, contentDescription = null) },
+                text = { Text(text = stringResource(R.string.play_recently_played_or_first)) },
+              )
             }
           }
         }
@@ -241,7 +367,7 @@ object RecentlyPlayedScreen : Screen {
               .padding(padding),
             contentAlignment = Alignment.Center,
           ) {
-            CircularProgressIndicator(
+            LoadingIndicator(
               modifier = Modifier.size(48.dp),
               color = MaterialTheme.colorScheme.primary,
             )
@@ -279,11 +405,22 @@ object RecentlyPlayedScreen : Screen {
               // Navigate to playlist detail screen
               backStack.add(PlaylistDetailScreen(playlistItem.playlist.id))
             },
-            modifier = Modifier.padding(padding),
+            // The Scaffold padding repeats the navigation-bar inset that the
+            // content surface already adds (plus its own 14.dp gap), so keep the
+            // top inset only and let the container own the bottom.
+            modifier = Modifier.padding(
+              PaddingValues(
+                start = padding.calculateStartPadding(LocalLayoutDirection.current),
+                top = padding.calculateTopPadding(),
+                end = padding.calculateEndPadding(LocalLayoutDirection.current),
+                bottom = 0.dp,
+              )
+            ),
             isInSelectionMode = selectionManager.isInSelectionMode,
             listState = listState,
             gridState = gridState,
             isRefreshing = isRefreshing,
+            headerScrollState = topAppBarState,
             onRefresh = { viewModel.refresh() }
           )
         }
@@ -360,33 +497,41 @@ private fun RecentItemsContent(
   gridState: LazyGridState,
   isRefreshing: androidx.compose.runtime.MutableState<Boolean>,
   onRefresh: suspend () -> Unit,
+  headerScrollState: TopAppBarState? = null,
 ) {
   val coroutineScope = rememberCoroutineScope()
 
-  UnifiedExplorerContent(
-    items = recentItems,
-    isLoading = false,
-    uiSettings = uiSettings,
-    isSelected = { selectionManager.isSelected(it) },
-    onClick = { item ->
-      when (item) {
-        is RecentlyPlayedItem.VideoItem -> onVideoClick(item.video)
-        is RecentlyPlayedItem.PlaylistItem -> {
-          coroutineScope.launch {
-            onPlaylistClick(item)
+  ContentSurfaceContainer(
+    navigationBarHeight = xyz.mpv.rex.ui.browser.LocalNavigationBarHeight.current,
+    modifier = modifier,
+  ) {
+    UnifiedExplorerContent(
+      items = recentItems,
+      isLoading = false,
+      uiSettings = uiSettings,
+      isSelected = { selectionManager.isSelected(it) },
+      onClick = { item ->
+        when (item) {
+          is RecentlyPlayedItem.VideoItem -> onVideoClick(item.video)
+          is RecentlyPlayedItem.PlaylistItem -> {
+            coroutineScope.launch {
+              onPlaylistClick(item)
+            }
           }
         }
-      }
-    },
-    onLongClick = { item -> selectionManager.handleLongClick(item) },
-    onToggleSelection = { selectionManager.toggle(it) },
-    emptyTitle = stringResource(R.string.no_recently_played_items),
-    emptyMessage = stringResource(R.string.no_recently_played_items_message),
-    isRefreshing = isRefreshing,
-    onRefresh = onRefresh,
-    modifier = modifier,
-    isInSelectionMode = isInSelectionMode,
-    listState = listState,
-    gridState = gridState,
-  )
+      },
+      onLongClick = { item -> selectionManager.handleLongClick(item) },
+      onToggleSelection = { selectionManager.toggle(it) },
+      emptyTitle = stringResource(R.string.no_recently_played_items),
+      emptyMessage = stringResource(R.string.no_recently_played_items_message),
+      isRefreshing = isRefreshing,
+      onRefresh = onRefresh,
+      headerScrollState = headerScrollState,
+      isInSelectionMode = isInSelectionMode,
+      listState = listState,
+      gridState = gridState,
+      useContentSurface = true,
+      // Playlist rows expand into PlaylistDetailScreen; video rows play in place.
+    )
+  }
 }

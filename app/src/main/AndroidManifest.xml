@@ -21,11 +21,18 @@
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <uses-permission android:name="xyz.mpv.rex.permission.BIND_YTDL_ADDON" />
     
     <uses-feature
         android:name="android.hardware.usb.host"
         android:required="false" />
+
+    <queries>
+        <package android:name="xyz.mpv.rex.addon.ytdl" />
+        <intent>
+            <action android:name="xyz.mpv.rex.addon.ytdl.BIND_SERVICE" />
+        </intent>
+    </queries>
 
     <application
         android:name=".App"
@@ -44,6 +51,7 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize"
             android:theme="@style/Theme.mpvex.Launcher" />
 
         <activity-alias
@@ -118,6 +126,7 @@
                 <data android:scheme="mmsh" />
                 <data android:scheme="tcp" />
                 <data android:scheme="udp" />
+                <data android:scheme="smb" />
             </intent-filter>
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
@@ -127,6 +136,16 @@
                 <data android:mimeType="audio/*" />
                 <data android:mimeType="image/*" />
                 <data android:mimeType="text/plain" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="http" />
+                <data android:scheme="https" />
+                <data android:host="youtu.be" />
+                <data android:host="*youtube.com" />
+                <data android:host="*twitch.tv" />
             </intent-filter>
             <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW" />
@@ -288,6 +307,12 @@
             </intent-filter>
         </service>
 
+        <service
+            android:name=".jellyfin.remote.JellyfinRemoteService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
         <receiver
             android:name="androidx.media.session.MediaButtonReceiver"
             android:exported="true">
@@ -336,12 +361,18 @@
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="*/*" />
+                <data android:mimeType="video/*" />
+                <data android:mimeType="audio/*" />
+                <data android:mimeType="image/*" />
+                <data android:mimeType="application/*" />
             </intent-filter>
             <intent-filter>
                 <action android:name="android.intent.action.SEND_MULTIPLE" />
                 <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="*/*" />
+                <data android:mimeType="video/*" />
+                <data android:mimeType="audio/*" />
+                <data android:mimeType="image/*" />
+                <data android:mimeType="application/*" />
             </intent-filter>
         </activity>
 

@@ -14,11 +14,11 @@ android {
   compileSdk = 36
 
   defaultConfig {
-    applicationId = "aransari1.mpv.next"
+    applicationId = "xyz.mpv.rex"
     minSdk = 26
     targetSdk = 36
-    versionCode = 150
-    versionName = "1.5.0"
+    versionCode = 217
+    versionName = "5.5.1"
 
     vectorDrawables {
       useSupportLibrary = true
@@ -29,6 +29,7 @@ android {
     // Enable update feature by default
     buildConfigField("boolean", "ENABLE_UPDATE_FEATURE", "true")
     buildConfigField("boolean", "SCOPED_STORAGE_ONLY", "false")
+    buildConfigField("boolean", "IS_PREVIEW", "false")
   }
 
   dependenciesInfo {
@@ -77,6 +78,32 @@ android {
       signingConfig = null
       applicationIdSuffix = ".preview"
       versionNameSuffix = "-${getCommitCount()}"
+      buildConfigField("boolean", "IS_PREVIEW", "true")
+    }
+
+    // TEMPORARY (animation work): release-like runtime without the R8 / resource-shrink cost.
+    //
+    // Debug builds are JIT-only and make transitions look worse than they are, which hides
+    // the thing being evaluated. This variant is non-debuggable (so the installer AOT-compiles
+    // it like release) but skips minification and shrinking, so `installPerf` costs about as
+    // much as `installDebug` instead of the full release build.
+    //
+    // Drawback: no debugging, no attach, no Compose inspection. Use it to judge feel only.
+    // Revert this block once the animation work lands.
+    create("perf") {
+      initWith(getByName("release"))
+      signingConfig = signingConfigs.getByName("release")
+      isDebuggable = false
+      isMinifyEnabled = false
+      isShrinkResources = false
+      applicationIdSuffix = ".perf"
+      versionNameSuffix = "-${getCommitCount()}"
+      matchingFallbacks += listOf("release")
+      // AGP attaches `lintVital<Variant>` to every non-debuggable variant on the assumption
+      // it might ship. This one never does, and the analyse task took 28 minutes cold.
+      lint {
+        checkReleaseBuilds = false
+      }
     }
 
     named("debug") {
@@ -100,6 +127,7 @@ android {
     compose = true
     viewBinding = true
     buildConfig = true
+    aidl = true
   }
 
   packaging {
@@ -146,9 +174,6 @@ androidComponents {
 kotlin {
   compilerOptions {
     freeCompilerArgs.addAll(
-      "-Xwhen-guards",
-      "-Xcontext-parameters",
-      "-Xannotation-default-target=param-property",
       "-opt-in=com.google.accompanist.permissions.ExperimentalPermissionsApi",
       "-opt-in=androidx.compose.material3.ExperimentalMaterial3Api"
     )
@@ -171,7 +196,8 @@ dependencies {
   implementation(libs.androidx.ui)
   implementation(libs.androidx.ui.graphics)
   implementation(libs.androidx.material3.android)
-  implementation("com.google.android.material:material:1.13.0")
+  implementation(libs.com.google.android.material)
+  implementation(libs.androidx.palette.ktx)
   implementation(libs.androidx.compose.material)
   implementation(libs.androidx.ui.tooling.preview)
   debugImplementation(libs.androidx.ui.tooling)
@@ -206,6 +232,7 @@ dependencies {
   implementation(libs.fsaf)
   implementation(libs.mediainfo.lib)
   implementation(libs.mpv.lib)
+  implementation(libs.androidx.security.crypto)
 
   // Network protocol libraries
   implementation(libs.smbj)

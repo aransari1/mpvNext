@@ -102,13 +102,19 @@ object RecentlyPlayedOps {
     return historyManager.getRecentlyPlayed(limit)
   }
 
+  fun fileExists(path: String): Boolean = historyManager.fileExists(path)
+
+  fun isNonFileUri(path: String): Boolean = historyManager.isNonFileUri(path)
+
   @OptIn(ExperimentalCoroutinesApi::class)
   fun observeLastPlayedPath(): Flow<String?> = historyManager.observeLastPlayedPath()
 
   fun observeLastPlayedPathsForHighlight(): Flow<Set<String>> {
     return repository.observeRecentlyPlayed(50).map { list ->
+      val autoRemove = preferences.autoRemoveDeletedFromHistory.get()
       val filteredList = list.filter { 
-        !(it.filePath.endsWith(".m3u") || it.filePath.endsWith(".m3u8"))
+        !(it.filePath.endsWith(".m3u") || it.filePath.endsWith(".m3u8")) &&
+        (!autoRemove || historyManager.isNonFileUri(it.filePath) || historyManager.fileExists(it.filePath))
       }
       val newestHighlight = filteredList.firstOrNull { it.launchSource != "mark_as" } ?: return@map emptySet()
       
@@ -125,7 +131,12 @@ object RecentlyPlayedOps {
   }
 
   fun observeRecentlyPlayedPaths(limit: Int = 100): Flow<Set<String>> {
-    return repository.observeRecentlyPlayed(limit).map { list -> list.map { it.filePath }.toSet() }
+    return repository.observeRecentlyPlayed(limit).map { list -> 
+      val autoRemove = preferences.autoRemoveDeletedFromHistory.get()
+      list.filter { !autoRemove || historyManager.isNonFileUri(it.filePath) || historyManager.fileExists(it.filePath) }
+          .map { it.filePath }
+          .toSet() 
+    }
   }
 
   suspend fun onVideoDeleted(filePath: String) {

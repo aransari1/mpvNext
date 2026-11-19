@@ -1,8 +1,7 @@
 package xyz.mpv.rex.ui.preferences
 
-// import androidx.compose.material.icons.outlined.VideoLabel // No longer needed here
-
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -39,6 +38,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import android.widget.Toast
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -46,21 +47,29 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import xyz.mpv.rex.R
 import xyz.mpv.rex.preferences.AppearancePreferences
+import xyz.mpv.rex.preferences.AdvancedPreferences
 import xyz.mpv.rex.preferences.PlayerButton
 import xyz.mpv.rex.preferences.allPlayerButtons
 import xyz.mpv.rex.preferences.PlayerPreferences
 import xyz.mpv.rex.preferences.SeekbarStyle
+import xyz.mpv.rex.ui.player.PlaybackControlsPosition
 import xyz.mpv.rex.preferences.preference.collectAsState
 import xyz.mpv.rex.presentation.Screen
+import xyz.mpv.rex.presentation.components.CollapsibleHeaderScreen
+import xyz.mpv.rex.presentation.components.GroupPosition
+import xyz.mpv.rex.presentation.components.GroupedListColumn
 import xyz.mpv.rex.ui.utils.LocalBackStack
+import xyz.mpv.rex.ui.utils.navigateBack
 import kotlinx.serialization.Serializable
 import me.zhanghai.compose.preference.ListPreference
+import me.zhanghai.compose.preference.Preference
 import me.zhanghai.compose.preference.ProvidePreferenceLocals
 import xyz.mpv.rex.ui.preferences.components.SwitchPreference
 import me.zhanghai.compose.preference.SliderPreference
 import xyz.mpv.rex.ui.player.controls.components.sheets.toFixed
 import xyz.mpv.rex.ui.preferences.components.PlayerButtonChip
 import org.koin.compose.koinInject
+import xyz.mpv.rex.presentation.MotionStyle
 
 // Enum to identify which region we are editing
 @Serializable
@@ -74,14 +83,19 @@ enum class ControlRegion {
 
 @Serializable
 object PlayerControlsPreferencesScreen : Screen {
+  /** Settings keep the app's original full horizontal push. */
+  override val motion: MotionStyle
+    get() = MotionStyle.Default
+
     @OptIn(ExperimentalMaterial3Api::class)
     @Composable
     override fun Content() {
+        val context = LocalContext.current
         val backstack = LocalBackStack.current
         val appearancePrefs = koinInject<AppearancePreferences>()
         val playerPrefs = koinInject<PlayerPreferences>()
+        val advancedPrefs = koinInject<AdvancedPreferences>()
 
-        // Get the current state for all four regions
         val topRState by appearancePrefs.topRightControls.collectAsState()
         val bottomRState by appearancePrefs.bottomRightControls.collectAsState()
         val bottomLState by appearancePrefs.bottomLeftControls.collectAsState()
@@ -98,10 +112,10 @@ object PlayerControlsPreferencesScreen : Screen {
             appearancePrefs.parseButtons(bottomLState, mutableSetOf())
         }
         val portraitBottomButtons = remember(portraitBottomState) {
-            appearancePrefs.parseButtons(portraitBottomState, mutableSetOf())
+            appearancePrefs.parseButtons(portraitBottomState, mutableSetOf()).filter { it != PlayerButton.MORE_OPTIONS }
         }
         val moreSheetButtons = remember(moreSheetState, topRState, bottomRState, bottomLState, portraitBottomState) {
-            val manualOrder = appearancePrefs.parseButtons(moreSheetState, mutableSetOf())
+            val manualOrder = appearancePrefs.parseButtons(moreSheetState, mutableSetOf()).filter { it != PlayerButton.MORE_OPTIONS }
             val landscapeSet = (topRState.split(',') + bottomRState.split(',') + bottomLState.split(','))
                 .filter(String::isNotBlank)
                 .mapNotNull { try { PlayerButton.valueOf(it) } catch (_: Exception) { null } }
@@ -111,44 +125,28 @@ object PlayerControlsPreferencesScreen : Screen {
                 .mapNotNull { try { PlayerButton.valueOf(it) } catch (_: Exception) { null } }
                 .toSet()
 
-            // A button is only 'used' if it's in BOTH. If missing from EITHER, it's an orphan.
             val intersection = landscapeSet.intersect(portraitSet)
-            val orphans = allPlayerButtons.filter { it !in intersection }
+            val orphans = allPlayerButtons.filter { it != PlayerButton.NONE && it != PlayerButton.MORE_OPTIONS && it !in intersection }
             val orderedOrphans = manualOrder.filter { it in orphans }
             val remainingOrphans = orphans.filter { it !in orderedOrphans }
             orderedOrphans + remainingOrphans
         }
 
-        Scaffold(
-            topBar = {
-                TopAppBar(
-                    title = {
-                        Text(
-                            text = stringResource(id = R.string.pref_layout_title),
-                            style = MaterialTheme.typography.headlineSmall,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = MaterialTheme.colorScheme.primary,
-                        )
-                    },
-                    navigationIcon = {
-                        IconButton(onClick = backstack::removeLastOrNull) {
-                            Icon(
-                                Icons.AutoMirrored.Outlined.ArrowBack,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.secondary,
-                            )
-                        }
-                    },
-                )
-            },
-        ) { padding ->
+        val pageColor = MaterialTheme.colorScheme.surfaceContainer
+        val cardColor = MaterialTheme.colorScheme.surface
+
+        CollapsibleHeaderScreen(
+          containerColor = pageColor,
+            title = stringResource(id = R.string.pref_layout_title),
+            showBackButton = true,
+            onBackClick = backstack::navigateBack,
+        ) { contentModifier ->
             val navBarHeight = xyz.mpv.rex.ui.browser.LocalNavigationBarHeight.current
+            val listState = rememberPreferenceLazyListState()
             ProvidePreferenceLocals {
                 LazyColumn(
-                    modifier =
-                        Modifier
-                            .fillMaxSize()
-                            .padding(padding),
+                    state = listState,
+                    modifier = contentModifier,
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = navBarHeight + 16.dp),
                 ) {
                     // Landscape Controls Section
@@ -156,34 +154,54 @@ object PlayerControlsPreferencesScreen : Screen {
                         PreferenceSectionHeader(title = stringResource(R.string.pref_layout_landscape_controls_header))
                     }
                     item {
-                        PreferenceCard {
-                            PreferenceCategoryWithEditButton(
-                                title = stringResource(id = R.string.pref_layout_top_right_controls),
-                                onClick = {
-                                    backstack.add(ControlLayoutEditorScreen(ControlRegion.TOP_RIGHT))
-                                },
-                            )
-                            PreferenceIconSummary(buttons = topRightButtons)
+                        GroupedListColumn {
+                            GroupedPreferenceCard(
+                              color = cardColor, tonalElevation = 0.dp,
+                                position = GroupPosition.FIRST,
+                                highlightKey = listOf(R.string.pref_layout_title, R.string.pref_layout_top_right_controls),
+                            ) {
+                                Column {
+                                    PreferenceCategoryWithEditButton(
+                                        title = stringResource(id = R.string.pref_layout_top_right_controls),
+                                        onClick = {
+                                            backstack.add(ControlLayoutEditorScreen(ControlRegion.TOP_RIGHT))
+                                        },
+                                    )
+                                    PreferenceIconSummary(buttons = topRightButtons)
+                                }
+                            }
 
-                            PreferenceDivider()
+                            GroupedPreferenceCard(
+                              color = cardColor, tonalElevation = 0.dp,
+                                position = GroupPosition.MIDDLE,
+                                highlightKey = R.string.pref_layout_bottom_right_controls,
+                            ) {
+                                Column {
+                                    PreferenceCategoryWithEditButton(
+                                        title = stringResource(id = R.string.pref_layout_bottom_right_controls),
+                                        onClick = {
+                                            backstack.add(ControlLayoutEditorScreen(ControlRegion.BOTTOM_RIGHT))
+                                        },
+                                    )
+                                    PreferenceIconSummary(buttons = bottomRightButtons)
+                                }
+                            }
 
-                            PreferenceCategoryWithEditButton(
-                                title = stringResource(id = R.string.pref_layout_bottom_right_controls),
-                                onClick = {
-                                    backstack.add(ControlLayoutEditorScreen(ControlRegion.BOTTOM_RIGHT))
-                                },
-                            )
-                            PreferenceIconSummary(buttons = bottomRightButtons)
-
-                            PreferenceDivider()
-
-                            PreferenceCategoryWithEditButton(
-                                title = stringResource(id = R.string.pref_layout_bottom_left_controls),
-                                onClick = {
-                                    backstack.add(ControlLayoutEditorScreen(ControlRegion.BOTTOM_LEFT))
-                                },
-                            )
-                            PreferenceIconSummary(buttons = bottomLeftButtons)
+                            GroupedPreferenceCard(
+                              color = cardColor, tonalElevation = 0.dp,
+                                position = GroupPosition.LAST,
+                                highlightKey = R.string.pref_layout_bottom_left_controls,
+                            ) {
+                                Column {
+                                    PreferenceCategoryWithEditButton(
+                                        title = stringResource(id = R.string.pref_layout_bottom_left_controls),
+                                        onClick = {
+                                            backstack.add(ControlLayoutEditorScreen(ControlRegion.BOTTOM_LEFT))
+                                        },
+                                    )
+                                    PreferenceIconSummary(buttons = bottomLeftButtons)
+                                }
+                            }
                         }
                     }
 
@@ -192,14 +210,22 @@ object PlayerControlsPreferencesScreen : Screen {
                         PreferenceSectionHeader(title = stringResource(R.string.pref_layout_portrait_controls_header))
                     }
                     item {
-                        PreferenceCard {
-                            PreferenceCategoryWithEditButton(
-                                title = stringResource(id = R.string.pref_layout_portrait_bottom_controls),
-                                onClick = {
-                                    backstack.add(ControlLayoutEditorScreen(ControlRegion.PORTRAIT_BOTTOM))
-                                },
-                            )
-                            PreferenceIconSummary(buttons = portraitBottomButtons)
+                        GroupedListColumn {
+                            GroupedPreferenceCard(
+                              color = cardColor, tonalElevation = 0.dp,
+                                position = GroupPosition.ONLY,
+                                highlightKey = R.string.pref_layout_portrait_bottom_controls,
+                            ) {
+                                Column {
+                                    PreferenceCategoryWithEditButton(
+                                        title = stringResource(id = R.string.pref_layout_portrait_bottom_controls),
+                                        onClick = {
+                                            backstack.add(ControlLayoutEditorScreen(ControlRegion.PORTRAIT_BOTTOM))
+                                        },
+                                    )
+                                    PreferenceIconSummary(buttons = portraitBottomButtons)
+                                }
+                            }
                         }
                     }
 
@@ -207,14 +233,22 @@ object PlayerControlsPreferencesScreen : Screen {
                         PreferenceSectionHeader(title = stringResource(R.string.pref_layout_more_sheet_controls_header))
                     }
                     item {
-                        PreferenceCard {
-                            PreferenceCategoryWithEditButton(
-                                title = stringResource(R.string.pref_layout_more_sheet_controls_title),
-                                onClick = {
-                                    backstack.add(ControlLayoutEditorScreen(ControlRegion.MORE_SHEET))
-                                },
-                            )
-                            PreferenceIconSummary(buttons = moreSheetButtons)
+                        GroupedListColumn {
+                            GroupedPreferenceCard(
+                              color = cardColor, tonalElevation = 0.dp,
+                                position = GroupPosition.ONLY,
+                                highlightKey = R.string.pref_layout_more_sheet_controls_title,
+                            ) {
+                                Column {
+                                    PreferenceCategoryWithEditButton(
+                                        title = stringResource(R.string.pref_layout_more_sheet_controls_title),
+                                        onClick = {
+                                            backstack.add(ControlLayoutEditorScreen(ControlRegion.MORE_SHEET))
+                                        },
+                                    )
+                                    PreferenceIconSummary(buttons = moreSheetButtons)
+                                }
+                            }
                         }
                     }
 
@@ -227,67 +261,103 @@ object PlayerControlsPreferencesScreen : Screen {
                         val whiteSeekBar by playerPrefs.whiteSeekBar.collectAsState()
                         val showSeekbarChapters by playerPrefs.showSeekbarChapters.collectAsState()
                         val showSeekbarReadAhead by playerPrefs.showSeekbarReadAhead.collectAsState()
-                        PreferenceCard {
-                            SeekbarStyle.entries.forEachIndexed { index, style ->
-                                ListItem(
-                                    headlineContent = {
-                                        // NOTE (#24 - not touched): style.name reads the raw enum
-                                        // identifier and is not localizable as-is. Needs a
-                                        // SeekbarStyle -> @StringRes mapping function; left for
-                                        // the maintainer to design.
-                                        Text(text = style.name)
-                                    },
-                                    trailingContent = {
-                                        RadioButton(
-                                            selected = currentSeekbarStyle == style,
-                                            onClick = null
+                        val speedAdjustedRemaining by playerPrefs.speedAdjustedRemainingTime.collectAsState()
+
+                        GroupedListColumn {
+                            GroupedPreferenceCard(
+                              color = cardColor, tonalElevation = 0.dp,
+                                position = GroupPosition.FIRST,
+                                highlightKey = R.string.pref_seekbar_style_header,
+                            ) {
+                                Column {
+                                    SeekbarStyle.entries.forEachIndexed { index, style ->
+                                        ListItem(
+                                            headlineContent = {
+                                                Text(text = style.name)
+                                            },
+                                            trailingContent = {
+                                                RadioButton(
+                                                    selected = currentSeekbarStyle == style,
+                                                    onClick = null
+                                                )
+                                            },
+                                            modifier = Modifier
+                                                .clickable { appearancePrefs.seekbarStyle.set(style) }
                                         )
-                                    },
-                                    colors = androidx.compose.material3.ListItemDefaults.colors(
-                                        containerColor = MaterialTheme.colorScheme.surfaceContainer,
-                                    ),
-                                    modifier = Modifier
-                                        .clickable { appearancePrefs.seekbarStyle.set(style) }
-                                )
-                                PreferenceDivider()
+                                        if (index < SeekbarStyle.entries.size - 1) {
+                                            PreferenceDivider()
+                                        }
+                                    }
+                                }
                             }
 
-                            SwitchPreference(
-                                value = whiteSeekBar,
-                                onValueChange = { playerPrefs.whiteSeekBar.set(it) },
-                                title = {
-                                    Text(text = stringResource(R.string.pref_player_white_seekbar_title))
-                                },
-                                summary = {
-                                    Text(text = stringResource(R.string.pref_player_white_seekbar_summary))
-                                },
-                            )
+                            GroupedPreferenceCard(
+                              color = cardColor, tonalElevation = 0.dp,
+                                position = GroupPosition.MIDDLE,
+                                highlightKey = R.string.pref_player_white_seekbar_title,
+                            ) {
+                                SwitchPreference(
+                                    value = whiteSeekBar,
+                                    onValueChange = { playerPrefs.whiteSeekBar.set(it) },
+                                    title = {
+                                        Text(text = stringResource(R.string.pref_player_white_seekbar_title))
+                                    },
+                                    summary = {
+                                        Text(text = stringResource(R.string.pref_player_white_seekbar_summary))
+                                    },
+                                )
+                            }
 
-                            PreferenceDivider()
+                            GroupedPreferenceCard(
+                              color = cardColor, tonalElevation = 0.dp,
+                                position = GroupPosition.MIDDLE,
+                                highlightKey = R.string.pref_player_show_seekbar_chapters_title,
+                            ) {
+                                SwitchPreference(
+                                    value = showSeekbarChapters,
+                                    onValueChange = { playerPrefs.showSeekbarChapters.set(it) },
+                                    title = {
+                                        Text(text = stringResource(R.string.pref_player_show_seekbar_chapters_title))
+                                    },
+                                    summary = {
+                                        Text(text = stringResource(R.string.pref_player_show_seekbar_chapters_summary))
+                                    },
+                                )
+                            }
 
-                            SwitchPreference(
-                                value = showSeekbarChapters,
-                                onValueChange = { playerPrefs.showSeekbarChapters.set(it) },
-                                title = {
-                                    Text(text = stringResource(R.string.pref_player_show_seekbar_chapters_title))
-                                },
-                                summary = {
-                                    Text(text = stringResource(R.string.pref_player_show_seekbar_chapters_summary))
-                                },
-                            )
+                            GroupedPreferenceCard(
+                              color = cardColor, tonalElevation = 0.dp,
+                                position = GroupPosition.MIDDLE,
+                                highlightKey = R.string.pref_player_show_seekbar_read_ahead_title,
+                            ) {
+                                SwitchPreference(
+                                    value = showSeekbarReadAhead,
+                                    onValueChange = { playerPrefs.showSeekbarReadAhead.set(it) },
+                                    title = {
+                                        Text(text = stringResource(R.string.pref_player_show_seekbar_read_ahead_title))
+                                    },
+                                    summary = {
+                                        Text(text = stringResource(R.string.pref_player_show_seekbar_read_ahead_summary))
+                                    },
+                                )
+                            }
 
-                            PreferenceDivider()
-
-                            SwitchPreference(
-                                value = showSeekbarReadAhead,
-                                onValueChange = { playerPrefs.showSeekbarReadAhead.set(it) },
-                                title = {
-                                    Text(text = stringResource(R.string.pref_player_show_seekbar_read_ahead_title))
-                                },
-                                summary = {
-                                    Text(text = stringResource(R.string.pref_player_show_seekbar_read_ahead_summary))
-                                },
-                            )
+                            GroupedPreferenceCard(
+                              color = cardColor, tonalElevation = 0.dp,
+                                position = GroupPosition.LAST,
+                                highlightKey = R.string.pref_player_speed_adjusted_remaining_title,
+                            ) {
+                                SwitchPreference(
+                                    value = speedAdjustedRemaining,
+                                    onValueChange = { playerPrefs.speedAdjustedRemainingTime.set(it) },
+                                    title = {
+                                        Text(text = stringResource(R.string.pref_player_speed_adjusted_remaining_title))
+                                    },
+                                    summary = {
+                                        Text(text = stringResource(R.string.pref_player_speed_adjusted_remaining_summary))
+                                    },
+                                )
+                            }
                         }
                     }
 
@@ -297,24 +367,63 @@ object PlayerControlsPreferencesScreen : Screen {
                     }
                     item {
                         val bottomControlsBelowSeekbar by playerPrefs.bottomControlsBelowSeekbar.collectAsState()
-                        PreferenceCard {
-                            SwitchPreference(
-                                value = bottomControlsBelowSeekbar,
-                                onValueChange = { playerPrefs.bottomControlsBelowSeekbar.set(it) },
-                                title = {
-                                    Text(text = stringResource(R.string.pref_controls_layout_below_seekbar_title))
-                                },
-                                summary = {
-                                    Text(
-                                        text = stringResource(
-                                            if (bottomControlsBelowSeekbar)
-                                                R.string.pref_controls_layout_below_seekbar_summary_true
-                                            else
-                                                R.string.pref_controls_layout_below_seekbar_summary_false
+                        val playbackControlsPosition by playerPrefs.playbackControlsPosition.collectAsState()
+                        val swapVolumeAndBrightness by playerPrefs.swapVolumeAndBrightness.collectAsState()
+                        GroupedListColumn {
+                            GroupedPreferenceCard(
+                              color = cardColor, tonalElevation = 0.dp,
+                                position = GroupPosition.FIRST,
+                                highlightKey = R.string.pref_playback_controls_position_title,
+                            ) {
+                                ListPreference(
+                                    value = playbackControlsPosition,
+                                    onValueChange = { playerPrefs.playbackControlsPosition.set(it) },
+                                    values = PlaybackControlsPosition.entries,
+                                    valueToText = { AnnotatedString(context.getString(it.titleRes)) },
+                                    title = {
+                                        Text(text = stringResource(R.string.pref_playback_controls_position_title))
+                                    },
+                                    summary = {
+                                        Text(text = stringResource(playbackControlsPosition.titleRes))
+                                    },
+                                )
+                            }
+
+                            GroupedPreferenceCard(
+                              color = cardColor, tonalElevation = 0.dp,
+                                position = GroupPosition.MIDDLE,
+                                highlightKey = R.string.swap_the_volume_and_brightness_slider,
+                            ) {
+                                SwitchPreference(
+                                    value = swapVolumeAndBrightness,
+                                    onValueChange = { playerPrefs.swapVolumeAndBrightness.set(it) },
+                                    title = { Text(stringResource(R.string.swap_the_volume_and_brightness_slider)) },
+                                )
+                            }
+
+                            GroupedPreferenceCard(
+                              color = cardColor, tonalElevation = 0.dp,
+                                position = GroupPosition.LAST,
+                                highlightKey = R.string.pref_controls_layout_below_seekbar_title,
+                            ) {
+                                SwitchPreference(
+                                    value = bottomControlsBelowSeekbar,
+                                    onValueChange = { playerPrefs.bottomControlsBelowSeekbar.set(it) },
+                                    title = {
+                                        Text(text = stringResource(R.string.pref_controls_layout_below_seekbar_title))
+                                    },
+                                    summary = {
+                                        Text(
+                                            text = stringResource(
+                                                if (bottomControlsBelowSeekbar)
+                                                    R.string.pref_controls_layout_below_seekbar_summary_true
+                                                else
+                                                    R.string.pref_controls_layout_below_seekbar_summary_false
+                                            )
                                         )
-                                    )
-                                },
-                            )
+                                    },
+                                )
+                            }
                         }
                     }
 
@@ -324,7 +433,9 @@ object PlayerControlsPreferencesScreen : Screen {
                     }
                     item {
                         val enableBounceAnimation by appearancePrefs.enableBounceAnimation.collectAsState()
+                        val matchPlayerControlsToTheme by appearancePrefs.matchPlayerControlsToTheme.collectAsState()
                         val hidePlayerButtonsBackground by appearancePrefs.hidePlayerButtonsBackground.collectAsState()
+                        val showNextPreviousButtons by appearancePrefs.showNextPreviousButtons.collectAsState()
                         val enableGlassPlayerControls by appearancePrefs.enableGlassPlayerControls.collectAsState()
                         val enableGlassSeekbarBackground by appearancePrefs.enableGlassSeekbarBackground.collectAsState()
                         val playerAlwaysDarkMode by appearancePrefs.playerAlwaysDarkMode.collectAsState()
@@ -335,166 +446,272 @@ object PlayerControlsPreferencesScreen : Screen {
                         val customLabel = stringResource(R.string.generic_custom)
                         var showCustomTimeDialog by remember { mutableStateOf(false) }
                         var customTimeValue by remember { mutableStateOf("") }
+                        val showControlsOnPlay by playerPrefs.showControlsOnPlay.collectAsState()
+                        val playerGradientOpacity by playerPrefs.playerGradientOpacity.collectAsState()
+                        val showLoadingCircle by playerPrefs.showLoadingCircle.collectAsState()
+                        val reduceMotion by playerPrefs.reduceMotion.collectAsState()
 
-                        PreferenceCard {
-                            SwitchPreference(
-                                value = enableBounceAnimation,
-                                onValueChange = { appearancePrefs.enableBounceAnimation.set(it) },
-                                title = {
-                                    Text(
-                                        text = stringResource(id = R.string.pref_appearance_enable_bounce_animation_title)
-                                    )
-                                },
-                                summary = {
-                                    Text(
-                                        text = stringResource(id = R.string.pref_appearance_enable_bounce_animation_summary)
-                                    )
-                                },
-                            )
+                        GroupedListColumn {
+                            GroupedPreferenceCard(
+                              color = cardColor, tonalElevation = 0.dp,
+                                position = GroupPosition.FIRST,
+                                highlightKey = R.string.pref_appearance_enable_bounce_animation_title,
+                            ) {
+                                SwitchPreference(
+                                    value = enableBounceAnimation,
+                                    onValueChange = { appearancePrefs.enableBounceAnimation.set(it) },
+                                    title = {
+                                        Text(
+                                            text = stringResource(id = R.string.pref_appearance_enable_bounce_animation_title)
+                                        )
+                                    },
+                                    summary = {
+                                        Text(
+                                            text = stringResource(id = R.string.pref_appearance_enable_bounce_animation_summary)
+                                        )
+                                    },
+                                )
+                            }
 
-                            PreferenceDivider()
+                            GroupedPreferenceCard(
+                              color = cardColor, tonalElevation = 0.dp,
+                                position = GroupPosition.MIDDLE,
+                                highlightKey = R.string.pref_appearance_match_player_controls_to_theme_title,
+                            ) {
+                                SwitchPreference(
+                                    value = matchPlayerControlsToTheme,
+                                    onValueChange = { appearancePrefs.matchPlayerControlsToTheme.set(it) },
+                                    title = { Text(text = stringResource(id = R.string.pref_appearance_match_player_controls_to_theme_title)) },
+                                    summary = { Text(text = stringResource(id = R.string.pref_appearance_match_player_controls_to_theme_summary)) },
+                                )
+                            }
 
-                            SwitchPreference(
-                                value = hidePlayerButtonsBackground,
-                                onValueChange = { appearancePrefs.hidePlayerButtonsBackground.set(it) },
-                                title = {
-                                    Text(
-                                        text = stringResource(id = R.string.pref_appearance_hide_player_buttons_background_title),
-                                    )
-                                },
-                                summary = {
-                                    Text(
-                                        text = stringResource(id = R.string.pref_appearance_hide_player_buttons_background_summary),
-                                    )
-                                },
-                            )
+                            GroupedPreferenceCard(
+                              color = cardColor, tonalElevation = 0.dp,
+                                position = GroupPosition.MIDDLE,
+                                highlightKey = R.string.pref_appearance_hide_player_buttons_background_title,
+                            ) {
+                                SwitchPreference(
+                                    value = hidePlayerButtonsBackground,
+                                    onValueChange = { appearancePrefs.hidePlayerButtonsBackground.set(it) },
+                                    title = {
+                                        Text(
+                                            text = stringResource(id = R.string.pref_appearance_hide_player_buttons_background_title),
+                                        )
+                                    },
+                                    summary = {
+                                        Text(
+                                            text = stringResource(id = R.string.pref_appearance_hide_player_buttons_background_summary),
+                                        )
+                                    },
+                                )
+                            }
 
-                            PreferenceDivider()
+                            GroupedPreferenceCard(
+                              color = cardColor, tonalElevation = 0.dp,
+                                position = GroupPosition.MIDDLE,
+                                highlightKey = R.string.pref_appearance_show_next_previous_buttons_title,
+                            ) {
+                                SwitchPreference(
+                                    value = showNextPreviousButtons,
+                                    onValueChange = { appearancePrefs.showNextPreviousButtons.set(it) },
+                                    title = {
+                                        Text(
+                                            text = stringResource(id = R.string.pref_appearance_show_next_previous_buttons_title),
+                                        )
+                                    },
+                                    summary = {
+                                        Text(
+                                            text = stringResource(id = R.string.pref_appearance_show_next_previous_buttons_summary),
+                                        )
+                                    },
+                                )
+                            }
 
-                            SwitchPreference(
-                                value = enableGlassPlayerControls,
-                                onValueChange = { appearancePrefs.enableGlassPlayerControls.set(it) },
-                                title = {
-                                    Text(
-                                        text = stringResource(id = R.string.pref_appearance_enable_glass_player_controls_title),
-                                    )
-                                },
-                                summary = {
-                                    Text(
-                                        text = stringResource(id = R.string.pref_appearance_enable_glass_player_controls_summary),
-                                    )
-                                },
-                            )
+                            GroupedPreferenceCard(
+                              color = cardColor, tonalElevation = 0.dp,
+                                position = GroupPosition.MIDDLE,
+                                highlightKey = R.string.pref_player_controls_show_loading_circle,
+                            ) {
+                                SwitchPreference(
+                                    value = showLoadingCircle,
+                                    onValueChange = { playerPrefs.showLoadingCircle.set(it) },
+                                    title = {
+                                        Text(text = stringResource(R.string.pref_player_controls_show_loading_circle))
+                                    },
+                                )
+                            }
 
-                            PreferenceDivider()
+                            GroupedPreferenceCard(
+                              color = cardColor, tonalElevation = 0.dp,
+                                position = GroupPosition.MIDDLE,
+                                highlightKey = R.string.pref_appearance_enable_glass_player_controls_title,
+                            ) {
+                                SwitchPreference(
+                                    value = enableGlassPlayerControls,
+                                    onValueChange = { appearancePrefs.enableGlassPlayerControls.set(it) },
+                                    title = {
+                                        Text(
+                                            text = stringResource(id = R.string.pref_appearance_enable_glass_player_controls_title),
+                                        )
+                                    },
+                                    summary = {
+                                        Text(
+                                            text = stringResource(id = R.string.pref_appearance_enable_glass_player_controls_summary),
+                                        )
+                                    },
+                                )
+                            }
 
-                            SwitchPreference(
-                                value = enableGlassSeekbarBackground,
-                                onValueChange = { appearancePrefs.enableGlassSeekbarBackground.set(it) },
-                                enabled = enableGlassPlayerControls,
-                                title = {
-                                    Text(
-                                        text = stringResource(id = R.string.pref_appearance_enable_glass_seekbar_title),
-                                    )
-                                },
-                                summary = {
-                                    Text(
-                                        text = stringResource(id = R.string.pref_appearance_enable_glass_seekbar_summary),
-                                    )
-                                },
-                            )
+                            GroupedPreferenceCard(
+                              color = cardColor, tonalElevation = 0.dp,
+                                position = GroupPosition.MIDDLE,
+                                highlightKey = R.string.pref_appearance_enable_glass_seekbar_title,
+                            ) {
+                                SwitchPreference(
+                                    value = enableGlassSeekbarBackground,
+                                    onValueChange = { appearancePrefs.enableGlassSeekbarBackground.set(it) },
+                                    enabled = enableGlassPlayerControls,
+                                    title = {
+                                        Text(
+                                            text = stringResource(id = R.string.pref_appearance_enable_glass_seekbar_title),
+                                        )
+                                    },
+                                    summary = {
+                                        Text(
+                                            text = stringResource(id = R.string.pref_appearance_enable_glass_seekbar_summary),
+                                        )
+                                    },
+                                )
+                            }
 
-                            PreferenceDivider()
+                            GroupedPreferenceCard(
+                              color = cardColor, tonalElevation = 0.dp,
+                                position = GroupPosition.MIDDLE,
+                                highlightKey = R.string.pref_appearance_player_always_dark_mode_title,
+                            ) {
+                                SwitchPreference(
+                                    value = if (enableGlassPlayerControls) true else playerAlwaysDarkMode,
+                                    onValueChange = { appearancePrefs.playerAlwaysDarkMode.set(it) },
+                                    enabled = !enableGlassPlayerControls,
+                                    onDisabledClick = {
+                                        Toast.makeText(
+                                            context,
+                                            context.getString(R.string.pref_appearance_player_always_dark_mode_disabled_toast),
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    },
+                                    title = {
+                                        Text(text = stringResource(R.string.pref_appearance_player_always_dark_mode_title))
+                                    },
+                                    summary = {
+                                        Text(text = stringResource(R.string.pref_appearance_player_always_dark_mode_summary))
+                                    },
+                                )
+                            }
 
-                            SwitchPreference(
-                                value = playerAlwaysDarkMode,
-                                onValueChange = { appearancePrefs.playerAlwaysDarkMode.set(it) },
-                                title = {
-                                    Text(text = stringResource(R.string.pref_appearance_player_always_dark_mode_title))
-                                },
-                                summary = {
-                                    Text(text = stringResource(R.string.pref_appearance_player_always_dark_mode_summary))
-                                },
-                            )
+                            GroupedPreferenceCard(
+                              color = cardColor, tonalElevation = 0.dp,
+                                position = GroupPosition.MIDDLE,
+                                highlightKey = R.string.pref_appearance_show_controls_on_play_title,
+                            ) {
+                                SwitchPreference(
+                                    value = showControlsOnPlay,
+                                    onValueChange = { playerPrefs.showControlsOnPlay.set(it) },
+                                    title = {
+                                        Text(text = stringResource(R.string.pref_appearance_show_controls_on_play_title))
+                                    },
+                                    summary = {
+                                        Text(text = stringResource(R.string.pref_appearance_show_controls_on_play_summary))
+                                    },
+                                )
+                            }
 
-                            PreferenceDivider()
+                            GroupedPreferenceCard(
+                              color = cardColor, tonalElevation = 0.dp,
+                                position = GroupPosition.MIDDLE,
+                                highlightKey = R.string.pref_appearance_player_gradient_opacity_title,
+                            ) {
+                                SliderPreference(
+                                    value = playerGradientOpacity,
+                                    onValueChange = { playerPrefs.playerGradientOpacity.set(it.toFixed(2)) },
+                                    title = { Text(stringResource(R.string.pref_appearance_player_gradient_opacity_title)) },
+                                    valueRange = 0f..1f,
+                                    summary = {
+                                        val opacityPercent = (playerGradientOpacity * 100).toInt()
+                                        Text(
+                                            text = stringResource(
+                                                R.string.pref_appearance_player_gradient_opacity_current,
+                                                opacityPercent
+                                            ),
+                                            color = MaterialTheme.colorScheme.outline,
+                                        )
+                                    },
+                                    onSliderValueChange = { playerPrefs.playerGradientOpacity.set(it.toFixed(2)) },
+                                    sliderValue = playerGradientOpacity,
+                                )
+                            }
 
-                            val showControlsOnPlay by playerPrefs.showControlsOnPlay.collectAsState()
-                            SwitchPreference(
-                                value = showControlsOnPlay,
-                                onValueChange = { playerPrefs.showControlsOnPlay.set(it) },
-                                title = {
-                                    Text(text = stringResource(R.string.pref_appearance_show_controls_on_play_title))
-                                },
-                                summary = {
-                                    Text(text = stringResource(R.string.pref_appearance_show_controls_on_play_summary))
-                                },
-                            )
+                            GroupedPreferenceCard(
+                              color = cardColor, tonalElevation = 0.dp,
+                                position = GroupPosition.MIDDLE,
+                                highlightKey = R.string.pref_player_display_reduce_player_animation,
+                            ) {
+                                SwitchPreference(
+                                    value = reduceMotion,
+                                    onValueChange = { playerPrefs.reduceMotion.set(it) },
+                                    title = {
+                                        Text(text = stringResource(R.string.pref_player_display_reduce_player_animation))
+                                    },
+                                )
+                            }
 
-                            PreferenceDivider()
-
-                            val playerGradientOpacity by playerPrefs.playerGradientOpacity.collectAsState()
-                            SliderPreference(
-                                value = playerGradientOpacity,
-                                onValueChange = { playerPrefs.playerGradientOpacity.set(it.toFixed(2)) },
-                                title = { Text(stringResource(R.string.pref_appearance_player_gradient_opacity_title)) },
-                                valueRange = 0f..1f,
-                                summary = {
-                                    val opacityPercent = (playerGradientOpacity * 100).toInt()
-                                    Text(
-                                        text = stringResource(
-                                            R.string.pref_appearance_player_gradient_opacity_current,
-                                            opacityPercent
-                                        ),
-                                        color = MaterialTheme.colorScheme.outline,
-                                    )
-                                },
-                                onSliderValueChange = { playerPrefs.playerGradientOpacity.set(it.toFixed(2)) },
-                                sliderValue = playerGradientOpacity,
-                            )
-
-                            PreferenceDivider()
-
-                            ListPreference(
-                                value = if (isCustomTimeValue) -1 else playerTimeToDisappear,
-                                onValueChange = { newValue ->
-                                    if (newValue == -1) {
-                                        customTimeValue = playerTimeToDisappear.toString()
-                                        showCustomTimeDialog = true
-                                    } else {
-                                        playerPrefs.playerTimeToDisappear.set(newValue)
-                                    }
-                                },
-                                values = predefinedTimeValues + listOf(-1),
-                                valueToText = { value ->
-                                    when (value) {
-                                        0 -> AnnotatedString(offLabel)
-                                        -1 -> AnnotatedString(customLabel)
-                                        else -> AnnotatedString("$value ms")
-                                    }
-                                },
-                                title = { Text(text = stringResource(R.string.pref_player_display_hide_player_control_time)) },
-                                summary = {
-                                    Text(
-                                        text = when {
-                                            playerTimeToDisappear == 0 -> offLabel
-                                            isCustomTimeValue -> {
-                                                stringResource(
-                                                    R.string.pref_player_display_custom_time_summary,
-                                                    playerTimeToDisappear
-                                                )
-                                            }
-                                            else -> {
-                                                stringResource(
-                                                    R.string.pref_player_display_time_ms_format,
-                                                    playerTimeToDisappear
-                                                )
-                                            }
-                                        },
-                                        color = MaterialTheme.colorScheme.outline,
-                                    )
-                                },
-                            )
+                            GroupedPreferenceCard(
+                              color = cardColor, tonalElevation = 0.dp,
+                                position = GroupPosition.LAST,
+                                highlightKey = R.string.pref_player_display_hide_player_control_time,
+                            ) {
+                                ListPreference(
+                                    value = if (isCustomTimeValue) -1 else playerTimeToDisappear,
+                                    onValueChange = { newValue ->
+                                        if (newValue == -1) {
+                                            customTimeValue = playerTimeToDisappear.toString()
+                                            showCustomTimeDialog = true
+                                        } else {
+                                            playerPrefs.playerTimeToDisappear.set(newValue)
+                                        }
+                                    },
+                                    values = predefinedTimeValues + listOf(-1),
+                                    valueToText = { value ->
+                                        when (value) {
+                                            0 -> AnnotatedString(offLabel)
+                                            -1 -> AnnotatedString(customLabel)
+                                            else -> AnnotatedString("$value ms")
+                                        }
+                                    },
+                                    title = { Text(text = stringResource(R.string.pref_player_display_hide_player_control_time)) },
+                                    summary = {
+                                        Text(
+                                            text = when {
+                                                playerTimeToDisappear == 0 -> offLabel
+                                                isCustomTimeValue -> {
+                                                    stringResource(
+                                                        R.string.pref_player_display_custom_time_summary,
+                                                        playerTimeToDisappear
+                                                    )
+                                                }
+                                                else -> {
+                                                    stringResource(
+                                                        R.string.pref_player_display_time_ms_format,
+                                                        playerTimeToDisappear
+                                                    )
+                                                }
+                                            },
+                                            color = MaterialTheme.colorScheme.outline,
+                                        )
+                                    },
+                                )
+                            }
                         }
 
                         if (showCustomTimeDialog) {
@@ -542,6 +759,56 @@ object PlayerControlsPreferencesScreen : Screen {
                             )
                         }
                     }
+
+                    // Custom Lua Buttons Section
+                    item {
+                        PreferenceSectionHeader(title = stringResource(R.string.pref_custom_lua_title))
+                    }
+                    item {
+                        val enableLuaScriptsForButtons by advancedPrefs.enableLuaScripts.collectAsState()
+                        GroupedListColumn {
+                            GroupedPreferenceCard(
+                              color = cardColor, tonalElevation = 0.dp,
+                                position = GroupPosition.ONLY,
+                                highlightKey = R.string.pref_custom_lua_title,
+                            ) {
+                                Box {
+                                    Preference(
+                                        title = { Text(stringResource(R.string.pref_custom_lua_title)) },
+                                        summary = {
+                                            Text(
+                                                stringResource(R.string.pref_advanced_custom_lua_summary),
+                                                color = MaterialTheme.colorScheme.outline
+                                            )
+                                        },
+                                        onClick = {
+                                            backstack.add(CustomButtonScreen)
+                                        },
+                                        enabled = enableLuaScriptsForButtons,
+                                    )
+                                    if (!enableLuaScriptsForButtons) {
+                                        // Disabled: intercept taps to explain why the entry is inert
+                                        Box(
+                                            modifier = Modifier
+                                                .matchParentSize()
+                                                .clickable(
+                                                    interactionSource = remember { MutableInteractionSource() },
+                                                    indication = null,
+                                                    onClick = {
+                                                        Toast
+                                                            .makeText(
+                                                                context,
+                                                                context.getString(R.string.pref_custom_lua_disabled_toast),
+                                                                Toast.LENGTH_SHORT,
+                                                            ).show()
+                                                    }
+                                                )
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -560,14 +827,13 @@ object PlayerControlsPreferencesScreen : Screen {
                 Modifier
                     .fillMaxWidth()
                     .padding(start = 16.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
-            // Apply padding to Row - minimal padding for tighter appearance
-            verticalAlignment = Alignment.CenterVertically, // Align items vertically
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
                 text = title,
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.weight(1f), // Text takes all available space, pushing button to end
+                modifier = Modifier.weight(1f),
             )
             IconButton(onClick = onClick) {
                 Icon(
@@ -590,7 +856,7 @@ object PlayerControlsPreferencesScreen : Screen {
                 Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp), // Increased spacing
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterVertically),
         ) {
             if (buttons.isEmpty()) {
@@ -601,7 +867,6 @@ object PlayerControlsPreferencesScreen : Screen {
                 )
             } else {
                 buttons.forEach { button ->
-                    // Use the chip in "preview mode" (no badge, enabled=true but no onClick)
                     PlayerButtonChip(
                         button = button,
                         enabled = true,

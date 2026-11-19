@@ -54,6 +54,211 @@ object VideoScanUtils {
     }
 
     /**
+     * Get a single Video object by its file path with exact MediaStore metadata.
+     * Guaranteed to match the exact duration, size, and dateModified indexed in the library.
+     */
+    suspend fun getVideoByPath(context: Context, path: String): Video? = withContext(Dispatchers.IO) {
+        if (path.isBlank()) return@withContext null
+        val file = File(path)
+        if (!file.exists() || !file.isFile) return@withContext null
+
+        val projection = arrayOf(
+            MediaStore.Video.Media._ID,
+            MediaStore.Video.Media.DISPLAY_NAME,
+            MediaStore.Video.Media.DATA,
+            MediaStore.Video.Media.SIZE,
+            MediaStore.Video.Media.DURATION,
+            MediaStore.Video.Media.DATE_MODIFIED,
+            MediaStore.Video.Media.DATE_ADDED,
+            MediaStore.Video.Media.MIME_TYPE,
+            MediaStore.Video.Media.WIDTH,
+            MediaStore.Video.Media.HEIGHT
+        )
+
+        var video: Video? = null
+        try {
+            context.contentResolver.query(
+                MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+                projection,
+                "${MediaStore.Video.Media.DATA} = ?",
+                arrayOf(path),
+                null
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Video.Media._ID))
+                    val name = cursor.getString(cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DISPLAY_NAME)) ?: file.name
+                    val size = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Video.Media.SIZE))
+                    val duration = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DURATION))
+                    val dateModified = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DATE_MODIFIED))
+                    val dateAdded = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DATE_ADDED))
+                    val mimeType = cursor.getString(cursor.getColumnIndexOrThrow(MediaStore.Video.Media.MIME_TYPE)) ?: "video/*"
+                    val width = cursor.getInt(cursor.getColumnIndexOrThrow(MediaStore.Video.Media.WIDTH))
+                    val height = cursor.getInt(cursor.getColumnIndexOrThrow(MediaStore.Video.Media.HEIGHT))
+
+                    video = Video(
+                        id = id,
+                        title = file.nameWithoutExtension,
+                        displayName = name,
+                        path = path,
+                        uri = Uri.fromFile(file),
+                        duration = duration,
+                        durationFormatted = MediaFormatter.formatDuration(duration),
+                        size = size,
+                        sizeFormatted = MediaFormatter.formatFileSize(size),
+                        dateModified = dateModified,
+                        dateAdded = dateAdded,
+                        mimeType = mimeType,
+                        bucketId = file.parent ?: "",
+                        bucketDisplayName = file.parentFile?.name ?: "",
+                        width = width,
+                        height = height,
+                        fps = 0f,
+                        resolution = MediaFormatter.formatResolution(width, height),
+                        isAudio = false
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error querying MediaStore for video: $path", e)
+        }
+
+        // Fallback if not found in MediaStore
+        if (video == null) {
+            val isAudio = FileTypeUtils.isAudioFile(file)
+            val size = file.length()
+            val dateModified = file.lastModified() / 1000
+
+            var duration = 0L
+            var width = 0
+            var height = 0
+            var fps = 0f
+
+            try {
+                val koin = GlobalContext.getOrNull()
+                val metadataCache = koin?.getOrNull<VideoMetadataCacheRepository>()
+                val cached = metadataCache?.getOrExtractMetadata(file, Uri.fromFile(file), file.name)
+                if (cached != null) {
+                    duration = cached.durationMs
+                    width = cached.width
+                    height = cached.height
+                    fps = cached.fps
+                }
+            } catch (e: Exception) {
+                // Ignore
+            }
+
+            video = Video(
+                id = path.hashCode().toLong(),
+                title = file.nameWithoutExtension,
+                displayName = file.name,
+                path = path,
+                uri = Uri.fromFile(file),
+                duration = duration,
+                durationFormatted = MediaFormatter.formatDuration(duration),
+                size = size,
+                sizeFormatted = MediaFormatter.formatFileSize(size),
+                dateModified = dateModified,
+                dateAdded = dateModified,
+                mimeType = if (isAudio) "audio/*" else "video/*",
+                bucketId = file.parent ?: "",
+                bucketDisplayName = file.parentFile?.name ?: "",
+                width = width,
+                height = height,
+                fps = fps,
+                resolution = if (width > 0 && height > 0) MediaFormatter.formatResolution(width, height) else "",
+                isAudio = isAudio
+            )
+        }
+
+        video
+    }
+
+    /**
+     * Retrieves the most recently added videos directly from MediaStore.
+     */
+    suspend fun getRecentlyAddedVideos(context: Context, limit: Int = 50): List<Video> = withContext(Dispatchers.IO) {
+        val videos = mutableListOf<Video>()
+        val projection = arrayOf(
+            MediaStore.Video.Media._ID,
+            MediaStore.Video.Media.DISPLAY_NAME,
+            MediaStore.Video.Media.DATA,
+            MediaStore.Video.Media.SIZE,
+            MediaStore.Video.Media.DURATION,
+            MediaStore.Video.Media.DATE_MODIFIED,
+            MediaStore.Video.Media.DATE_ADDED,
+            MediaStore.Video.Media.MIME_TYPE,
+            MediaStore.Video.Media.WIDTH,
+            MediaStore.Video.Media.HEIGHT
+        )
+
+        val sortOrder = "${MediaStore.Video.Media.DATE_ADDED} DESC"
+
+        try {
+            context.contentResolver.query(
+                MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+                projection,
+                null,
+                null,
+                sortOrder
+            )?.use { cursor ->
+                val idCol = cursor.getColumnIndexOrThrow(MediaStore.Video.Media._ID)
+                val nameCol = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DISPLAY_NAME)
+                val dataCol = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DATA)
+                val sizeCol = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.SIZE)
+                val durCol = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DURATION)
+                val modCol = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DATE_MODIFIED)
+                val addCol = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DATE_ADDED)
+                val mimeCol = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.MIME_TYPE)
+                val widthCol = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.WIDTH)
+                val heightCol = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.HEIGHT)
+
+                while (cursor.moveToNext() && videos.size < limit) {
+                    val path = cursor.getString(dataCol) ?: continue
+                    val file = File(path)
+                    if (!file.exists() || !file.isFile) continue
+
+                    val id = cursor.getLong(idCol)
+                    val name = cursor.getString(nameCol) ?: file.name
+                    val size = cursor.getLong(sizeCol)
+                    val duration = cursor.getLong(durCol)
+                    val dateModified = cursor.getLong(modCol)
+                    val dateAdded = cursor.getLong(addCol)
+                    val mimeType = cursor.getString(mimeCol) ?: "video/*"
+                    val width = cursor.getInt(widthCol)
+                    val height = cursor.getInt(heightCol)
+
+                    videos.add(
+                        Video(
+                            id = id,
+                            title = file.nameWithoutExtension,
+                            displayName = name,
+                            path = path,
+                            uri = Uri.fromFile(file),
+                            duration = duration,
+                            durationFormatted = MediaFormatter.formatDuration(duration),
+                            size = size,
+                            sizeFormatted = MediaFormatter.formatFileSize(size),
+                            dateModified = dateModified,
+                            dateAdded = dateAdded,
+                            mimeType = mimeType,
+                            bucketId = file.parent ?: "",
+                            bucketDisplayName = file.parentFile?.name ?: "",
+                            width = width,
+                            height = height,
+                            fps = 0f,
+                            resolution = MediaFormatter.formatResolution(width, height),
+                            isAudio = false
+                        )
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error querying recently added videos from MediaStore", e)
+        }
+        videos
+    }
+
+    /**
      * Get all videos and audio in a specific folder.
      * MediaStore remains the fast source and direct storage reconciles it when allowed.
      */
@@ -79,19 +284,32 @@ object VideoScanUtils {
 
         val videosMap = mutableMapOf<String, Video>()
         val normalizedFolderPath = normalizePath(folder)
+        val directChildren = folder.listFiles()
+        val directFileNames = directChildren?.map { it.name }?.toHashSet()
 
-        scanVideosFromMediaStore(context, normalizedFolderPath, videosMap)
-        scanAudioFromMediaStore(context, normalizedFolderPath, videosMap)
+        scanVideosFromMediaStore(context, normalizedFolderPath, videosMap, directFileNames)
+        scanAudioFromMediaStore(context, normalizedFolderPath, videosMap, directFileNames)
 
-        // When enabled, always reconcile per file instead of discarding a partially
-        // indexed folder. Keep the old fallback for normal unindexed folders.
-        if (policy.includeNoMediaContent || videosMap.isEmpty()) {
-            if (!scanMediaFromFileSystem(folder, videosMap)) {
-                return@withContext FolderScanResult(emptyList(), FolderAccess.INACCESSIBLE)
-            }
+        // Reconcile with direct filesystem to pick up newly added or unindexed files
+        // (e.g. fresh torrent downloads from Flud, browser downloads, or external transfers).
+        val fsSuccess = scanMediaFromFileSystem(folder, videosMap, directChildren, normalizedFolderPath)
+        if (!fsSuccess && videosMap.isEmpty()) {
+            return@withContext FolderScanResult(emptyList(), FolderAccess.INACCESSIBLE)
         }
 
         // Fast DB cache enrichment for any files that don't have duration yet
+        // Populate matching same-folder external subtitle indicators in one directory scan.
+        // Matching is exact on the video base filename (case-insensitive), not prefix-based.
+        // This is derived metadata only and is never persisted.
+        val matchingSubtitleFormatsByBaseName = buildMatchingExternalSubtitleFormats(
+            directChildren?.asIterable() ?: emptyList()
+        )
+        videosMap.replaceAll { _, video ->
+            val baseName = File(video.path).nameWithoutExtension.trim().lowercase(Locale.ROOT)
+            val formats = matchingSubtitleFormatsByBaseName[baseName].orEmpty()
+            if (formats.isEmpty()) video else video.copy(matchingExternalSubtitleFormats = formats)
+        }
+
         val uncachedDurationPaths = videosMap.values.filter { it.duration <= 0L }.map { it.path }
         if (uncachedDurationPaths.isNotEmpty()) {
             val metadataCache = runCatching {
@@ -112,6 +330,7 @@ object VideoScanUtils {
                             resolution = MediaFormatter.formatResolutionWithFps(meta.width, meta.height, meta.fps),
                             hasEmbeddedSubtitles = meta.hasEmbeddedSubtitles,
                             subtitleCodec = meta.subtitleCodec,
+                            subtitleIndicatorReady = true,
                             artist = if (meta.artist.isNotEmpty()) meta.artist else v.artist,
                             album = if (meta.album.isNotEmpty()) meta.album else v.album,
                         )
@@ -132,7 +351,8 @@ object VideoScanUtils {
     private suspend fun scanVideosFromMediaStore(
         context: Context,
         folderPath: String,
-        videosMap: MutableMap<String, Video>
+        videosMap: MutableMap<String, Video>,
+        directFileNames: Set<String>? = null,
     ) {
         val projection = mutableListOf(
             MediaStore.Video.Media._ID,
@@ -154,8 +374,8 @@ object VideoScanUtils {
         
         val bucketId = folderPath.hashCode().toString()
         val bucketIdLower = folderPath.lowercase(Locale.ROOT).hashCode().toString()
-        val selection = "(${MediaStore.Video.Media.BUCKET_ID} = ? OR ${MediaStore.Video.Media.BUCKET_ID} = ? OR ${MediaStore.Video.Media.DATA} LIKE ?)"
-        val selectionArgs = arrayOf(bucketId, bucketIdLower, "$folderPath/%")
+        val selection = "(${MediaStore.Video.Media.BUCKET_ID} = ? OR ${MediaStore.Video.Media.BUCKET_ID} = ? OR (${MediaStore.Video.Media.DATA} LIKE ? AND ${MediaStore.Video.Media.DATA} NOT LIKE ?))"
+        val selectionArgs = arrayOf(bucketId, bucketIdLower, "$folderPath/%", "$folderPath/%/%")
         
         try {
             context.contentResolver.query(
@@ -181,16 +401,26 @@ object VideoScanUtils {
                 
                 while (cursor.moveToNext()) {
                     currentCoroutineContext().ensureActive()
-                    val path = cursor.getString(dataColumn)
-                    val file = File(path)
+                    val path = cursor.getString(dataColumn) ?: continue
+                    val lastSlash = path.lastIndexOf('/')
+                    if (lastSlash <= 0) continue
+                    val parentOfFile = path.substring(0, lastSlash)
                     
                     // Only direct children
-                    if (file.parentFile?.let(::normalizePath) != folderPath) continue
-                    if (!file.exists()) continue
+                    if (parentOfFile != folderPath && parentOfFile.lowercase(Locale.ROOT) != folderPath.lowercase(Locale.ROOT)) {
+                        continue
+                    }
+                    
+                    val fileName = path.substring(lastSlash + 1)
+                    if (directFileNames != null) {
+                        if (fileName !in directFileNames) continue
+                    } else {
+                        if (!File(path).exists()) continue
+                    }
                     
                     val id = cursor.getLong(idColumn)
-                    val displayName = cursor.getString(nameColumn)
-                    val title = file.nameWithoutExtension
+                    val displayName = cursor.getString(nameColumn) ?: fileName
+                    val title = fileName.substringBeforeLast('.')
                     val size = cursor.getLong(sizeColumn)
                     val duration = cursor.getLong(durationColumn)
                     val dateModified = cursor.getLong(dateModifiedColumn)
@@ -200,7 +430,7 @@ object VideoScanUtils {
                     val height = cursor.getInt(heightColumn)
                     val rotation = if (orientationColumn != -1) cursor.getInt(orientationColumn) else 0
                     
-                    val normalizedPath = normalizePath(file)
+                    val normalizedPath = "$folderPath/$fileName"
 
                     val uri = Uri.withAppendedPath(
                         MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
@@ -246,7 +476,8 @@ object VideoScanUtils {
     private suspend fun scanAudioFromMediaStore(
         context: Context,
         folderPath: String,
-        videosMap: MutableMap<String, Video>
+        videosMap: MutableMap<String, Video>,
+        directFileNames: Set<String>? = null,
     ) {
         val projection = arrayOf(
             MediaStore.Audio.Media._ID,
@@ -263,8 +494,8 @@ object VideoScanUtils {
         
         val bucketId = folderPath.hashCode().toString()
         val bucketIdLower = folderPath.lowercase(Locale.ROOT).hashCode().toString()
-        val selection = "(${MediaStore.Audio.Media.BUCKET_ID} = ? OR ${MediaStore.Audio.Media.BUCKET_ID} = ? OR ${MediaStore.Audio.Media.DATA} LIKE ?)"
-        val selectionArgs = arrayOf(bucketId, bucketIdLower, "$folderPath/%")
+        val selection = "(${MediaStore.Audio.Media.BUCKET_ID} = ? OR ${MediaStore.Audio.Media.BUCKET_ID} = ? OR (${MediaStore.Audio.Media.DATA} LIKE ? AND ${MediaStore.Audio.Media.DATA} NOT LIKE ?))"
+        val selectionArgs = arrayOf(bucketId, bucketIdLower, "$folderPath/%", "$folderPath/%/%")
         
         try {
             context.contentResolver.query(
@@ -287,16 +518,26 @@ object VideoScanUtils {
                 
                 while (cursor.moveToNext()) {
                     currentCoroutineContext().ensureActive()
-                    val path = cursor.getString(dataColumn)
-                    val file = File(path)
+                    val path = cursor.getString(dataColumn) ?: continue
+                    val lastSlash = path.lastIndexOf('/')
+                    if (lastSlash <= 0) continue
+                    val parentOfFile = path.substring(0, lastSlash)
                     
                     // Only direct children
-                    if (file.parentFile?.let(::normalizePath) != folderPath) continue
-                    if (!file.exists()) continue
+                    if (parentOfFile != folderPath && parentOfFile.lowercase(Locale.ROOT) != folderPath.lowercase(Locale.ROOT)) {
+                        continue
+                    }
+                    
+                    val fileName = path.substring(lastSlash + 1)
+                    if (directFileNames != null) {
+                        if (fileName !in directFileNames) continue
+                    } else {
+                        if (!File(path).exists()) continue
+                    }
                     
                     val id = cursor.getLong(idColumn)
-                    val displayName = cursor.getString(nameColumn)
-                    val title = file.nameWithoutExtension
+                    val displayName = cursor.getString(nameColumn) ?: fileName
+                    val title = fileName.substringBeforeLast('.')
                     val size = cursor.getLong(sizeColumn)
                     val duration = cursor.getLong(durationColumn)
                     val dateModified = cursor.getLong(dateModifiedColumn)
@@ -305,7 +546,7 @@ object VideoScanUtils {
                     val artist = cursor.getString(artistColumn) ?: "Unknown Artist"
                     val album = cursor.getString(albumColumn) ?: "Unknown Album"
                     
-                    val normalizedPath = normalizePath(file)
+                    val normalizedPath = "$folderPath/$fileName"
 
                     val uri = Uri.withAppendedPath(
                         MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
@@ -353,9 +594,11 @@ object VideoScanUtils {
     private suspend fun scanMediaFromFileSystem(
         folder: File,
         videosMap: MutableMap<String, Video>,
+        prelistedFiles: Array<File>? = null,
+        normalizedFolderPath: String = normalizePath(folder),
     ): Boolean {
         try {
-            val files = folder.listFiles() ?: return false
+            val files = prelistedFiles ?: folder.listFiles() ?: return false
 
             for (file in files) {
                 currentCoroutineContext().ensureActive()
@@ -366,7 +609,7 @@ object VideoScanUtils {
                     val isAudio = FileTypeUtils.isAudioFile(file)
                     if (!isVideo && !isAudio) continue
 
-                    val path = normalizePath(file)
+                    val path = "$normalizedFolderPath/${file.name}"
                     if (videosMap.containsKey(path)) continue
 
                     val size = file.length()
@@ -384,7 +627,7 @@ object VideoScanUtils {
                         dateModified = dateModified,
                         dateAdded = dateModified,
                         mimeType = FileTypeUtils.getMimeTypeFromExtension(file.extension.lowercase()),
-                        bucketId = normalizePath(folder),
+                        bucketId = normalizedFolderPath,
                         bucketDisplayName = folder.name,
                         width = 0,
                         height = 0,
@@ -409,6 +652,28 @@ object VideoScanUtils {
         } catch (e: Exception) {
             Log.e(TAG, "Filesystem media scan error", e)
             return false
+        }
+    }
+
+    internal fun buildMatchingExternalSubtitleFormats(
+        siblingFiles: Iterable<File>,
+    ): Map<String, List<String>> {
+        val byBaseName = linkedMapOf<String, MutableList<String>>()
+        for (file in siblingFiles) {
+            if (!file.isFile || !FileTypeUtils.isSubtitleFile(file)) continue
+
+            val baseName = file.nameWithoutExtension.trim()
+            if (baseName.isEmpty()) continue
+
+            val extension = file.extension.trim().uppercase(Locale.ROOT)
+            if (extension.isEmpty()) continue
+
+            byBaseName.getOrPut(baseName.lowercase(Locale.ROOT)) { mutableListOf() }
+                .add(extension)
+        }
+
+        return byBaseName.mapValues { (_, formats) ->
+            formats.distinct().sorted()
         }
     }
 

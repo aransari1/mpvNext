@@ -34,7 +34,49 @@ class MPVView(
   private val subtitlesPreferences: SubtitlesPreferences by inject()
   private val anime4kManager: Anime4KManager by inject()
 
+  // PRELOAD-RESUME-STATE-V1
+  private data class PendingOptionedLoad(
+    val filePath: String,
+    val loadOptions: String,
+    val beforeLoad: (issueLoad: () -> Unit) -> Boolean,
+    val onLoadFailure: (Throwable) -> Unit,
+  )
+
+  private val pendingOptionedLoadLock = Any()
+  private var pendingOptionedLoad: PendingOptionedLoad? = null
+
   var isExiting = false
+
+  /**
+   * Loads with per-file options while preserving BaseMPVView's deferred-first-load behavior.
+   * When the SurfaceView is not ready, only the newest requested item is retained.
+   */
+  fun playFileWithOptions(
+    filePath: String,
+    loadOptions: String,
+    beforeLoad: (issueLoad: () -> Unit) -> Boolean,
+    onLoadFailure: (Throwable) -> Unit,
+  ) {
+    val pending = PendingOptionedLoad(filePath, loadOptions, beforeLoad, onLoadFailure)
+    val loadNow = synchronized(pendingOptionedLoadLock) {
+      if (holder.surface.isValid) {
+        pendingOptionedLoad = null
+        true
+      } else {
+        pendingOptionedLoad = pending
+        false
+      }
+    }
+    if (loadNow) executeOptionedLoad(pending)
+  }
+
+  private fun executeOptionedLoad(load: PendingOptionedLoad) {
+    runCatching {
+      load.beforeLoad {
+        MPVLib.command("loadfile", load.filePath, "replace", "-1", load.loadOptions)
+      }
+    }.onFailure(load.onLoadFailure)
+  }
 
   /**
    * When the activity handles rotation itself (see `configChanges` in the manifest) the
@@ -47,7 +89,7 @@ class MPVView(
    */
   override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
     super.surfaceChanged(holder, format, width, height)
-    if (isExiting) return
+    if (isExiting || !MPVLifecycleLock.isNativeInitialized || MPVLifecycleLock.isTearingDown.value) return
     // Only needed while paused; during playback the next frame repaints at the new size.
     val paused = runCatching { MPVLib.getPropertyBoolean("pause") }.getOrNull() == true
     if (paused) {
@@ -143,6 +185,9 @@ class MPVView(
 
     MPVLib.setPropertyBoolean("keep-open", true)
     MPVLib.setPropertyBoolean("input-default-bindings", true)
+    if (!playerPreferences.autoplayOnOpen.get()) {
+      MPVLib.setPropertyBoolean("pause", true)
+    }
 
     MPVLib.setOptionString("tls-verify", "yes")
     MPVLib.setOptionString("tls-ca-file", "${context.filesDir.path}/cacert.pem")
@@ -190,7 +235,11 @@ class MPVView(
 
   override fun surfaceCreated(holder: SurfaceHolder) {
     super.surfaceCreated(holder)
-    if (!MPVLifecycleLock.isNativeInitialized) return
+    if (!MPVLifecycleLock.isNativeInitialized || MPVLifecycleLock.isTearingDown.value || isExiting) return
+    val pendingLoad = synchronized(pendingOptionedLoadLock) {
+      pendingOptionedLoad.also { pendingOptionedLoad = null }
+    }
+    pendingLoad?.let(::executeOptionedLoad)
 
     // Audio may have been loaded while vo=null with no video track selected. Unlike vid=auto,
     // selecting the attached-picture track by ID reliably starts its single-frame decoder.
@@ -276,15 +325,26 @@ class MPVView(
   // on hits — so without an entry here the property is never re-registered on
   // fresh native handles created after the previous one was destroyed while the
   // JVM stayed alive (e.g. via MediaPlaybackService).
+  //
+  // A property read through two different helpers (`propInt` *and* `propDouble`) needs one entry
+  // per format: each helper owns its own cache and registers its own observer, and libmpv keeps
+  // one observer per (name, format) pair. Hence a list of pairs rather than a map, so `time-pos`
+  // can legitimately appear twice.
   private val observedProps =
-    mapOf(
+    listOf(
       "pause" to MPVLib.MpvFormat.MPV_FORMAT_FLAG,
       "paused-for-cache" to MPVLib.MpvFormat.MPV_FORMAT_FLAG,
+      "seeking" to MPVLib.MpvFormat.MPV_FORMAT_FLAG,
+      "core-idle" to MPVLib.MpvFormat.MPV_FORMAT_FLAG,
       "video-params/aspect" to MPVLib.MpvFormat.MPV_FORMAT_DOUBLE,
       "video-params/w" to MPVLib.MpvFormat.MPV_FORMAT_INT64,
       "video-params/h" to MPVLib.MpvFormat.MPV_FORMAT_INT64,
       "eof-reached" to MPVLib.MpvFormat.MPV_FORMAT_FLAG,
+      // Integer seconds, consumed by `propInt["time-pos"]`.
       "time-pos" to MPVLib.MpvFormat.MPV_FORMAT_INT64,
+      // Fractional seconds, consumed by `propDouble["time-pos"]` (seek bar, bookmark position and
+      // chapter/bookmark highlighting). Must stay a separate entry, see the note above.
+      "time-pos" to MPVLib.MpvFormat.MPV_FORMAT_DOUBLE,
       "duration" to MPVLib.MpvFormat.MPV_FORMAT_INT64,
       "volume-max" to MPVLib.MpvFormat.MPV_FORMAT_INT64,
       "track-list" to MPVLib.MpvFormat.MPV_FORMAT_NODE,
@@ -294,6 +354,7 @@ class MPVView(
       "volume" to MPVLib.MpvFormat.MPV_FORMAT_INT64,
       "hwdec-current" to MPVLib.MpvFormat.MPV_FORMAT_STRING,
       "media-title" to MPVLib.MpvFormat.MPV_FORMAT_STRING,
+      "path" to MPVLib.MpvFormat.MPV_FORMAT_STRING,
       "demuxer-cache-duration" to MPVLib.MpvFormat.MPV_FORMAT_DOUBLE,
       "cache-buffering-state" to MPVLib.MpvFormat.MPV_FORMAT_INT64,
       "audio-delay" to MPVLib.MpvFormat.MPV_FORMAT_DOUBLE,
@@ -301,6 +362,8 @@ class MPVView(
       "sub-speed" to MPVLib.MpvFormat.MPV_FORMAT_DOUBLE,
       "sub-scale" to MPVLib.MpvFormat.MPV_FORMAT_DOUBLE,
       "sub-pos" to MPVLib.MpvFormat.MPV_FORMAT_INT64,
+      "secondary-sub-scale" to MPVLib.MpvFormat.MPV_FORMAT_DOUBLE,
+      "secondary-sub-pos" to MPVLib.MpvFormat.MPV_FORMAT_INT64,
       "sub-bold" to MPVLib.MpvFormat.MPV_FORMAT_FLAG,
       "sub-italic" to MPVLib.MpvFormat.MPV_FORMAT_FLAG,
       "sub-justify" to MPVLib.MpvFormat.MPV_FORMAT_STRING,
@@ -366,11 +429,11 @@ class MPVView(
     if (subtitlesPreferences.overrideAssSubs.get()) {
       MPVLib.setOptionString("sub-ass-override", "force")
       MPVLib.setOptionString("sub-ass-justify", "yes")
-      MPVLib.setOptionString("secondary-sub-ass-override", "force")
     } else {
       MPVLib.setOptionString("sub-ass-override", "no")
-      MPVLib.setOptionString("secondary-sub-ass-override", "no")
     }
+    // Force secondary subtitle override so secondary-sub-pos anchors it cleanly at the top without overlapping primary
+    MPVLib.setOptionString("secondary-sub-ass-override", "force")
 
     // Typography and styling for both primary and secondary
     val fontSize = subtitlesPreferences.fontSize.get().toString()
@@ -385,6 +448,8 @@ class MPVView(
     val shadowOffset = subtitlesPreferences.shadowOffset.get().toString()
     val subPos = subtitlesPreferences.subPos.get().toString()
     val subScale = subtitlesPreferences.subScale.get().toString()
+    val secondarySubPos = subtitlesPreferences.secondarySubPos.get().toString()
+    val secondarySubScale = subtitlesPreferences.secondarySubScale.get().toString()
 
     MPVLib.setOptionString("sub-font-size", fontSize)
     MPVLib.setOptionString("sub-bold", bold)
@@ -409,9 +474,9 @@ class MPVView(
     MPVLib.setOptionString("secondary-sub-border-size", borderSize)
     MPVLib.setOptionString("secondary-sub-border-style", borderStyle)
     MPVLib.setOptionString("secondary-sub-shadow-offset", shadowOffset)
-    MPVLib.setOptionString("secondary-sub-scale", subScale)
-    // Position secondary subtitle at top (10) instead of bottom to avoid overlap with primary
-    MPVLib.setOptionString("secondary-sub-pos", "10")
+    MPVLib.setOptionString("secondary-sub-scale", secondarySubScale)
+    // Position secondary subtitle at top (default 10) instead of bottom to avoid overlap with primary
+    MPVLib.setOptionString("secondary-sub-pos", secondarySubPos)
 
     val scaleByWindow = if (subtitlesPreferences.scaleByWindow.get()) "yes" else "no"
     MPVLib.setOptionString("sub-scale-by-window", scaleByWindow)
@@ -421,7 +486,10 @@ class MPVView(
 
     val forceLtr = if (subtitlesPreferences.forceLtr.get()) "yes" else "no"
     MPVLib.setOptionString("sub-vsfilter-bidi-compat", forceLtr)
-    MPVLib.setOptionString("sub-codepage", "auto:cp1256:utf-8")
+
+    val subEncoding = subtitlesPreferences.subtitleEncoding.get()
+    val codepage = if (subEncoding.isBlank() || subEncoding.equals("auto", ignoreCase = true)) "auto" else subEncoding
+    MPVLib.setOptionString("sub-codepage", codepage)
   }
 
 

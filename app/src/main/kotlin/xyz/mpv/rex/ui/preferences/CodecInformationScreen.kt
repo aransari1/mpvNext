@@ -16,7 +16,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -50,7 +50,12 @@ import kotlinx.serialization.Serializable
 import me.zhanghai.compose.preference.ProvidePreferenceLocals
 import xyz.mpv.rex.R
 import xyz.mpv.rex.presentation.Screen
+import xyz.mpv.rex.presentation.components.CollapsibleHeaderScreen
+import xyz.mpv.rex.presentation.components.GroupPosition
+import xyz.mpv.rex.presentation.components.GroupedListColumn
 import xyz.mpv.rex.ui.utils.LocalBackStack
+import xyz.mpv.rex.ui.utils.navigateBack
+import xyz.mpv.rex.presentation.MotionStyle
 
 data class CodecInfoItem(
   val name: String,
@@ -152,12 +157,15 @@ enum class CodecFilter {
 
 @Serializable
 object CodecInformationScreen : Screen {
+  /** Settings keep the app's original full horizontal push. */
+  override val motion: MotionStyle
+    get() = MotionStyle.Default
+
   @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
   @Composable
   override fun Content() {
     val backstack = LocalBackStack.current
 
-    // Load codecs asynchronously off the UI thread to ensure 60fps screen transition animation
     val allCodecsState by produceState<List<CodecInfoItem>?>(initialValue = null) {
       value = withContext(Dispatchers.IO) {
         CodecUtils.getDeviceCodecs()
@@ -166,35 +174,19 @@ object CodecInformationScreen : Screen {
 
     var selectedFilter by remember { mutableStateOf(CodecFilter.ALL) }
 
-    Scaffold(
-      topBar = {
-        TopAppBar(
-          title = {
-            Text(
-              text = stringResource(R.string.pref_decoder_codec_info_title),
-              style = MaterialTheme.typography.headlineSmall,
-              fontWeight = FontWeight.ExtraBold,
-              color = MaterialTheme.colorScheme.primary,
-            )
-          },
-          navigationIcon = {
-            IconButton(onClick = backstack::removeLastOrNull) {
-              Icon(
-                Icons.AutoMirrored.Default.ArrowBack,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.secondary,
-              )
-            }
-          },
-        )
-      },
-    ) { padding ->
+    val pageColor = MaterialTheme.colorScheme.surfaceContainer
+    val cardColor = MaterialTheme.colorScheme.surface
+
+    CollapsibleHeaderScreen(
+      containerColor = pageColor,
+      title = stringResource(R.string.pref_decoder_codec_info_title),
+      showBackButton = true,
+      onBackClick = backstack::navigateBack,
+    ) { contentModifier ->
       val allCodecs = allCodecsState
       if (allCodecs == null) {
         Box(
-          modifier = Modifier
-            .fillMaxSize()
-            .padding(padding),
+          modifier = contentModifier.fillMaxSize(),
           contentAlignment = Alignment.Center
         ) {
           CircularProgressIndicator()
@@ -216,107 +208,107 @@ object CodecInformationScreen : Screen {
         val navBarHeight = xyz.mpv.rex.ui.browser.LocalNavigationBarHeight.current
         ProvidePreferenceLocals {
           LazyColumn(
-            modifier = Modifier
-              .fillMaxSize()
-              .padding(padding),
+            modifier = contentModifier.fillMaxSize(),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = navBarHeight + 16.dp),
           ) {
             // Overview Summary Card
             item {
-              PreferenceCard {
-                Column(
-                  modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
-                ) {
-                  Row(
-                    verticalAlignment = Alignment.CenterVertically,
+              GroupedListColumn {
+                GroupedPreferenceCard(position = GroupPosition.ONLY, color = cardColor, tonalElevation = 0.dp) {
+                  Column(
+                    modifier = Modifier
+                      .fillMaxWidth()
+                      .padding(16.dp),
                   ) {
-                    Icon(
-                      imageVector = Icons.Default.Memory,
-                      contentDescription = null,
-                      tint = MaterialTheme.colorScheme.primary,
-                    )
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column {
-                      Text(
-                        text = stringResource(R.string.codec_info_stats_title),
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
+                    Row(
+                      verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                      Icon(
+                        imageVector = Icons.Default.Memory,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
                       )
-                      Text(
-                        text = stringResource(R.string.codec_info_stats_summary, totalCount, hwCount, swCount),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.outline,
-                      )
+                      Spacer(modifier = Modifier.width(12.dp))
+                      Column {
+                        Text(
+                          text = stringResource(R.string.codec_info_stats_title),
+                          style = MaterialTheme.typography.titleMedium,
+                          fontWeight = FontWeight.Bold,
+                        )
+                        Text(
+                          text = stringResource(R.string.codec_info_stats_summary, totalCount, hwCount, swCount),
+                          style = MaterialTheme.typography.bodyMedium,
+                          color = MaterialTheme.colorScheme.outline,
+                        )
+                      }
                     }
-                  }
 
-                  Spacer(modifier = Modifier.height(16.dp))
+                    Spacer(modifier = Modifier.height(16.dp))
 
-                  // Major Format Quick Status Matrix
-                  val majorFormats = listOf(
-                    "H.264 / AVC" to "video/avc",
-                    "H.265 / HEVC" to "video/hevc",
-                    "AV1" to "video/av01",
-                    "VP9" to "video/x-vnd.on2.vp9",
-                    "AAC" to "audio/mp4a-latm",
-                    "Opus" to "audio/opus"
-                  )
+                    // Major Format Quick Status Matrix
+                    val majorFormats = listOf(
+                      "H.264 / AVC" to "video/avc",
+                      "H.265 / HEVC" to "video/hevc",
+                      "AV1" to "video/av01",
+                      "VP9" to "video/x-vnd.on2.vp9",
+                      "AAC" to "audio/mp4a-latm",
+                      "Opus" to "audio/opus"
+                    )
 
-                  FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.fillMaxWidth()
-                  ) {
-                    majorFormats.forEach { (label, mime) ->
-                      val matching = allCodecs.filter { it.mimeType.equals(mime, ignoreCase = true) }
-                      val hasHW = matching.any { it.isHardware }
-                      val hasSW = matching.any { !it.isHardware }
+                    FlowRow(
+                      horizontalArrangement = Arrangement.spacedBy(8.dp),
+                      verticalArrangement = Arrangement.spacedBy(8.dp),
+                      modifier = Modifier.fillMaxWidth()
+                    ) {
+                      majorFormats.forEach { (label, mime) ->
+                        val matching = allCodecs.filter { it.mimeType.equals(mime, ignoreCase = true) }
+                        val hasHW = matching.any { it.isHardware }
+                        val hasSW = matching.any { !it.isHardware }
 
-                      val badgeColor = when {
-                        hasHW -> MaterialTheme.colorScheme.primaryContainer
-                        hasSW -> MaterialTheme.colorScheme.secondaryContainer
-                        else -> MaterialTheme.colorScheme.surfaceContainerHigh
-                      }
-                      val textColor = when {
-                        hasHW -> MaterialTheme.colorScheme.onPrimaryContainer
-                        hasSW -> MaterialTheme.colorScheme.onSecondaryContainer
-                        else -> MaterialTheme.colorScheme.outline
-                      }
-                      val statusText = when {
-                        hasHW -> "HW"
-                        hasSW -> "SW"
-                        else -> "N/A"
-                      }
+                        val badgeColor = when {
+                          hasHW -> MaterialTheme.colorScheme.primaryContainer
+                          hasSW -> MaterialTheme.colorScheme.secondaryContainer
+                          else -> MaterialTheme.colorScheme.surfaceContainerHigh
+                        }
+                        val textColor = when {
+                          hasHW -> MaterialTheme.colorScheme.onPrimaryContainer
+                          hasSW -> MaterialTheme.colorScheme.onSecondaryContainer
+                          else -> MaterialTheme.colorScheme.outline
+                        }
+                        val statusText = when {
+                          hasHW -> "HW"
+                          hasSW -> "SW"
+                          else -> "N/A"
+                        }
 
-                      Surface(
-                        color = badgeColor,
-                        shape = RoundedCornerShape(8.dp),
-                      ) {
-                        Row(
-                          modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                          verticalAlignment = Alignment.CenterVertically,
+                        Surface(
+                          color = badgeColor,
+                          shape = RoundedCornerShape(8.dp),
                         ) {
-                          Text(
-                            text = label,
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            color = textColor,
-                          )
-                          Spacer(modifier = Modifier.width(6.dp))
-                          Box(
-                            modifier = Modifier
-                              .clip(RoundedCornerShape(4.dp))
-                              .background(textColor.copy(alpha = 0.2f))
-                              .padding(horizontal = 4.dp, vertical = 1.dp)
+                          Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
                           ) {
                             Text(
-                              text = statusText,
-                              style = MaterialTheme.typography.labelSmall,
-                              fontWeight = FontWeight.Bold,
+                              text = label,
+                              style = MaterialTheme.typography.labelMedium,
+                              fontWeight = FontWeight.SemiBold,
                               color = textColor,
                             )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Box(
+                              modifier = Modifier
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(textColor.copy(alpha = 0.2f))
+                                .padding(horizontal = 4.dp, vertical = 1.dp)
+                            ) {
+                              Text(
+                                text = statusText,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = textColor,
+                              )
+                            }
                           }
                         }
                       }
@@ -366,78 +358,82 @@ object CodecInformationScreen : Screen {
             }
 
             item {
-              PreferenceCard {
+              GroupedListColumn {
                 filteredCodecs.forEachIndexed { index, codec ->
-                  Column(
-                    modifier = Modifier
-                      .fillMaxWidth()
-                      .padding(horizontal = 16.dp, vertical = 12.dp)
-                  ) {
-                    Row(
-                      modifier = Modifier.fillMaxWidth(),
-                      horizontalArrangement = Arrangement.SpaceBetween,
-                      verticalAlignment = Alignment.CenterVertically
-                    ) {
-                      Text(
-                        text = codec.formatName,
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold,
-                      )
-
-                      Surface(
-                        color = if (codec.isHardware)
-                          Color(0xFF2E7D32).copy(alpha = 0.15f)
-                        else
-                          Color(0xFFE65100).copy(alpha = 0.15f),
-                        shape = RoundedCornerShape(12.dp),
-                      ) {
-                        Text(
-                          text = if (codec.isHardware)
-                            stringResource(R.string.codec_info_hw_badge)
-                          else
-                            stringResource(R.string.codec_info_sw_badge),
-                          style = MaterialTheme.typography.labelSmall,
-                          fontWeight = FontWeight.ExtraBold,
-                          color = if (codec.isHardware) Color(0xFF4CAF50) else Color(0xFFFF9800),
-                          modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                        )
-                      }
-                    }
-
-                    Spacer(modifier = Modifier.height(4.dp))
-
-                    Text(
-                      text = codec.name,
-                      style = MaterialTheme.typography.bodySmall,
-                      color = MaterialTheme.colorScheme.onSurfaceVariant,
-                      fontWeight = FontWeight.Medium,
-                    )
-
-                    Row(
+                  val pos = when {
+                    filteredCodecs.size == 1 -> GroupPosition.ONLY
+                    index == 0 -> GroupPosition.FIRST
+                    index == filteredCodecs.lastIndex -> GroupPosition.LAST
+                    else -> GroupPosition.MIDDLE
+                  }
+                  GroupedPreferenceCard(position = pos, color = cardColor, tonalElevation = 0.dp) {
+                    Column(
                       modifier = Modifier
                         .fillMaxWidth()
-                        .padding(top = 4.dp),
-                      horizontalArrangement = Arrangement.SpaceBetween
+                        .padding(horizontal = 16.dp, vertical = 12.dp)
                     ) {
+                      Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                      ) {
+                        Text(
+                          text = codec.formatName,
+                          style = MaterialTheme.typography.titleSmall,
+                          fontWeight = FontWeight.Bold,
+                        )
+
+                        Surface(
+                          color = if (codec.isHardware)
+                            Color(0xFF2E7D32).copy(alpha = 0.15f)
+                          else
+                            Color(0xFFE65100).copy(alpha = 0.15f),
+                          shape = RoundedCornerShape(12.dp),
+                        ) {
+                          Text(
+                            text = if (codec.isHardware)
+                              stringResource(R.string.codec_info_hw_badge)
+                            else
+                              stringResource(R.string.codec_info_sw_badge),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = if (codec.isHardware) Color(0xFF4CAF50) else Color(0xFFFF9800),
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                          )
+                        }
+                      }
+
+                      Spacer(modifier = Modifier.height(4.dp))
+
                       Text(
-                        text = codec.mimeType,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.outline,
+                        text = codec.name,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontWeight = FontWeight.Medium,
                       )
 
-                      if (codec.maxResolution != null) {
+                      Row(
+                        modifier = Modifier
+                          .fillMaxWidth()
+                          .padding(top = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                      ) {
                         Text(
-                          text = stringResource(R.string.codec_info_max_res, codec.maxResolution),
+                          text = codec.mimeType,
                           style = MaterialTheme.typography.labelSmall,
-                          color = MaterialTheme.colorScheme.primary,
-                          fontWeight = FontWeight.Bold
+                          color = MaterialTheme.colorScheme.outline,
                         )
+
+                        if (codec.maxResolution != null) {
+                          Text(
+                            text = stringResource(R.string.codec_info_max_res, codec.maxResolution),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Bold
+                          )
+                        }
                       }
                     }
-                  }
-
-                  if (index < filteredCodecs.lastIndex) {
-                    PreferenceDivider()
                   }
                 }
               }

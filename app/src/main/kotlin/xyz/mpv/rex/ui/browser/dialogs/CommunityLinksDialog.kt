@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -41,6 +42,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.DialogProperties
 import xyz.mpv.rex.R
 import xyz.mpv.rex.preferences.AppearancePreferences
 import xyz.mpv.rex.ui.utils.CommunityIcon
@@ -59,7 +61,11 @@ fun CommunityLinksDialog(
 
     BasicAlertDialog(
         onDismissRequest = onDismissRequest,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
         modifier = modifier
+            .padding(horizontal = 16.dp)
+            .widthIn(max = 480.dp)
+            .fillMaxWidth()
     ) {
         Surface(
             shape = RoundedCornerShape(28.dp),
@@ -234,7 +240,7 @@ private fun CommunityLinkCard(
     modifier: Modifier = Modifier
 ) {
     Card(
-        shape = RoundedCornerShape(16.dp),
+        shape = MaterialTheme.shapes.extraLarge,
         elevation = CardDefaults.elevatedCardElevation(defaultElevation = 2.dp),
         colors = CardDefaults.elevatedCardColors(
             containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
